@@ -13,6 +13,8 @@ import {
   previewPush,
   probeRemote,
   pushBatch,
+  PUSH_TOKEN_KEY,
+  PUSH_URL_KEY,
   type ProbeResult,
   type PushReportItem,
   type RemoteTarget,
@@ -33,9 +35,6 @@ import {
 
 /** 远端单次导入上限(与 conversation-portable 契约同值) */
 const PUSH_BATCH = 200
-/** 「记住令牌」开关写本地 storage 的键;地址与令牌分开存,勾选才留令牌 */
-const PUSH_URL_KEY = 'aichat.push.url'
-const PUSH_TOKEN_KEY = 'aichat.push.token'
 
 interface ImportReport {
   outcome: 'created' | 'pending' | 'duplicate' | 'invalid' | 'foreign'
@@ -442,7 +441,7 @@ export function PortableSettings() {
         <div className="min-w-0">
           <p className="text-xs text-content-secondary">导出对话</p>
           <p className="text-[11px] text-content-muted">
-            单条对话在历史列表右键「导出对话包」；整个列表用下方按钮。
+            单条对话在历史列表右键「导出对话包」或「推送到线上（这一条）」；整个列表用下方按钮。
             一次上限 200 条，超出请分批。
           </p>
         </div>

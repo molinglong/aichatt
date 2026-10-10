@@ -3,10 +3,11 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, memo } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
-import { Trash2, Pencil, Check, X, GitBranch, Copy, Download, FileJson } from 'lucide-react'
+import { Trash2, Pencil, Check, X, GitBranch, Copy, Download, FileJson, Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import { downloadConversationBundle } from '@/lib/portable-client'
+import { pushBatch, readPushTarget } from '@/lib/portable-push'
 import { useChatStore } from '@/store/chat-store'
 import { useContextMenuStore, type ContextMenuItem } from '@/store/contextMenuStore'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
@@ -58,6 +59,8 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
   const [branching, setBranching] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [bundleExporting, setBundleExporting] = useState(false)
+  // 单条直推线上:复用设置页记下的地址与 sk- 令牌,不导文件
+  const [pushing, setPushing] = useState(false)
 
   // Focus and select all text when entering edit mode
   useEffect(() => {
@@ -202,6 +205,47 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
     }
   }, [bundleExporting, id, title])
 
+  // ── 右键菜单:把这一条直接推到线上 ──
+  // 与「导出对话包」分叉在这里:导出留文件、跨实例手动上传;推送同源取包 +
+  // Bearer 令牌直写远端 import 端点(远端按消息 cuid 幂等,重推只会命中「已存在」)。
+  const handlePushOne = useCallback(async () => {
+    if (pushing) return
+    const target = readPushTarget()
+    if (!target) {
+      toast.error('还没有记住的推送目标：先在 设置→对话搬运 填线上地址与 sk- 令牌，并勾上「记住令牌」', {
+        title: '推送到线上',
+      })
+      return
+    }
+    setPushing(true)
+    try {
+      const res = await pushBatch(target, [id])
+      const report = res.reports[0]
+      if (res.created > 0) {
+        const notes = [
+          report?.strippedAttachments ? `${report.strippedAttachments} 个附件未迁移` : null,
+          report?.maskDropped ? '面具不在那边，已改为无面具' : null,
+        ].filter(Boolean)
+        toast.success(`已推送到线上：${report?.title ?? title}${notes.length ? `（${notes.join('；')}）` : ''}`, {
+          title: '推送到线上',
+        })
+      } else if (res.duplicate > 0) {
+        toast.info('线上已有这条对话，没有重复写入', { title: '推送到线上' })
+      } else {
+        toast.error(`这条没有推上去：${report?.reason ?? report?.outcome ?? '远端未确认写入'}`, {
+          title: '推送到线上',
+        })
+      }
+    } catch (err) {
+      console.error('[ConversationItem] push one failed:', err)
+      toast.error(err instanceof Error ? err.message : '推送失败，请检查线上地址与令牌', {
+        title: '推送到线上',
+      })
+    } finally {
+      setPushing(false)
+    }
+  }, [pushing, id, title])
+
   // ── 右键菜单:会话级操作集合(hover 按钮之外补充的桌面端入口) ──
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     // 批量管理模式下不弹单条操作菜单(此处的动作对象是勾选集合)
@@ -252,6 +296,13 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
       disabled: bundleExporting,
       onSelect: handleExportBundle,
     })
+    items.push({
+      id: 'push-one',
+      label: pushing ? '正在推送…' : '推送到线上（这一条）',
+      icon: <Upload className="w-3.5 h-3.5" />,
+      disabled: pushing,
+      onSelect: handlePushOne,
+    })
     if (onDelete) {
       items.push({
         id: 'delete',
@@ -273,6 +324,8 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
     handleExport,
     bundleExporting,
     handleExportBundle,
+    pushing,
+    handlePushOne,
     onDelete,
     id,
     title,

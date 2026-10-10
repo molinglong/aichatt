@@ -49,6 +49,13 @@ interface ImportResponseBody {
   error?: string
 }
 
+/**
+ * 本机记住的推送目标（单一事实源：设置页写这两个键，历史列表右键也读这两个键）。
+ * 令牌只在「记住令牌」勾选时才落本地，默认刷新即失。
+ */
+export const PUSH_URL_KEY = 'aichat.push.url'
+export const PUSH_TOKEN_KEY = 'aichat.push.token'
+
 /** 去掉用户粘贴时顺手带上的尾斜杠/路径,拼出干净的 API 根 */
 export function normalizeBaseUrl(raw: string): string {
   let s = raw.trim()
@@ -59,6 +66,22 @@ export function normalizeBaseUrl(raw: string): string {
     return `${u.protocol}//${u.host}`
   } catch {
     return ''
+  }
+}
+
+/**
+ * 读本机记住的推送目标：地址与令牌都齐才返回，否则 null。
+ * 历史列表右键「推送到线上（这一条）」复用设置页那份凭证，不另存第二套口径。
+ */
+export function readPushTarget(): RemoteTarget | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const baseUrl = normalizeBaseUrl(localStorage.getItem(PUSH_URL_KEY) ?? '')
+    const token = (localStorage.getItem(PUSH_TOKEN_KEY) ?? '').trim()
+    if (!baseUrl || !token) return null
+    return { baseUrl, token }
+  } catch {
+    return null
   }
 }
 
