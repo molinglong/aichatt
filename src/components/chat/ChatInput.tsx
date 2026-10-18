@@ -13,6 +13,11 @@ import { PROVIDER_DOT } from '@/lib/ai/provider-meta'
 import { MaskPickerMenu } from './MaskPickerMenu'
 import { McpToolMenu } from './McpToolMenu'
 import { MiniSwitch } from '@/components/settings/MiniSwitch'
+import {
+  SEARCH_PLATFORMS,
+  getSearchPlatform,
+  type SearchPlatformId,
+} from '@/lib/ai/search-platforms'
 import { ActivityHeatmap } from './ActivityHeatmap'
 import type { MaskDTO } from '@/lib/ai/mask-types'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
@@ -54,6 +59,10 @@ export interface ChatInputProps {
   webSearch?: boolean
   onWebSearchChange?: (enabled: boolean) => void
   webSearchAvailable?: boolean
+  /** 平台定向口径：'auto' 模型自判 / 'all' 强制全网 / 具体平台 id 强制站内白名单。
+   *  仅在联网搜索开启时可交互（见 @/lib/ai/search-platforms） */
+  searchPlatform?: SearchPlatformId
+  onSearchPlatformChange?: (platform: SearchPlatformId) => void
   /** MCP 外部工具。用户名下有启用的 MCP server 时才显示开关。 */
   mcpEnabled?: boolean
   onMcpEnabledChange?: (enabled: boolean) => void
@@ -101,6 +110,8 @@ export function ChatInput({
   webSearch = false,
   onWebSearchChange,
   webSearchAvailable = false,
+  searchPlatform = 'auto',
+  onSearchPlatformChange,
   mcpEnabled = true,
   onMcpEnabledChange,
   mcpAvailable = false,
@@ -128,6 +139,18 @@ export function ChatInput({
   const [maskMenuOpen, setMaskMenuOpen] = useState(false)
   // MCP 工具下拉菜单开合(总开关+逐工具开关)
   const [mcpMenuOpen, setMcpMenuOpen] = useState(false)
+  // 平台定向弹层(桌面): absolute 锚在胶囊行内 + document pointerdown 收合。
+  // 不用 fixed 遮罩: 祖先带 backdrop-blur 时 fixed 会退化(同推理面板定案口径)。
+  const [platformMenuOpen, setPlatformMenuOpen] = useState(false)
+  const platformWrapRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!platformMenuOpen) return
+    function onDown(e: PointerEvent) {
+      if (!platformWrapRef.current?.contains(e.target as Node)) setPlatformMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [platformMenuOpen])
   // ⋯ 更多工具菜单开合(收纳: 对比模式 + 移动端的面具/MCP)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   // 手机端模型入口:胶囊内不放 ModelSelector,改由 ⋯ 唤 iOS 半屏快切
@@ -564,6 +587,36 @@ export function ChatInput({
                 <MiniSwitch on={webSearch} onClick={() => onWebSearchChange(!webSearch)} />
               </div>
             )}
+            {/* 平台定向(仅移动端): 联网开启才出,与桌面同一份 SEARCH_PLATFORMS 口径 */}
+            {webSearch && webSearchAvailable && onWebSearchChange && onSearchPlatformChange && (
+              <div className="flex sm:hidden flex-col gap-1.5 w-full px-2.5 pb-2">
+                <span className="text-[10px] leading-relaxed text-content-muted">
+                  平台定向（自动=模型按问题判断；查不到会自动回退全网）
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {SEARCH_PLATFORMS.map((p) => {
+                    const on = p.id === searchPlatform
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => onSearchPlatformChange(p.id)}
+                        aria-pressed={on}
+                        className={cn(
+                          'flex items-center gap-1 h-10 px-3 rounded-lg text-xs transition-colors',
+                          on
+                            ? 'bg-accent text-accent-foreground'
+                            : 'bg-surface-muted hover:bg-surface-subtle text-content-secondary'
+                        )}
+                      >
+                        {p.label}
+                        {on && <Check className="w-3 h-3" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             {/* MCP 工具(仅移动端): 行内快速开关;点主体进管理菜单 */}
             {hasMcpEntry && (
               <div className="flex sm:hidden items-center gap-2.5 w-full px-2.5 min-h-[44px] py-2 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors">
@@ -690,6 +743,59 @@ export function ChatInput({
               >
                 <Globe className="w-3.5 h-3.5" />
               </button>
+            )}
+            {/* 平台定向(桌面外显): 联网开启才出。默认「自动」= 不干涉模型,与改造前一致;
+                选定具体平台后服务端直接按域白名单过滤,并把 platform 参数从工具 schema 摘掉 */}
+            {webSearch && webSearchAvailable && onWebSearchChange && onSearchPlatformChange && (
+              <div ref={platformWrapRef} className="relative hidden sm:block">
+                <button
+                  onClick={() => setPlatformMenuOpen((v) => !v)}
+                  disabled={isLoading}
+                  className={cn(
+                    'flex items-center gap-1 h-7 min-h-[38px] sm:min-h-0 px-2.5 rounded-full text-xs transition-colors shrink-0',
+                    searchPlatform === 'auto' ? pillIdle : pillActive,
+                    isLoading && 'opacity-50 cursor-not-allowed'
+                  )}
+                  title="平台定向：只查某个站（B站/小红书/知乎…）。自动=由模型按问题判断"
+                  aria-label="搜索平台定向"
+                  aria-haspopup="menu"
+                  aria-expanded={platformMenuOpen}
+                >
+                  <span className="max-w-[5rem] truncate">{getSearchPlatform(searchPlatform).label}</span>
+                  <ChevronDown className="w-3 h-3 opacity-70" />
+                </button>
+                {platformMenuOpen && (
+                  <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 w-[236px] rounded-xl border border-line bg-surface shadow-lg p-2">
+                    <p className="px-1 pb-1.5 text-[10px] leading-relaxed text-content-muted">
+                      限定检索站点。站内索引比全网稀薄，查不到时会自动回退全网并说明。
+                    </p>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {SEARCH_PLATFORMS.map((p) => {
+                        const on = p.id === searchPlatform
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              onSearchPlatformChange(p.id)
+                              setPlatformMenuOpen(false)
+                            }}
+                            className={cn(
+                              'flex items-center justify-center gap-1 h-9 rounded-lg text-xs transition-colors',
+                              on
+                                ? 'bg-accent text-accent-foreground'
+                                : 'bg-surface-muted hover:bg-surface-subtle text-content-secondary'
+                            )}
+                          >
+                            {p.label}
+                            {on && <Check className="w-3 h-3" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
             {/* MCP 工具(桌面外显): 点击弹出管理菜单;移动端收纳进 ⋯ */}
             {hasMcpEntry && (

@@ -34,11 +34,14 @@ interface QianfanRawResponse {
  * @param query  搜索关键词
  * @param apiKey 千帆 AppBuilder API Key（Bearer Token）
  * @param topN   返回网页结果数量（默认 5）
+ * @param siteFilter 站点白名单（平台定向，官方字段 search_filter.match.site）。
+ *        空/不传 = 不加过滤。注意 top_k 与站点白名单叠加后，命中数可能少于 topN。
  */
 export async function executeQianfanSearch(
   query: string,
   apiKey: string,
-  topN: number = 5
+  topN: number = 5,
+  siteFilter?: string[]
 ): Promise<QianfanSearchResult[]> {
   const response = await fetch(
     "https://qianfan.baidubce.com/v2/ai_search/web_search",
@@ -52,6 +55,9 @@ export async function executeQianfanSearch(
         messages: [{ role: "user", content: query }],
         search_source: "baidu_search_v2",
         resource_type_filter: [{ type: "web", top_k: topN }],
+        ...(siteFilter && siteFilter.length > 0
+          ? { search_filter: { match: { site: siteFilter } } }
+          : {}),
       }),
     }
   )

@@ -26,7 +26,7 @@ import { useTypewriter } from '@/lib/useTypewriter'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ChartCard } from './ChartCard'
 import { ChatImageLightbox } from './ChatImageLightbox'
-import { ToolCallCard, extractToolCallViews } from './ToolCallCard'
+import { ToolCallCard, extractToolCallViews, extractInlineImages } from './ToolCallCard'
 import { TurnFileSummary } from './TurnFileSummary'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
 import { toast } from '@/lib/toast'
@@ -320,6 +320,11 @@ function MessageBubbleInner({
   // 渲染在 reasoning 与正文之间,时间线上与"模型先查资料后回答"的顺序一致。
   const toolCallViews = useMemo(
     () => (isAssistant ? extractToolCallViews(message) : []),
+    [message, isAssistant]
+  )
+  // 图文混排白名单图:与工具卡同源提取,喂给 MarkdownRenderer 做 [图N] 占位符替换
+  const inlineImages = useMemo(
+    () => (isAssistant ? extractInlineImages(message) : []),
     [message, isAssistant]
   )
 
@@ -1012,6 +1017,7 @@ function MessageBubbleInner({
                   messageId={message.id}
                   rich={isAssistant && !isTyping && (!isStreaming || !isLastMessage)}
                   live={isAssistant}
+                  inlineImages={inlineImages}
                 />
                 {showCursor && (
                   <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-content-secondary animate-pulse align-middle" />
@@ -1324,7 +1330,7 @@ function MessageBubbleInner({
             pointerEvents: 'none',
           }}
         >
-          <MarkdownRenderer content={bodyText} messageId={message.id} rich />
+          <MarkdownRenderer content={bodyText} messageId={message.id} rich inlineImages={inlineImages} />
         </div>
       )}
     </div>

@@ -63,6 +63,8 @@ interface WebSearchOutput {
   query?: string
   engine?: string
   results?: Array<{ title: string; url?: string; snippet?: string }>
+  /** 图文混排白名单图(服务端过滤编号,见 lib/ai/search.ts EmbeddableImage) */
+  images?: Array<{ n: number; url: string; description?: string; host: string; bytes?: number }>
   note?: string
   error?: string
 }
@@ -120,6 +122,69 @@ function extractQuery(view: ToolCallView): string {
   if (isWebSearchOutput(view.output) && view.output.query) return view.output.query
   const q = (view.input as { query?: string } | undefined)?.query
   return typeof q === 'string' ? q : ''
+}
+
+/** 图文混排: 正文 [图N] 占位符可引用的一张白名单图(与服务端 EmbeddableImage 同构) */
+export interface InlineImageRef {
+  n: number
+  url: string
+  description?: string
+  host: string
+  bytes?: number
+}
+
+/**
+ * 从消息里提取全部可引用插图,按工具调用顺序摊平。
+ * 双来源与 extractToolCallViews 一致(流式 parts / 历史 metadata.toolCalls),
+ * 编号冲突(多次搜索各自从 1 编)时先到先得 —— 服务端 note 已约束模型只用一组。
+ */
+export function extractInlineImages(message: UIMessage): InlineImageRef[] {
+  const collect = (views: ToolCallView[]): InlineImageRef[] => {
+    const out: InlineImageRef[] = []
+    const seen = new Set<number>()
+    for (const v of views) {
+      if (v.tool !== 'web_search') continue
+      const out0 = v.output as WebSearchOutput | undefined
+      for (const img of out0?.images ?? []) {
+        if (typeof img?.n !== 'number' || typeof img?.url !== 'string' || seen.has(img.n)) continue
+        seen.add(img.n)
+        out.push(img)
+      }
+    }
+    return out
+  }
+  // 流式 parts 优先;为空再翻历史 metadata(与 extractToolCallViews 同款双来源)
+  const views: ToolCallView[] = []
+  for (const p of message.parts) {
+    const t = (p as { type?: string }).type ?? ''
+    if (!t.startsWith('tool-') || t === 'tool-') continue
+    views.push({
+      tool: t.slice(5),
+      toolCallId: (p as { toolCallId?: string }).toolCallId,
+      state: ((p as { state?: string }).state ?? 'input-available') as ToolCallView['state'],
+      input: (p as { input?: unknown }).input,
+      output: (p as { output?: unknown }).output,
+      errorText: (p as { errorText?: string }).errorText,
+    })
+  }
+  const partImages = collect(views)
+  if (partImages.length > 0) return partImages
+  const meta = (message as { metadata?: unknown }).metadata as ToolCallsMetadata | undefined
+  if (meta?.kind === 'tool_calls' && Array.isArray(meta.toolCalls)) {
+    return collect(
+      meta.toolCalls.map((c, i) => {
+        const out = c.output as { error?: string } | undefined
+        return {
+          tool: c.tool ?? 'unknown',
+          toolCallId: `persisted-${i}`,
+          state: out?.error ? ('output-error' as const) : ('output-available' as const),
+          input: c.input ?? null,
+          output: c.output ?? null,
+        }
+      })
+    )
+  }
+  return []
 }
 
 /**
@@ -555,6 +620,7 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
             <>
               <Globe className="w-3 h-3" />
               {results.length} 条来源
+              {out?.images?.length ? ` · ${out.images.length} 张图` : ''}
             </>
           )}
           <ChevronDown
