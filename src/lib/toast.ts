@@ -12,63 +12,86 @@ import type iziToastType from 'izitoast'
 
 type Izitoast = typeof iziToastType
 
+/** iziToast 实例: 挂在模块作用域供兜底分支复用 */
 let instance: Izitoast | null = null
 let cssLoaded = false
-let initializing = false
 let initPromise: Promise<Izitoast> | null = null
 
+/** 实际加载 + 初始化,失败即抛(由 ensureClient 统一收口) */
+async function loadIziToast(): Promise<Izitoast> {
+  // 动态加载 JS 即可,CSS 已由 globals.css 顶部 @import 静态内联(修 Next 14.2 css chunk 关联 bug)
+  // iziToast 是 CJS 包(`module.exports = ...`),在 Next.js webpack ESM 互操作下,
+  // 既可能是整个 module,也可能被包成 `{ default: <module> }`。
+  // 兼容两种形态,以及 iziToast 自己挂在 `.iziToast` 上的 UMD 形态。
+  const mod = await import('izitoast')
+
+  if (!cssLoaded) cssLoaded = true
+
+  const iziToast = (mod as any)?.iziToast ?? (mod as any)?.default ?? mod
+  if (!iziToast || typeof iziToast.show !== 'function') {
+    console.error('[toast] iziToast loaded but .show() not found. mod keys:', Object.keys(mod || {}))
+    throw new Error('iziToast failed to load')
+  }
+
+  iziToast.settings({
+    // 全局默认值,可在单次调用时覆盖
+    position: 'topRight',
+    timeout: 5000,
+    closeOnClick: true,
+    closeOnEscape: true,
+    drag: true,
+    // 鼠标悬浮暂停倒计时 —— 方便用户阅读/复制错误内容
+    pauseOnHover: true,
+    // 暂停时把进度条也停下(更直观能看到时间被冻结)
+    resetOnHover: false,
+    progressBar: true,
+    progressBarEasing: 'linear',
+    transitionIn: 'fadeInDown',
+    transitionOut: 'fadeOutUp',
+    // 视觉外壳不在这里注入 —— 每个 toast 通过 buildKindOptions 传入自己的
+    // onOpening(会覆盖全局同名回调),携带 kind 点缀色与亮/暗两套配色
+    layout: 2,
+    balloon: false,
+    maxWidth: 380,
+    theme: 'light',
+    iconText: '',
+  })
+
+  return iziToast
+}
+
+/**
+ * 取 iziToast 实例;不可用时返回 null,由调用方降级到零依赖兜底提示。
+ *
+ * 关键一:失败绝不缓存。dev 重启后旧页面 runtime 引用的动态 chunk 会瞬时 404
+ * (ChunkLoadError),一旦把 rejected promise memo 住,整个会话的 toast 就永久报废
+ * 且不再重试 —— 复位后下一次调用还能把 toast 救回来。
+ * 关键二:加载失败只记日志,不向上抛。toast 是提示通道而非业务链路,
+ * 让它冒泡只会变成 Next 全屏 Unhandled Runtime Error,把真正的报错文案一起吞掉。
+ */
 async function ensureClient(): Promise<Izitoast | null> {
   if (typeof window === 'undefined') return null
   if (instance) return instance
-  if (initPromise) return initPromise
-  if (initializing) return null
-  initializing = true
 
-  initPromise = (async () => {
-    // 动态加载 JS 即可,CSS 已由 globals.css 顶部 @import 静态内联(修 Next 14.2 css chunk 关联 bug)
-    // iziToast 是 CJS 包(`module.exports = ...`),在 Next.js webpack ESM 互操作下,
-    // 既可能是整个 module,也可能被包成 `{ default: <module> }`。
-    // 兼容两种形态,以及 iziToast 自己挂在 `.iziToast` 上的 UMD 形态。
-    const mod = await import('izitoast')
+  if (!initPromise) {
+    initPromise = loadIziToast().then(
+      (loaded) => {
+        instance = loaded
+        return loaded
+      },
+      (err) => {
+        initPromise = null
+        throw err
+      },
+    )
+  }
 
-    if (!cssLoaded) cssLoaded = true
-
-    const iziToast = (mod as any)?.iziToast ?? (mod as any)?.default ?? mod
-    if (!iziToast || typeof iziToast.show !== 'function') {
-      console.error('[toast] iziToast loaded but .show() not found. mod keys:', Object.keys(mod || {}))
-      throw new Error('iziToast failed to load')
-    }
-
-    iziToast.settings({
-      // 全局默认值,可在单次调用时覆盖
-      position: 'topRight',
-      timeout: 5000,
-      closeOnClick: true,
-      closeOnEscape: true,
-      drag: true,
-      // 鼠标悬浮暂停倒计时 —— 方便用户阅读/复制错误内容
-      pauseOnHover: true,
-      // 暂停时把进度条也停下(更直观能看到时间被冻结)
-      resetOnHover: false,
-      progressBar: true,
-      progressBarEasing: 'linear',
-      transitionIn: 'fadeInDown',
-      transitionOut: 'fadeOutUp',
-      // 视觉外壳不在这里注入 —— 每个 toast 通过 buildKindOptions 传入自己的
-      // onOpening(会覆盖全局同名回调),携带 kind 点缀色与亮/暗两套配色
-      layout: 2,
-      balloon: false,
-      maxWidth: 380,
-      theme: 'light',
-      iconText: '',
-    })
-
-    instance = iziToast
-    initializing = false
-    return iziToast
-  })()
-
-  return initPromise
+  try {
+    return await initPromise
+  } catch (err) {
+    console.warn('[toast] iziToast 加载失败,降级为兜底提示:', err)
+    return null
+  }
 }
 
 export type ToastKind = 'error' | 'success' | 'warning' | 'info'
@@ -263,11 +286,151 @@ function defaultTitle(kind: ToastKind): string {
   }
 }
 
-/** 通用入口,内部用 */
+/**
+ * 零依赖兜底提示 —— iziToast 不可用时(动态 chunk 404 / show() 抛异常)的降级通道。
+ * 提示通道的职责是把"保存失败:已存在相同或相似的记忆"这类真实原因送到眼前,
+ * 因此它自身故障时不能连消息一起丢掉。样式沿用全站 token 与玻璃配方,
+ * 与 iziToast 主题观感一致。
+ */
+const FALLBACK_STACK_PREFIX = 'aichatt-toast-fallback-'
+
+function fallbackToast(kind: ToastKind, opts: ToastOptions): void {
+  try {
+    const pal = palette()
+    const cfg = KIND_CONFIG[kind]
+    const timeout = opts.timeout ?? (kind === 'error' ? 8000 : 5000)
+    const position = opts.position ?? 'topRight'
+    const side = position.startsWith('bottom') ? 'bottom' : 'top'
+
+    const stackId = FALLBACK_STACK_PREFIX + side
+    let stack = document.getElementById(stackId)
+    if (!stack) {
+      stack = document.createElement('div')
+      stack.id = stackId
+      stack.setAttribute('role', 'status')
+      stack.setAttribute('aria-live', 'polite')
+      // 位置对齐 iziToast 手机端重排(globals.css 同名规则): top 挂 --m-chrome-top
+      // 体系避开刘海/挖孔,bottom 让出手势条;手机端居中,桌面保持右上角。
+      // inline style 里引用 var() 实时解析,与 globals.css 的变量自动同步。
+      const mobile = window.matchMedia('(max-width: 767px)').matches
+      const pos = [
+        side === 'bottom'
+          ? 'bottom:max(var(--sab, 0px), 12px)'
+          : 'top:calc(var(--m-chrome-top, 16px) + 88px)',
+      ]
+      if (mobile) {
+        pos.push('left:0', 'right:0', 'align-items:center')
+      } else {
+        pos.push('right:16px')
+      }
+      stack.style.cssText = [
+        'position:fixed',
+        'z-index:99999',
+        ...pos,
+        'display:flex',
+        `flex-direction:${side === 'bottom' ? 'column-reverse' : 'column'}`,
+        'gap:8px',
+        'pointer-events:none',
+      ].join(';')
+      document.body.appendChild(stack)
+    }
+
+    const item = document.createElement('div')
+    item.style.cssText = [
+      'display:flex',
+      'align-items:flex-start',
+      'gap:10px',
+      'max-width:380px',
+      'min-width:220px',
+      'padding:10px 12px',
+      'border-radius:12px',
+      `background:${pal.background}`,
+      `border:1px solid ${pal.border}`,
+      'backdrop-filter:blur(20px) saturate(180%)',
+      '-webkit-backdrop-filter:blur(20px) saturate(180%)',
+      `box-shadow:${pal.shadow}`,
+      'font-family:inherit',
+      'font-size:13px',
+      'line-height:1.5',
+      'cursor:pointer',
+      'pointer-events:auto',
+      'opacity:0',
+      `transform:${side === 'bottom' ? 'translateY(6px)' : 'translateY(-6px)'}`,
+      'transition:opacity .18s ease, transform .18s ease',
+    ].join(';')
+
+    const iconEl = document.createElement('span')
+    iconEl.setAttribute('aria-hidden', 'true')
+    iconEl.style.cssText = [
+      'display:inline-flex',
+      'align-items:center',
+      'flex:0 0 auto',
+      `color:${cfg.accent}`,
+    ].join(';')
+    iconEl.innerHTML = KIND_ICON[kind]
+    item.appendChild(iconEl)
+
+    const texts = document.createElement('div')
+    texts.style.cssText = 'display:flex;flex-direction:column;gap:2px;min-width:0'
+    if (opts.title) {
+      const titleEl = document.createElement('div')
+      titleEl.textContent = opts.title
+      titleEl.style.cssText = `font-weight:600;color:${pal.titleColor}`
+      texts.appendChild(titleEl)
+    }
+    const msgEl = document.createElement('div')
+    msgEl.textContent = opts.message
+    msgEl.style.cssText = `color:${pal.messageColor};word-break:break-word`
+    texts.appendChild(msgEl)
+    item.appendChild(texts)
+
+    const dismiss = () => {
+      item.style.opacity = '0'
+      item.style.transform = side === 'bottom' ? 'translateY(6px)' : 'translateY(-6px)'
+      window.setTimeout(() => item.remove(), 180)
+    }
+    // 悬浮暂停倒计时 —— 与 iziToast 行为一致,长错误文案不至于读不完就消失
+    let timer: number | null = null
+    const start = () => {
+      if (timeout > 0) timer = window.setTimeout(dismiss, timeout)
+    }
+    const stop = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+    }
+    item.addEventListener('mouseenter', stop)
+    item.addEventListener('mouseleave', start)
+    item.addEventListener('click', () => {
+      stop()
+      dismiss()
+    })
+
+    stack.appendChild(item)
+    // 下一帧再置位,确保 transition 真正跑起来
+    requestAnimationFrame(() => {
+      item.style.opacity = '1'
+      item.style.transform = 'translateY(0)'
+      start()
+    })
+  } catch (err) {
+    console.error('[toast] 兜底提示显示失败:', err)
+  }
+}
+
+/** 通用入口,内部用 —— 永不抛错,任何失败都降级到兜底提示 */
 async function show(kind: ToastKind, opts: ToastOptions): Promise<void> {
   const it = await ensureClient()
-  if (!it) return
-  it.show(buildKindOptions(kind, opts))
+  if (it) {
+    try {
+      it.show(buildKindOptions(kind, opts))
+      return
+    } catch (err) {
+      console.warn('[toast] iziToast.show 异常,降级为兜底提示:', err)
+    }
+  }
+  fallbackToast(kind, opts)
 }
 
 type ToastApi = {
@@ -294,8 +457,15 @@ export const toast: ToastApi = {
   hint: (message) => show('info', { message, title: '', position: 'bottomCenter', timeout: 2000 }),
   sticky: (kind, opts) => show(kind, { ...opts, timeout: 0 }),
   destroy: async () => {
-    const it = await ensureClient()
-    it?.destroy()
+    try {
+      const it = await ensureClient()
+      it?.destroy()
+    } catch (err) {
+      console.warn('[toast] iziToast destroy 失败:', err)
+    }
+    document
+      .querySelectorAll(`[id^="${FALLBACK_STACK_PREFIX}"]`)
+      .forEach((node) => node.remove())
   },
 }
 

@@ -92,6 +92,13 @@ export default defineConfig({
       dependencies: ["setup"],
       use: { storageState: ".auth/admin.json", acceptDownloads: true },
     },
+    {
+      // 提示通道降级用例:复用 admin 会话;用 route.abort 复现 izitoast chunk 404
+      name: "toast-smoke",
+      testMatch: /toast-fallback\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { storageState: ".auth/admin.json" },
+    },
   ],
   webServer: {
     command: "npm run dev",
