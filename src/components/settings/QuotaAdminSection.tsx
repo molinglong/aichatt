@@ -89,7 +89,10 @@ function TestResultLine({ r }: { r: TestResult | undefined }) {
   if (!r) return null
   return (
     <p
-      className={cn('text-[10.5px] truncate', r.ok ? 'text-accent' : 'text-red-600')}
+      className={cn(
+        'text-[10.5px] truncate max-md:whitespace-normal max-md:overflow-visible max-md:text-clip',
+        r.ok ? 'text-accent' : 'text-red-600'
+      )}
       title={r.ok ? `${r.ms}ms 内返回，上游正文「${r.reply ?? ''}」` : `${r.error}\n${r.raw ?? ''}`}
     >
       {r.ok ? `✓ 可用 · ${r.ms}ms${r.reply ? '' : ' · 空回复'}` : `✗ ${r.error}`}
@@ -300,6 +303,16 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
     ? addUpstream
     : upstreamOptions[0]?.id ?? ''
   const usedPct = pool && pool.totalTokens > 0 ? Math.min(100, Math.round((pool.usedTokens / pool.totalTokens) * 100)) : 0
+  // 池子四档数字:桌面横排 4 格(10.5px 标签),手机端 2x2 格(12px 标签 + 14px 值)。
+  // 同一份数据喂两套断点分支,别在此处再加第三种口径
+  const poolStats = pool
+    ? [
+        { label: '已用', value: fmtTokens(pool.usedTokens) },
+        { label: '每日补给', value: fmtTokens(pool.dailyRefillTokens) },
+        { label: '正式日限', value: fmtTokens(pool.perUserDailyTokens) },
+        { label: '访客日限', value: fmtTokens(pool.ephemeralPerUserDailyTokens) },
+      ]
+    : []
 
   return (
     <div className="space-y-3">
@@ -337,30 +350,47 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
       {view === 'pool' && (<>
       {/* 公共池卡片 */}
       {pool ? (
-        <div className="rounded-xl border border-line/60 bg-surface/60 px-4 py-4 space-y-3">
-          <div className="flex items-baseline justify-between gap-2">
+        <div
+          data-testid="pool-quota-card"
+          className="rounded-xl border border-line/60 bg-surface/60 px-4 py-4 space-y-3"
+        >
+          {/* 桌面:标题与 text-lg 数字同一行,原样保留。手机端:标题独占一行,余量做 26px 大字主视觉 */}
+          <div className="flex items-baseline justify-between gap-2 max-md:hidden">
             <span className="text-[12px] font-medium text-content-secondary">公共池余量</span>
             <span className="text-lg font-semibold text-content-primary tabular-nums">
               {fmtTokens(pool.totalTokens - pool.usedTokens)}
               <span className="text-[12px] font-normal text-content-muted"> / {fmtTokens(pool.totalTokens)}</span>
             </span>
           </div>
-          <div className="h-1.5 rounded-full bg-surface-muted overflow-hidden">
+          <div className="hidden max-md:block max-md:space-y-1.5">
+            <p className="text-[12.5px] font-medium text-content-secondary">公共池余量</p>
+            <p className="text-[26px] font-semibold leading-none tabular-nums text-content-primary">
+              {fmtTokens(pool.totalTokens - pool.usedTokens)}
+              <span className="ml-1.5 text-[12.5px] font-normal text-content-secondary">
+                / {fmtTokens(pool.totalTokens)} tokens
+              </span>
+            </p>
+          </div>
+          <div className="h-1.5 rounded-full bg-surface-muted overflow-hidden max-md:h-2.5">
             <div
               className={cn('h-full rounded-full transition-all', usedPct >= 90 ? 'bg-red-400' : 'bg-accent')}
               style={{ width: `${Math.max(usedPct, 1)}%` }}
             />
           </div>
-          <div className="grid grid-cols-4 gap-2 text-center">
-            {[
-              { label: '已用', value: fmtTokens(pool.usedTokens) },
-              { label: '每日补给', value: fmtTokens(pool.dailyRefillTokens) },
-              { label: '正式日限', value: fmtTokens(pool.perUserDailyTokens) },
-              { label: '访客日限', value: fmtTokens(pool.ephemeralPerUserDailyTokens) },
-            ].map((s) => (
+          <div className="grid grid-cols-4 gap-2 text-center max-md:hidden">
+            {poolStats.map((s) => (
               <div key={s.label} className="min-w-0">
                 <p className="text-[10.5px] text-content-muted truncate">{s.label}</p>
                 <p className="text-[12px] font-medium text-content-primary tabular-nums truncate">{s.value}</p>
+              </div>
+            ))}
+          </div>
+          {/* 手机端 2x2:一档一格,标签走 secondary(桌面那套 10.5px muted 压在卡面上实测 2.64:1) */}
+          <div className="hidden max-md:grid max-md:grid-cols-2 max-md:gap-2">
+            {poolStats.map((s) => (
+              <div key={s.label} className="rounded-lg bg-surface-muted/60 px-2.5 py-1.5">
+                <p className="text-[12px] text-content-secondary">{s.label}</p>
+                <p className="text-[14px] font-medium tabular-nums text-content-primary">{s.value}</p>
               </div>
             ))}
           </div>
@@ -373,7 +403,7 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
       <div className="rounded-xl border border-line/60 bg-surface/60 overflow-hidden">
         <div className="px-3.5 pt-3 pb-2">
           <p className="text-[12px] font-medium text-content-secondary">公共模型</p>
-          <p className="text-[10.5px] text-content-muted mt-0.5">
+          <p className="text-[10.5px] text-content-muted mt-0.5 max-md:hidden">
             全员可见的「注册即用」档位：一律服务端出钱 + 公共额度计费。×倍率 = 该模型烧池子的速度相对「标准」的倍数（落账 tokens×倍率），按各上游真实成本填。限 N = 全站累计预算：用完自动停运并从用户端隐藏，改大即恢复。「检测」= 用服务端 Key 真打一次上游，确认 Key 与模型名可用；几条 token 的消耗记在上游侧，不进本页任何额度数字。
           </p>
         </div>
@@ -381,85 +411,97 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
           <p className="px-3.5 py-4 text-[12px] text-content-muted">还没有公共模型，用下方表单添加。</p>
         ) : (
           <div className="divide-y divide-line/50">
-            {data.publicModels.map((m) => (
-              <div key={m.id} data-testid={`pool-row-${m.name}`} className="px-3.5 py-2.5 flex items-center gap-2">
+            {data.publicModels.map((m) => {
+              // 触顶判定集中一处:红标、限额芯片配色、已用配色三处同源,别各写各的
+              const isCapped = m.capTokens > 0 && m.usedTokens >= m.capTokens
+              const weightCtl =
+                weightEditId === m.id ? (
+                  <input
+                    autoFocus
+                    type="number"
+                    step="0.1"
+                    min="0.01"
+                    max="100"
+                    value={weightDraft}
+                    onChange={(e) => setWeightDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitWeight(m, weightDraft)
+                    }}
+                    onBlur={() => commitWeight(m, weightDraft)}
+                    className="w-14 shrink-0 rounded border border-line/60 bg-surface px-1 py-0 text-[10.5px] text-content-primary text-right focus:outline-none focus:ring-1 focus:ring-accent/50 max-md:w-20 max-md:px-2 max-md:py-1 max-md:text-[16px]"
+                    aria-label={`修改 ${m.name} 的计费倍率`}
+                  />
+                ) : (
+                  <button
+                    onClick={() => {
+                      setWeightDraft(String(m.weight))
+                      setWeightEditId(m.id)
+                    }}
+                    className="shrink-0 rounded bg-surface-muted px-1 py-px font-medium text-content-secondary hover:bg-surface-subtle transition-colors max-md:px-2.5 max-md:py-1.5 max-md:text-[12.5px]"
+                    title="点击修改计费倍率（落账 tokens×倍率）"
+                  >
+                    ×{m.weight}
+                  </button>
+                )
+              const capCtl =
+                capEditId === m.id ? (
+                  <input
+                    autoFocus
+                    type="number"
+                    step="1000"
+                    min="0"
+                    max="1000000000"
+                    value={capDraft}
+                    onChange={(e) => setCapDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitCap(m, capDraft)
+                    }}
+                    onBlur={() => commitCap(m, capDraft)}
+                    className="w-20 shrink-0 rounded border border-line/60 bg-surface px-1 py-0 text-[10.5px] text-content-primary text-right focus:outline-none focus:ring-1 focus:ring-accent/50 max-md:w-28 max-md:px-2 max-md:py-1 max-md:text-[16px]"
+                    aria-label={`修改 ${m.name} 的全站累计限额`}
+                  />
+                ) : (
+                  <button
+                    onClick={() => {
+                      setCapDraft(String(m.capTokens))
+                      setCapEditId(m.id)
+                    }}
+                    className={cn(
+                      'shrink-0 rounded px-1 py-px font-medium transition-colors max-md:px-2.5 max-md:py-1.5 max-md:text-[12.5px]',
+                      isCapped
+                        ? 'bg-red-500/10 text-red-600 hover:bg-red-500/20'
+                        : 'bg-surface-muted text-content-secondary hover:bg-surface-subtle'
+                    )}
+                    title="点击修改全站累计限额（0=不限；达到后停运并从用户端隐藏，改大即恢复）"
+                  >
+                    {m.capTokens > 0 ? `限 ${fmtTokens(m.capTokens)}` : '不限量'}
+                  </button>
+                )
+              return (
+              <div
+                key={m.id}
+                data-testid={`pool-row-${m.name}`}
+                className="px-3.5 py-2.5 flex items-center gap-2 max-md:flex-col max-md:items-stretch max-md:gap-2.5 max-md:px-3 max-md:py-3"
+              >
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12.5px] font-medium text-content-primary truncate">
+                  <p className="text-[12.5px] font-medium text-content-primary truncate max-md:text-[15px] max-md:whitespace-normal max-md:overflow-visible max-md:text-clip">
                     {m.name}
                     {!m.enabled && (
-                      <span className="ml-1.5 inline-flex items-center h-[14px] px-1 rounded bg-surface-muted text-content-muted text-[9px] leading-none align-middle">
+                      <span className="ml-1.5 inline-flex items-center h-[14px] px-1 rounded bg-surface-muted text-content-muted text-[9px] leading-none align-middle max-md:h-[18px] max-md:px-1.5">
                         已停用
                       </span>
                     )}
                     {m.enabled && m.capTokens > 0 && m.usedTokens >= m.capTokens && (
-                      <span className="ml-1.5 inline-flex items-center h-[14px] px-1 rounded bg-red-500/10 text-red-600 text-[9px] leading-none align-middle">
+                      <span className="ml-1.5 inline-flex items-center h-[14px] px-1 rounded bg-red-500/10 text-red-600 text-[9px] leading-none align-middle max-md:h-[18px] max-md:px-1.5">
                         预算用完 · 用户端已隐藏
                       </span>
                     )}
                   </p>
-                  <p className="text-[10.5px] text-content-muted truncate flex items-center gap-1">
+                  {/* 桌面:一行塞满(服务商+倍率+限额+已用),手机端拆成「信息行 + 芯片行」两块 */}
+                  <p className="text-[10.5px] text-content-muted truncate flex items-center gap-1 max-md:hidden">
                     <span className="truncate">{providerName(m.provider)} · 上游 {m.upstreamId}</span>
-                    {weightEditId === m.id ? (
-                      <input
-                        autoFocus
-                        type="number"
-                        step="0.1"
-                        min="0.01"
-                        max="100"
-                        value={weightDraft}
-                        onChange={(e) => setWeightDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') commitWeight(m, weightDraft)
-                        }}
-                        onBlur={() => commitWeight(m, weightDraft)}
-                        className="w-14 shrink-0 rounded border border-line/60 bg-surface px-1 py-0 text-[10.5px] text-content-primary text-right focus:outline-none focus:ring-1 focus:ring-accent/50"
-                        aria-label={`修改 ${m.name} 的计费倍率`}
-                      />
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setWeightDraft(String(m.weight))
-                          setWeightEditId(m.id)
-                        }}
-                        className="shrink-0 rounded bg-surface-muted px-1 py-px font-medium text-content-secondary hover:bg-surface-subtle transition-colors"
-                        title="点击修改计费倍率（落账 tokens×倍率）"
-                      >
-                        ×{m.weight}
-                      </button>
-                    )}
-                    {capEditId === m.id ? (
-                      <input
-                        autoFocus
-                        type="number"
-                        step="1000"
-                        min="0"
-                        max="1000000000"
-                        value={capDraft}
-                        onChange={(e) => setCapDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') commitCap(m, capDraft)
-                        }}
-                        onBlur={() => commitCap(m, capDraft)}
-                        className="w-20 shrink-0 rounded border border-line/60 bg-surface px-1 py-0 text-[10.5px] text-content-primary text-right focus:outline-none focus:ring-1 focus:ring-accent/50"
-                        aria-label={`修改 ${m.name} 的全站累计限额`}
-                      />
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setCapDraft(String(m.capTokens))
-                          setCapEditId(m.id)
-                        }}
-                        className={cn(
-                          'shrink-0 rounded px-1 py-px font-medium transition-colors',
-                          m.capTokens > 0 && m.usedTokens >= m.capTokens
-                            ? 'bg-red-500/10 text-red-600 hover:bg-red-500/20'
-                            : 'bg-surface-muted text-content-secondary hover:bg-surface-subtle'
-                        )}
-                        title="点击修改全站累计限额（0=不限；达到后停运并从用户端隐藏，改大即恢复）"
-                      >
-                        {m.capTokens > 0 ? `限 ${fmtTokens(m.capTokens)}` : '不限量'}
-                      </button>
-                    )}
+                    {weightCtl}
+                    {capCtl}
                     {m.capTokens > 0 && (
                       <span
                         className={cn('shrink-0 tabular-nums', m.usedTokens >= m.capTokens && 'text-red-600')}
@@ -468,12 +510,25 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
                       </span>
                     )}
                   </p>
+                  <div className="hidden max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-2 max-md:gap-y-2">
+                    <p className="w-full text-[12.5px] text-content-secondary">
+                      {providerName(m.provider)} · 上游 {m.upstreamId}
+                    </p>
+                    {weightCtl}
+                    {capCtl}
+                    <span className={cn('text-[12.5px] tabular-nums text-content-secondary', isCapped && 'text-red-600')}>
+                      已用 {fmtTokens(m.usedTokens)}
+                      {m.capTokens > 0 ? ` / ${fmtTokens(m.capTokens)}` : ''}
+                    </span>
+                  </div>
                   <TestResultLine r={testResults[m.id]} />
                 </div>
+                {/* 操作钮包一层:桌面是同一行 gap-2 序列(视觉不变),手机端整行铺开等分 */}
+                <div className="flex shrink-0 items-center gap-2 max-md:w-full">
                 <button
                   onClick={() => void runTest(m)}
                   disabled={busy || testingId !== null}
-                  className={cn(btnGhost, testingId === m.id && 'opacity-60')}
+                  className={cn(btnGhost, testingId === m.id && 'opacity-60', 'max-md:flex-1 max-md:justify-center')}
                   title="用该服务商的服务端 Key 真打一次上游，确认 Key 有效且上游模型名存在"
                 >
                   {testingId === m.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
@@ -482,7 +537,7 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
                 <button
                   onClick={() => void mutate('/api/quota/admin/models', { method: 'PATCH', body: JSON.stringify({ id: m.id, enabled: !m.enabled }) })}
                   disabled={busy}
-                  className={btnGhost}
+                  className={cn(btnGhost, 'max-md:flex-1 max-md:justify-center')}
                 >
                   {m.enabled ? '停用' : '启用'}
                 </button>
@@ -494,21 +549,28 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
                         void mutate(`/api/quota/admin/models?id=${encodeURIComponent(m.id)}`, { method: 'DELETE' })
                       }}
                       disabled={busy}
-                      className={btnDanger}
+                      className={cn(btnDanger, 'max-md:flex-1 max-md:justify-center')}
                     >
                       确认删除
                     </button>
-                    <button onClick={() => setConfirmModelId(null)} className={btnGhost}>
+                    <button onClick={() => setConfirmModelId(null)} className={cn(btnGhost, 'max-md:flex-1 max-md:justify-center')}>
                       取消
                     </button>
                   </>
                 ) : (
-                  <button onClick={() => setConfirmModelId(m.id)} disabled={busy} className={btnGhost} aria-label={`删除 ${m.name}`}>
+                  <button
+                    onClick={() => setConfirmModelId(m.id)}
+                    disabled={busy}
+                    className={cn(btnGhost, 'max-md:px-3')}
+                    aria-label={`删除 ${m.name}`}
+                  >
                     <Trash2 className="w-3 h-3" />
                   </button>
                 )}
+                </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
         {/* 新增表单 */}
@@ -554,7 +616,7 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
               添加
             </button>
           </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_72px] gap-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_72px] gap-2 max-md:grid-cols-2">
             <select
               value={addProvider}
               onChange={(e) => {
@@ -603,7 +665,7 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
       <div className="rounded-xl border border-line/60 bg-surface/60 overflow-hidden">
         <div className="px-3.5 pt-3 pb-2">
           <p className="text-[12px] font-medium text-content-secondary">服务端 Key（公共池出钱用）</p>
-          <p className="text-[10.5px] text-content-muted mt-0.5">
+          <p className="text-[10.5px] text-content-muted mt-0.5 max-md:hidden">
             门面模型发上游从这里取 Key。DeepSeek 未设置时回退服务器环境变量兜底；Key 只存服务器，界面只显掩码。
           </p>
         </div>
@@ -641,7 +703,7 @@ export default function QuotaAdminSection({ view = 'pool' }: { view?: 'pool' | '
           </div>
         )}
         <div className="border-t border-line/50 px-3.5 py-3 space-y-2 bg-surface-muted/30">
-          <div className="grid grid-cols-[minmax(0,38%)_minmax(0,1fr)_auto] gap-2">
+          <div className="grid grid-cols-[minmax(0,38%)_minmax(0,1fr)_auto] gap-2 max-md:grid-cols-1">
             <select value={keyProvider} onChange={(e) => setKeyProvider(e.target.value)} className={inputCls} aria-label="Key 服务商">
               {catalog.providers.map((p) => (
                 <option key={p.id} value={p.id}>

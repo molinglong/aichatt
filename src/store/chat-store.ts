@@ -10,6 +10,10 @@ import {
   removeLastReadAt,
 } from '@/lib/last-read'
 import type { PreviewCheckToolOutput } from '@/lib/ai/preview-check-tool'
+import {
+  toSearchPlatformId,
+  type SearchPlatformId,
+} from '@/lib/ai/search-platforms'
 
 /** 最近使用模型历史上限:超过此值的最旧条目会被淘汰 */
 const MAX_RECENT_MODELS = 10
@@ -111,6 +115,10 @@ interface ChatState {
   /** 当前联网搜索引擎：qianfan | tavily，默认 qianfan */
   searchEngine: 'qianfan' | 'tavily'
   setSearchEngine: (engine: 'qianfan' | 'tavily') => void
+  /** 联网搜索平台定向口径：'auto'(默认，模型按问题自判) | 'all'(强制全网) | 具体平台 id(强制站内)。
+   *  纯本地偏好，持久化 localStorage('chat:searchPlatform')；见 @/lib/ai/search-platforms */
+  searchPlatform: SearchPlatformId
+  setSearchPlatform: (platform: SearchPlatformId) => void
   /** 思考框自动折叠:思考完毕后自动收起思考框(可在设置中关闭)。持久化到 localStorage */
   autoCollapseReasoning: boolean
   setAutoCollapseReasoning: (v: boolean) => void
@@ -218,6 +226,12 @@ interface ChatState {
 const getInitialSearchEngine = (): 'qianfan' | 'tavily' => {
   if (typeof window === 'undefined') return 'qianfan'
   return localStorage.getItem('chat:searchEngine') === 'tavily' ? 'tavily' : 'qianfan'
+}
+
+/** 平台定向初值：非法/过期取值一律落 'auto'（默认行为 = 改造前，不干涉模型） */
+const getInitialSearchPlatform = (): SearchPlatformId => {
+  if (typeof window === 'undefined') return 'auto'
+  return toSearchPlatformId(localStorage.getItem('chat:searchPlatform'))
 }
 
 /** preview_check 的 resolver 存放处(模块级,函数不进 zustand state) */
@@ -332,6 +346,11 @@ const storeInitializer: StateCreator<ChatState> = (set) => ({
   setSearchEngine: (engine) => {
     localStorage.setItem('chat:searchEngine', engine)
     set({ searchEngine: engine })
+  },
+  searchPlatform: typeof window !== 'undefined' ? getInitialSearchPlatform() : 'auto',
+  setSearchPlatform: (platform) => {
+    localStorage.setItem('chat:searchPlatform', platform)
+    set({ searchPlatform: platform })
   },
   // 默认开:与无设置时的展示行为一致,避免 SSR/客户端 hydration 不一致
   autoCollapseReasoning: typeof window !== 'undefined' ? localStorage.getItem('chat:autoCollapseReasoning') !== 'false' : true,

@@ -11,12 +11,14 @@
  *   :::timeline …（时间轴：首行可选标题，每行「年份｜朝代｜事件｜一句话｜出处」，行首 * = 关键节点）… :::
  *   :::translate …（英文题目的中文译文：首行题干，之后每行「A. 选项中文」；无选项行时整块按普通文本渲染）… :::
  *   :::sentence …（句子成分分析：首行原句，之后每行「成分名：内容｜说明」，主干行「主干：主语 ‖ 谓语 ‖ 宾语」；成分内容须为原句连续片段，渲染层自动回标着色）… :::
+ *   :::gamestatus …（游戏状态面板：每行一条「名称 值」或「名称：值」，值形如 60/100 渲染为进度条）… :::
+ *   :::gamechoice …（游戏行动面板：每行一个可点行动，点击即当作 user 消息发送；自由行动仍走输入框）… :::
  *   出处行「参考 xx·科目」支持各学科面具：数学/语文/英语/物理/化学/生物/历史/政治/地理
  * 解析为片段流后由 MarkdownRenderer 分别渲染成试卷卡片；
  * 关键词双色标注（==术语== / @@材料词@@）在渲染层处理，见 MarkdownRenderer.tsx。
  */
 
-export type ExamKind = 'choice' | 'material' | 'question' | 'answer' | 'poem' | 'lyrics' | 'essay' | 'timeline' | 'translate' | 'sentence'
+export type ExamKind = 'choice' | 'material' | 'question' | 'answer' | 'poem' | 'lyrics' | 'essay' | 'timeline' | 'translate' | 'sentence' | 'gamestatus' | 'gamechoice'
 
 export type ExamSegment =
   | { type: 'md'; text: string }
@@ -47,7 +49,7 @@ const CHOICE_OPTION_RE = /^\s*([A-Fa-f])[.、．:：]\s*(.+)$/
 /** 题号行：1. / 1、 / 1) 等前缀（数字后紧跟分隔符，避免误伤「755 年乱起」类正文） */
 const QUESTION_NO_RE = /^\s*\d{1,3}[.、．)]\s*(\S.*)$/
 
-const EXAM_OPEN_RE = /^:::(choice|material|question|answer|poem|lyrics|essay|timeline|translate|sentence)(?:\s+(.*?))?\s*$/
+const EXAM_OPEN_RE = /^:::(choice|material|question|answer|poem|lyrics|essay|timeline|translate|sentence|gamestatus|gamechoice)(?:\s+(.*?))?\s*$/
 const EXAM_CLOSE_RE = /^:::\s*$/
 
 /**
@@ -265,6 +267,58 @@ export function parseSentence(text: string): ExamSentence {
   return { sentence, parts, note: noteBuf.join('\n') }
 }
 
+export interface GameStat {
+  label: string
+  value: string
+  /** 数值型状态（如「精力 60/100」）：拆出 cur/max 供渲染层画进度条；否则 undefined */
+  cur?: number
+  max?: number
+}
+
+/**
+ * 游戏状态块内解析：每行一条状态「名称 值」或「名称：值」，值形如「60/100」时拆出 cur/max 画进度条。
+ * 分隔符判定：冒号/等号/竖线（：: = ｜ |）仅当它出现在首个空白之前才当分隔符
+ * （否则「时间 …07:12」里时间值的冒号会被误当分隔符）；一律优先按首个空白切分。
+ * 无分隔符的整行作纯标签（value 空）。幂等无状态，流式逐次重算即可。
+ */
+export function parseGameStatus(text: string): GameStat[] {
+  const stats: GameStat[] = []
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    const wsIdx = line.search(/\s/)
+    const sepMatch = line.match(/[：:=｜|]/)
+    const sepIdx = sepMatch?.index ?? -1
+    let label = ''
+    let value = ''
+    if (sepIdx >= 0 && (wsIdx < 0 || sepIdx < wsIdx)) {
+      label = line.slice(0, sepIdx).trim()
+      value = line.slice(sepIdx + sepMatch![0].length).trim()
+    } else if (wsIdx >= 0) {
+      label = line.slice(0, wsIdx).trim()
+      value = line.slice(wsIdx).trim()
+    } else {
+      label = line
+    }
+    if (!label) continue
+    const bar = value.match(/^(\d+)\s*\/\s*(\d+)/)
+    stats.push({ label, value, cur: bar ? Number(bar[1]) : undefined, max: bar ? Number(bar[2]) : undefined })
+  }
+  return stats
+}
+
+/**
+ * 游戏行动块内解析：每行一个可点选项。剥掉行首列表符/序号/字母（- * • · > 或「1.」「A.」），
+ * 使模型即便偶尔仍写「A. xxx」也被规整为纯行动文案；空行忽略。幂等无状态。
+ * 渲染层把每条行动做成按钮，点击即当作 user 消息发送；自由行动仍走输入框，不占选项。
+ */
+export function parseGameChoice(text: string): string[] {
+  return text
+    .split('\n')
+    .map((l) => l.replace(/^[-*•·>\s]+/, '').replace(/^[A-Fa-f0-9]{1,3}[.、．)）]\s*/, '').trim())
+    .filter(Boolean)
+}
+
 export interface ExamSourceRef {
   /** 出处定位，如「§1.2.3 例3(2)」（不含「参考」前缀与科目标签） */
   ref: string
@@ -381,7 +435,12 @@ export function parseExamSegments(md: string): ExamSegment[] {
       }
     }
   }
-  if (examKind) mdBuf.push(`:::${examKind}`, ...examBuf)
+  if (examKind) {
+    // 游戏面板块: 快模型偶尔漏写结尾的「:::」——宁可渲染成面板,
+    // 也不把「:::gamechoice …」原文吐给玩家
+    if (examKind === 'gamestatus' || examKind === 'gamechoice') closeExam()
+    else mdBuf.push(`:::${examKind}`, ...examBuf)
+  }
   flushMd()
   return segments
 }

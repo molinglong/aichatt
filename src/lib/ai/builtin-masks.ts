@@ -13,6 +13,7 @@
  */
 
 import { BUILTIN_MASK_LIBRARY } from './builtin-masks-library'
+import { BUILTIN_GAMES } from './builtin-games'
 import { DEAI_WRITING_DISCIPLINE } from '@/lib/text/deai'
 
 export interface BuiltinMaskFewShotTurn {
@@ -37,12 +38,20 @@ export interface BuiltinMask {
   /** 可选:学科倾向(如 math),知识库检索工具(search_knowledge)的默认过滤建议(半绑定,
    *  不锁死:用户问其他学科时模型可不带 subject 查全部)。自定义面具暂无此字段。 */
   subject?: string
+  /** 可选:标记为「游戏」面具(世界引擎型人格)。chat/route.ts 据此开干净车道——
+   *  关掉记忆注入、回复长度限制、课本检索、练题与澄清工具,避免学习脚手架污染沉浸叙事。
+   *  仅内置游戏面具携带(见 ./builtin-games.ts),自定义面具暂无此字段。 */
+  kind?: 'game'
 }
 
 /** 通过 id 查内置面具；未命中返回 undefined（供 API 校验与前端解析） */
 export function getBuiltinMask(id: string | null | undefined): BuiltinMask | undefined {
   if (!id) return undefined
-  return BUILTIN_MASKS.find((m) => m.id === id) ?? BUILTIN_MASK_LIBRARY.find((m) => m.id === id)
+  return (
+    BUILTIN_MASKS.find((m) => m.id === id) ??
+    BUILTIN_MASK_LIBRARY.find((m) => m.id === id) ??
+    BUILTIN_GAMES.find((m) => m.id === id)
+  )
 }
 
 export const BUILTIN_MASKS: readonly BuiltinMask[] = [
@@ -1082,5 +1091,9 @@ export const BUILTIN_MASKS: readonly BuiltinMask[] = [
   },
 ]
 
-/** 全部内置面具（精选 + 面具库），供批量遍历；单条查找用 getBuiltinMask */
-export const ALL_BUILTIN_MASKS: readonly BuiltinMask[] = [...BUILTIN_MASKS, ...BUILTIN_MASK_LIBRARY]
+/** 全部内置面具（精选 + 面具库 + 游戏），供批量遍历；单条查找用 getBuiltinMask */
+export const ALL_BUILTIN_MASKS: readonly BuiltinMask[] = [
+  ...BUILTIN_MASKS,
+  ...BUILTIN_MASK_LIBRARY,
+  ...BUILTIN_GAMES,
+]

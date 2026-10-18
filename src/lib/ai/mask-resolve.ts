@@ -22,6 +22,8 @@ export interface ResolvedMask {
   stylePreset?: string
   /** 学科倾向(仅内置面具携带,如 math-master→math);search_knowledge 半绑定的默认过滤建议 */
   subject?: string
+  /** 游戏面具标记(仅内置游戏携带,见 builtin-games.ts);chat/route.ts 据此开干净车道 */
+  kind?: 'game'
 }
 
 function isFewShotTurn(t: unknown): t is MaskFewShotTurn {
@@ -102,5 +104,6 @@ export async function getMaskById(
     fewShot: builtin.fewShot,
     stylePreset: builtin.stylePreset,
     subject: builtin.subject,
+    kind: builtin.kind,
   }
 }

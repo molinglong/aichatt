@@ -105,6 +105,24 @@ export function getListScrollFacade(): ListScrollFacade | null {
   return facadeRef.current
 }
 
+/* ── 贴底跟随信号: ChatPanel 注册,MessageList 的虚拟化补偿决策消费 ──────── */
+
+/**
+ * TanStack Virtual 的尺寸校正补偿(上方 item 变化时自动调 scrollTop)与 ChatPanel
+ * 的贴底跟随互相拉扯:补偿把 scrollTop 推离贴底位置,下一帧贴底又拉回,整列表
+ * 上下跳(真机 WebView 校正窗口被字体/reflow 拉长到数秒,表现为「打开会话一直闪」)。
+ * 跟随状态下由贴底逻辑独占滚动,补偿禁用;自由浏览时恢复默认补偿。
+ */
+const followingGetterRef: { current: () => boolean } = { current: () => true }
+
+export function registerListFollowing(getter: () => boolean): void {
+  followingGetterRef.current = getter
+}
+
+export function isListFollowing(): boolean {
+  return followingGetterRef.current()
+}
+
 /* ── 进入会话贴底:ChatPanel(单聊)与 CompareLane(对比泳道)共用 ──────────── */
 
 /**
@@ -113,11 +131,16 @@ export function getListScrollFacade(): ListScrollFacade | null {
  * 连续 stableFrames 帧 scrollHeight 不变才收手,maxFrames 封顶防长尾。
  * 让路条件:容器被卸载/隐藏(display:none 时 clientHeight=0)、上一帧的赋值被用户
  * 向上滚走、或 isFollowing 返回 false —— 首帧不判 isFollowing,此时容器还停在顶部。
+ * intentDriven: 让路完全交给 isFollowing(调用方的意图状态机,含触摸/滚轮门槛)。
+ * 旧 scrollTop<assigned-2 判据在校正期会被「上方 item 收缩把 top 与 scrollHeight
+ * 同步下调」误触发,贴底使命中途夭折,视口卡在半空(实测 db 卡 2000px 不归零);
+ * ChatPanel 已把用户意图收抳在 isFollowing 里,传 true 即可。
  */
 export function pinScrollToBottom(
   el: HTMLElement,
   isFollowing: () => boolean = () => true,
-  { stableFrames = 8, maxFrames = 120 }: { stableFrames?: number; maxFrames?: number } = {}
+  { stableFrames = 8, maxFrames = 120, intentDriven = false }:
+    { stableFrames?: number; maxFrames?: number; intentDriven?: boolean } = {}
 ): void {
   let frames = 0
   let stable = 0
@@ -125,7 +148,7 @@ export function pinScrollToBottom(
   let assigned = -1
   const step = () => {
     if (!el.isConnected || el.clientHeight === 0) return
-    if (assigned >= 0 && el.scrollTop < assigned - 2) return
+    if (!intentDriven && assigned >= 0 && el.scrollTop < assigned - 2) return
     if (frames > 0 && !isFollowing()) return
     el.scrollTop = el.scrollHeight
     assigned = el.scrollTop

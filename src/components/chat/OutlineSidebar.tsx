@@ -50,7 +50,13 @@ function outlineLabelOf(m: UIMessage): OutlineLabel {
     headings.length > 0
       ? { domId: `${m.id}-${headings[0].id}`, messageId: m.id, label: headings[0].text, level: headings[0].level }
       : (() => {
-          const firstLine = text.trim().split(/\r?\n/).find((s) => s.trim().length > 0) ?? ''
+          // 无标题时取首个"有内容"的行做标签;跳过块标记行(:::gamestatus / :::material 等),
+          // 否则以面板块开头的消息会把 ":::xxx" 当成节点名(游戏/试卷块都会踩)
+          const firstLine =
+            text
+              .trim()
+              .split(/\r?\n/)
+              .find((s) => s.trim().length > 0 && !/^:::/.test(s.trim())) ?? ''
           const cleaned = firstLine.replace(/^#+\s*/, '').trim()
           return { domId: null, messageId: m.id, label: cleaned.length > 0 ? cleaned : '新消息', level: 2 }
         })()

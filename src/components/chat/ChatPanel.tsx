@@ -19,7 +19,8 @@ import { CodePanel } from '@/components/code/CodePanel'
 import { ChatPreviewPanel } from './ChatPreviewPanel'
 import { WorkSidePane } from '@/components/workspace/WorkSidePane'
 import { OutlineSidebar } from './OutlineSidebar'
-import { pinScrollToBottom } from './chat-list-bridge'
+import { pinScrollToBottom, registerListFollowing } from './chat-list-bridge'
+import { INPUT_SEND_EVENT } from '@/lib/input-bridge'
 import { InfoAsidePanel, INFO_PANEL_WIDTH, INFO_TAB_WIDTH } from './InfoAsidePanel'
 import { MaskPickerMenu } from './MaskPickerMenu'
 import { ContextMeter } from './ContextMeter'
@@ -334,6 +335,9 @@ export function ChatPanel({
   const [webSearch, setWebSearch] = useState(false)
   // 当前联网搜索引擎（来自共享 store）
   const searchEngine = useChatStore((s) => s.searchEngine)
+  // 平台定向口径（'auto' 默认 = 模型自判；与引擎同为本地偏好，走 store 持久化）
+  const searchPlatform = useChatStore((s) => s.searchPlatform)
+  const setSearchPlatform = useChatStore((s) => s.setSearchPlatform)
 
   // 联网搜索可用性:由 /api/search/keys 返回的 key 数量决定。
   // 用 useQuery 接管,与全站 queryKeys 体系对齐。
@@ -581,6 +585,7 @@ export function ChatPanel({
   const deepThinkRef = useRef(deepThink)
   const webSearchRef = useRef(webSearch)
   const searchEngineRef = useRef(searchEngine)
+  const searchPlatformRef = useRef(searchPlatform)
   const mcpEnabledRef = useRef(mcpEnabled)
   const conversationStylePresetRef = useRef(conversationStylePreset)
   const conversationMaskIdRef = useRef(conversationMaskId)
@@ -590,11 +595,12 @@ export function ChatPanel({
     deepThinkRef.current = deepThink
     webSearchRef.current = webSearch
     searchEngineRef.current = searchEngine
+    searchPlatformRef.current = searchPlatform
     mcpEnabledRef.current = mcpEnabled
     conversationStylePresetRef.current = conversationStylePreset
     conversationMaskIdRef.current = conversationMaskId
     conversationReplyLengthRef.current = conversationReplyLength
-  }, [currentModel, deepThink, webSearch, searchEngine, mcpEnabled, conversationStylePreset, conversationMaskId, conversationReplyLength])
+  }, [currentModel, deepThink, webSearch, searchEngine, searchPlatform, mcpEnabled, conversationStylePreset, conversationMaskId, conversationReplyLength])
 
   // Create transport with current model, conversationId, deepThink, and webSearch.
   // 用 useMemo 收敛创建;所有可变值都通过 getter 读 ref,保证请求时拿到最新值。
@@ -608,6 +614,7 @@ export function ChatPanel({
           get deepThink() { return deepThinkRef.current },
           get webSearch() { return webSearchRef.current },
           get searchEngine() { return searchEngineRef.current },
+          get searchPlatform() { return searchPlatformRef.current },
           get mcpEnabled() { return mcpEnabledRef.current },
           get stylePreset() { return conversationStylePresetRef.current },
           get replyLength() { return conversationReplyLengthRef.current },
@@ -1270,9 +1277,37 @@ export function ChatPanel({
   const prevScrollTopRef = useRef(0)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
 
+  // 虚拟化尺寸校正的补偿决策要读跟随状态(MessageList 经 bridge 消费):注册 getter,
+  // getter 引用恒定,卸载时还原为恒真,避免单例信号指向已卸载面板的状态。
+  useEffect(() => {
+    registerListFollowing(() => shouldAutoScrollRef.current)
+    return () => registerListFollowing(() => true)
+  }, [])
+
   // 滚动容器监听:向上滚=脱离跟随;滚回底部(距底<=8px)=恢复跟随。
   // 此前阈值 40px 会在底部形成拉锯区(用户小幅上滑被跟随定时器拉回),收紧为 8px:
   // 几乎贴底才算"主动滚回",其余位置保留自由回看。
+  // 脱离另加意图门槛:程序性位移(TanStack 补偿残留/上方 item 收缩同步下调 top)也满足
+  // scrolledUp+距底拉开,但那不是用户在滑 —— 旧判据让一次 -859px 的校正位移永久杀掉
+  // 跟随,生成内容在视口下方堆积 2000+px 无人接管。触屏设备只在触摸/滚轮后 400ms
+  // 内的 scroll 才算用户上滑;桌面细指针(拖滚动条无 wheel 事件)保留原判定。
+  const lastUserIntentRef = useRef(0)
+  const coarsePointerRef = useRef(false)
+  useEffect(() => {
+    const el = messagesScrollEl
+    if (!el) return
+    coarsePointerRef.current = window.matchMedia('(pointer: coarse)').matches
+    const mark = () => { lastUserIntentRef.current = performance.now() }
+    el.addEventListener('touchstart', mark, { passive: true, capture: true })
+    el.addEventListener('touchmove', mark, { passive: true, capture: true })
+    el.addEventListener('wheel', mark, { passive: true, capture: true })
+    return () => {
+      el.removeEventListener('touchstart', mark, { capture: true })
+      el.removeEventListener('touchmove', mark, { capture: true })
+      el.removeEventListener('wheel', mark, { capture: true })
+    }
+  }, [messagesScrollEl])
+
   useEffect(() => {
     const el = messagesScrollEl
     if (!el) return
@@ -1281,7 +1316,13 @@ export function ChatPanel({
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
       const scrolledUp = el.scrollTop < prevScrollTopRef.current - 2
       prevScrollTopRef.current = el.scrollTop
-      if (scrolledUp && shouldAutoScrollRef.current) {
+      const intentRecent = performance.now() - lastUserIntentRef.current < 400
+      if (
+        scrolledUp &&
+        shouldAutoScrollRef.current &&
+        distanceFromBottom > 24 &&
+        (!coarsePointerRef.current || intentRecent)
+      ) {
         shouldAutoScrollRef.current = false
         setShowScrollToBottom(true)
       } else if (!shouldAutoScrollRef.current && distanceFromBottom <= 8) {
@@ -1336,7 +1377,9 @@ export function ChatPanel({
     initialScrollDoneRef.current = true
     // 循环自持,不交给 effect cleanup 取消:内联 ref 回调会让 messagesScrollEl 在
     // 重渲染中 null→el 翻转并触发本 effect 重跑,若跟着取消就永远校不完。
-    pinScrollToBottom(el, () => shouldAutoScrollRef.current)
+    // intentDriven: 让路交给上面的意图状态机(触摸/滚轮门槛),校正期的程序性
+    // top 下调不再误触发 scrollTop<assigned 让路。
+    pinScrollToBottom(el, () => shouldAutoScrollRef.current, { intentDriven: true })
   }, [messagesScrollEl, isLoading, messages.length])
 
   // 回到底部按钮:恢复跟随并瞬时滚到最新内容
@@ -1467,6 +1510,18 @@ export function ChatPanel({
     },
     [sendMessage, inTauri, bumpConversationVersion, armPendingAttachments]
   )
+
+  // 游戏面板「行动」按钮的直发桥: 深层 MarkdownRenderer 点击 → 事件 → handleSend,
+  // 复用完整发送链路(生成中自动入队)。非聊天页无 MarkdownRenderer 触发,监听恒静默。
+  useEffect(() => {
+    function onSend(e: Event) {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text
+      if (typeof text !== 'string' || !text.trim()) return
+      handleSend(text)
+    }
+    window.addEventListener(INPUT_SEND_EVENT, onSend)
+    return () => window.removeEventListener(INPUT_SEND_EVENT, onSend)
+  }, [handleSend])
 
   // local_file 决策:卡片上用户点「批准」→ 按动作执行(delete=移入回收站;
   // create=覆盖写入)并回填;「拒绝」→ 回填 denied。回填后由 sendAutomaticallyWhen
@@ -2078,6 +2133,8 @@ export function ChatPanel({
           webSearch={webSearch}
           onWebSearchChange={handleWebSearchChange}
           webSearchAvailable={webSearchAvailable}
+          searchPlatform={searchPlatform}
+          onSearchPlatformChange={setSearchPlatform}
           mcpEnabled={mcpEnabled}
           onMcpEnabledChange={handleMcpEnabledChange}
           mcpAvailable={mcpAvailable}
@@ -2276,6 +2333,8 @@ export function ChatPanel({
             webSearch={webSearch}
             onWebSearchChange={handleWebSearchChange}
             webSearchAvailable={webSearchAvailable}
+            searchPlatform={searchPlatform}
+            onSearchPlatformChange={setSearchPlatform}
             mcpEnabled={mcpEnabled}
             onMcpEnabledChange={handleMcpEnabledChange}
             mcpAvailable={mcpAvailable}

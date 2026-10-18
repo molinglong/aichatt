@@ -121,6 +121,11 @@ import {
 } from "@/lib/ai/mcp/mcp-client.server"
 import { loadCompressionState, maybeCompressContext, shouldCompress } from "@/lib/context-compression"
 import type { SearchEngineId } from "@/lib/ai/search-engines"
+import {
+  getSearchPlatform,
+  toSearchPlatformId,
+  type SearchPlatformId,
+} from "@/lib/ai/search-platforms"
 import type { Attachment } from "@/lib/attachment-types"
 import { sanitizeUploadName, readUploadAsDataUrl, sweepOrphanUploadsThrottled } from "@/lib/uploads"
 import { SCANNED_PDF_MIN_CHARS } from "@/lib/file-parser"
@@ -144,6 +149,7 @@ interface ChatRequestBody {
   maskId?: string // 面具 id(内置面具见 @/lib/ai/builtin-masks);不传时从会话读取
   webSearch?: boolean // 客户端本次请求是否开启联网搜索
   searchEngine?: SearchEngineId // 联网搜索引擎，默认 qianfan
+  searchPlatform?: SearchPlatformId // 平台定向口径: 'auto'(默认,模型自判) | 'all'(强制全网) | 具体平台 id(强制站内白名单)
   mcpEnabled?: boolean // 客户端是否注入 MCP 外部工具(默认 true,仅显式 false 时跳过加载)
   settingsSnapshot?: Partial<Record<string, string>> // 客户端设置快照（AI 设置控制，executor.buildSettingsSnapshot 上报）
   currentWriteDocId?: string // 写作画布面板当前打开的文档 id（注入提示词与 append 续写）
@@ -431,6 +437,10 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     if (effectiveMask) {
       console.log(`[chat] Mask: ${effectiveMask.ref} (body: ${requestedMaskRef ?? '-'}, conv: ${conversationMaskId ?? '-'})`)
     }
+    // 游戏面具(世界引擎型人格)走「干净车道」:关掉记忆/档案/回复长度/课本检索/练题/澄清等
+    // 学习脚手架,以及设置控制/面具工坊/写作/代码/行程/待办/生图/本地文件/代码编辑/预览/项目
+    // 检查/MCP/联网读页等全部助理工具面——沉浸叙事只留世界观与游戏面板。逃生舱(MASK_ESCAPE_HATCH)仍保留。
+    const isGameMask = effectiveMask?.kind === 'game'
 
     // 解析最终生效的 preset:body > DB preset > 面具默认风格 > 旧 offset 推导 > balanced
     const effectiveStylePreset: string =
@@ -805,6 +815,29 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     }
   }
 
+  // 游戏面板钉子:快模型(qwen-flash 级)在超长世界引擎 system prompt 下,常漏掉
+  // 每回合的 :::gamestatus / :::gamechoice 面板块(实测第 3 回合只写叙事、两块全丢,
+  // 玩家没有可点行动)。同「可视化钉子」思路:在末条 user 消息尾部补一行贴身提醒,
+  // 注意力贴着用户消息,小模型也能命中;只改模型上下文,不入库、客户端不显示。
+  // 仅游戏干净车道生效(学习/助理车道无面板协议)。
+  if (isGameMask) {
+    const gameUserIdx = messages.map((m) => m.role).lastIndexOf("user")
+    if (gameUserIdx !== -1) {
+      const GAME_NUDGE =
+        "\n\n[system:输出骨架铁律——若角色尚未创建,只输出开场问卷;若角色已创建,本回合必须依次输出三段、缺一不可:(1) :::gamestatus 状态面板块(每行「名称 值」,只写当前值,不写 +10/-20 这类增减);(2) 第二人称叙事正文;(3) :::gamechoice 行动面板块(2~4 个行动,每行一个,不编号、不加 A/B/C 字母、不加括号数值说明)。每个块的 ::: 开标记与闭标记都必须各自独占一行,行动绝不能挤在 :::gamechoice 同一行,也绝不能漏写结尾的 :::。行动面板输出后立即停下等待玩家,绝不替玩家选择、绝不继续推进剧情。]"
+      const gmsg = messages[gameUserIdx]
+      if (typeof gmsg.content === "string") {
+        gmsg.content += GAME_NUDGE
+      } else if (Array.isArray(gmsg.content)) {
+        const parts = gmsg.content as { type: string; text?: string }[]
+        const lastText = [...parts].reverse().find((p) => p.type === "text")
+        if (lastText) lastText.text = (lastText.text || "") + GAME_NUDGE
+        else parts.push({ type: "text", text: GAME_NUDGE })
+      }
+      console.log(`[chat] game panel nudge fired (userMsgIdx=${gameUserIdx})`)
+    }
+  }
+
   // 长上下文压缩(注入): 上方已摘除被覆盖的早期原文,这里把摘要注入 system 段,
   // 模型无需原文也能接续早期上下文。仅本人会话才读取(信息泄露防护)。
   if (compressionState?.content) {
@@ -844,12 +877,13 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // 用户可在正常模式 设置→用户中心 中打开"临时模式允许读取我的记忆"
   const injectMemory =
     memoryEnabled &&
+    !isGameMask &&
     (!isEphemeral || (memorySettings?.ephemeralMemoryInjection ?? false))
 
   let memorySystemPrompt = ""
   if (injectMemory) {
     const memories = await prisma.memory.findMany({
-      where: { userId },
+      where: { userId, status: "active" },
       orderBy: { updatedAt: "desc" },
     })
     if (memories.length > 0) {
@@ -866,7 +900,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // 四道闸门与记忆同构——临时模式(借号)不读写、对比模式不重复注入、
   // 记忆总开关关掉则整套关、档案行 enabled 默认 false。
   const generalProfile =
-    !isEphemeral && !groupId && memoryEnabled
+    !isEphemeral && !groupId && memoryEnabled && !isGameMask
       ? await loadGeneralProfile(userId)
       : null
   const generalProfilePrompt =
@@ -885,13 +919,14 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     systemParts.push(generalProfilePrompt)
     console.log(`[chat] profile injected (${generalProfilePrompt.length} chars, user ${userId})`)
   }
-  if (clarifyEnabled) systemParts.push(clarifySystemPrompt)
+  if (clarifyEnabled && !isGameMask) systemParts.push(clarifySystemPrompt)
 
   // AI 设置控制:总开关开启且非对比模式时,注入快照、规则与 update_settings 工具;
   // 关闭时物理级不注入工具(总开关判定在服务端,模型无法影响),改注入降级提示。
   // 对比模式(groupId)两条泳道各自请求,不注入避免重复消耗与多泳道重复执行。
+  // 游戏干净车道:整套不注入,连降级提示也省——沉浸叙事不谈配置。
   const aiControlEnabled = memorySettings?.aiSettingsControl ?? true
-  if (aiControlEnabled && !isEphemeral && !groupId) {
+  if (aiControlEnabled && !isEphemeral && !groupId && !isGameMask) {
     systemParts.push(
       buildSettingsSnapshotSection(body.settingsSnapshot, {
         memoryEnabled,
@@ -907,29 +942,32 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     // 中转站/自定义模型(add_custom_model):同开关同闸门;AI 只起草端点与模型名,
     // API Key 由用户在确认卡片里粘贴——Key 不经过模型请求也不进聊天记录。
     systemParts.push(await buildCustomModelSection(userId))
-  } else if (!groupId && !isEphemeral) {
+  } else if (!groupId && !isEphemeral && !isGameMask) {
     systemParts.push(SETTINGS_DISABLED_PROMPT)
   }
 
   // 显式记忆添加:记忆功能开启且非对比模式时注入 add_memory 工具+规则。
   // 关闭时物理级不注入,改注入降级提示,避免模型虚构"已保存"。
   // 与 onFinish 的自动记忆提取互补:自动靠模型判断"值得记",本工具响应显式指令。
-  if (memoryEnabled && !isEphemeral && !groupId) {
-    systemParts.push(MEMORY_TOOL_PROMPT)
-  } else if (!groupId) {
-    systemParts.push(MEMORY_DISABLED_PROMPT)
+  // 游戏干净车道:两者都不注入(记忆工具与降级提示都属学习/助理脚手架噪音)。
+  if (!isGameMask) {
+    if (memoryEnabled && !isEphemeral && !groupId) {
+      systemParts.push(MEMORY_TOOL_PROMPT)
+    } else if (!groupId) {
+      systemParts.push(MEMORY_DISABLED_PROMPT)
+    }
   }
 
   // 面具工坊:非对比模式全量注入,无用户开关;草稿需用户在卡片上确认才入库。
   // 模型仅在用户明确要求生成面具时调用(与 update_settings 的 mask 项互斥分发)。
-  // 临时模式不注入(生成的面具会写入用户面具库,写入不受隔离)
-  if (!isEphemeral && !groupId) {
+  // 临时模式不注入(生成的面具会写入用户面具库,写入不受隔离);游戏回合同样不注入。
+  if (!isEphemeral && !groupId && !isGameMask) {
     systemParts.push(MASK_TOOL_PROMPT)
   }
 
   // 写作文档:非临时非对比模式注入(正文写库,写入受临时隔离);mask 无用户开关,
-  // 模型仅在用户要求成篇幅正文时调用,产出进 WriteDoc 表与 /write 互通。
-  if (!isEphemeral && !groupId) {
+  // 模型仅在用户要求成篇幅正文时调用,产出进 WriteDoc 表与 /write 互通;游戏回合不注入。
+  if (!isEphemeral && !groupId && !isGameMask) {
     // 面板打开时附带当前文档(校验属主),AI 可用 append 动作续写这篇;
     // 文档归属作品时追加设定注入(命中式,见下)
     let currentDocHint = ""
@@ -982,23 +1020,23 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
 
   // 代码文档:与 write_document 对称(非临时非对比),模型产出代码/网页类产物时创建
   // CodeDoc 并在前端自动滑出代码编辑器面板——「写个主页 html」类请求的默认通道,
-  // 不再误入写作画布;两条 prompt 紧邻注入,边界对照更清晰。
-  if (!isEphemeral && !groupId) {
+  // 不再误入写作画布;两条 prompt 紧邻注入,边界对照更清晰;游戏回合不注入。
+  if (!isEphemeral && !groupId && !isGameMask) {
     systemParts.push(WRITE_CODE_TOOL_PROMPT)
   }
 
   // 行程规划:非对比模式注入(纯只读不落库,临时模式安全);模型仅在用户提出
-  // 旅游/出行规划意图时调用(坐标经服务端高德 POI 校准后由前端渲染地图卡片)。
-  if (!groupId) {
+  // 旅游/出行规划意图时调用(坐标经服务端高德 POI 校准后由前端渲染地图卡片);游戏回合不注入。
+  if (!groupId && !isGameMask) {
     systemParts.push(TRIP_TOOL_PROMPT)
   }
 
   // 待办管理:非临时非对比模式注入 manage_todo 工具+规则。
   // 临时模式不注入(待办属长期数据,防污染),注入降级提示防虚构。
-  // 与 REST API(/api/todos,新标签页插件)共用 Todo 表,变更互通。
-  if (!isEphemeral && !groupId) {
+  // 与 REST API(/api/todos,新标签页插件)共用 Todo 表,变更互通;游戏回合整链不注入。
+  if (!isEphemeral && !groupId && !isGameMask) {
     systemParts.push(TODO_TOOL_PROMPT)
-  } else if (!groupId) {
+  } else if (!groupId && !isGameMask) {
     systemParts.push(TODO_DISABLED_PROMPT)
   }
 
@@ -1013,7 +1051,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     REPLY_LENGTH_LEVELS.find((l) => l.id === conversationReplyLength)?.id ??
     DEFAULT_REPLY_LENGTH
   const replyLengthPrompt = getReplyLengthPrompt(effectiveReplyLength)
-  if (replyLengthPrompt) systemParts.push(replyLengthPrompt)
+  if (replyLengthPrompt && !isGameMask) systemParts.push(replyLengthPrompt)
 
   // 公式书写规范: 全局生效——模型(尤其中文系)常用 Unicode 拼凑数学式(a^m·a^n、√2、≠),
   // KaTeX 只认 LaTeX 定界符,这些写法被原样当字符显示,用户侧表现就是"公式全是乱码"。
@@ -1032,7 +1070,8 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
 
   // Image generation — tell the model how to request images
   // 非视觉模型收到图片附件时移除生图能力提示,避免模型被"图片"字眼诱导误触发生成。
-  if (!(hasImageAttachments && !modelDef.supportsVision)) {
+  // 游戏干净车道不注入(生图属暂缓能力,沉浸叙事不该被诱导出画)。
+  if (!isGameMask && !(hasImageAttachments && !modelDef.supportsVision)) {
     systemParts.push([
       '## 生图能力',
       '用户想要生成图片（绘画、照片、插画等美术需求）时，在图片应出现的位置输出[IMG:详细描述]（用用户语言描述主体、风格、构图、光线），每条回复最多 2 张。数据图表类可视化不要用生图，按「数据可视化规范」输出。',
@@ -1058,6 +1097,8 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // - 引擎: 客户端通过 searchEngine 指定(qianfan | tavily)，由 Settings 滑块控制
   const webSearchEnabled = webSearch === true
   const engine: SearchEngineId = searchEngine ?? "qianfan"
+  // 平台定向口径:客户端没传/传了非法值 → 'auto'(模型自判),行为与改造前完全一致。
+  const searchPlatform: SearchPlatformId = toSearchPlatformId(body.searchPlatform)
   let searchApiKey: string | null = null
   // 工具调用明细收集:onStepFinish 逐步累积,流结束后随 metadata 入库,
   // 供前端历史消息回显工具调用卡片(kind='tool_calls')。
@@ -1070,8 +1111,12 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       })
       if (searchKeyRecord) {
         searchApiKey = decrypt(searchKeyRecord.encryptedKey)
-        searchTool = createWebSearchTool(engine, searchApiKey)
-        console.log(`[chat] Using search engine: ${engine}`)
+        searchTool = createWebSearchTool(engine, searchApiKey, searchPlatform)
+        console.log(
+          `[chat] Using search engine: ${engine}, platform: ${searchPlatform}${
+            searchPlatform !== "auto" ? `(${getSearchPlatform(searchPlatform).label})` : ""
+          }`
+        )
       }
     } catch (err) {
       console.error(`[chat] Failed to load search key for engine ${engine}:`, err)
@@ -1084,19 +1129,19 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // 全文阅读工具(read_url):与联网搜索共用开关(同一“联网”意图),无需 Key。
   // 只读工具,临时模式安全(课本 knowledge 同理)。与 web_search 分工:
   // 搜索回摘要,本工具读链接全文(HTML 正文/PDF 文字层,unpdf 已有依赖)。
-  // 关闭时物理不注入,改注入降级提示防虚构。
-  const urlReaderTool = webSearchEnabled ? createUrlReaderTool() : null
+  // 关闭时物理不注入,改注入降级提示防虚构;游戏回合整链不注入。
+  const urlReaderTool = webSearchEnabled && !isGameMask ? createUrlReaderTool() : null
   if (urlReaderTool) {
     systemParts.push(URL_READER_TOOL_PROMPT)
-  } else if (!groupId) {
+  } else if (!groupId && !isGameMask) {
     systemParts.push(URL_READER_DISABLED_PROMPT)
   }
 
   // MCP 外部工具:非临时非对比模式加载用户启用的 server(配置即全局生效)。
   // 连接失败只记入 failures,随能力段注入降级提示,不阻塞主流程;
-  // 连接在 onFinish 统一 close(临时模式/对比模式根本不加载)。
+  // 连接在 onFinish 统一 close(临时模式/对比模式根本不加载);游戏回合同样不加载。
   let mcp: McpLoadResult | null = null
-  if (!isEphemeral && !groupId && mcpEnabled !== false) {
+  if (!isEphemeral && !groupId && mcpEnabled !== false && !isGameMask) {
     try {
       mcp = await loadMcpToolsForUser(userId)
       if (mcp.promptInfos.length > 0 || mcp.failures.length > 0) {
@@ -1113,25 +1158,29 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
 
   // 澄清提问工具(无 execute:输出 tool call 后本轮即结束,等用户在前端卡片上回答)。
   // 对比模式不注入(多泳道各自触发澄清卡片会互相踩踏),v1 仅单聊启用。
-  const clarifyTool = clarifyEnabled && !groupId ? createClarifyTool() : null
-  const settingsTool = aiControlEnabled && !isEphemeral && !groupId ? createSettingsTool() : null
+  const clarifyTool = clarifyEnabled && !groupId && !isGameMask ? createClarifyTool() : null
+  const settingsTool =
+    aiControlEnabled && !isEphemeral && !groupId && !isGameMask ? createSettingsTool() : null
   const providerModelTool =
-    aiControlEnabled && !isEphemeral && !groupId ? createProviderModelTool() : null
+    aiControlEnabled && !isEphemeral && !groupId && !isGameMask ? createProviderModelTool() : null
   // 中转站/自定义模型:AI 只起草配置,Key 由用户在卡片粘贴(同设置控制开关)
   const customModelTool =
-    aiControlEnabled && !isEphemeral && !groupId ? createCustomModelTool() : null
+    aiControlEnabled && !isEphemeral && !groupId && !isGameMask ? createCustomModelTool() : null
   // 删除自定义模型(聊天/生图):删除走确认卡片+计算题双层防护(同设置控制开关)
   const deleteCustomModelTool =
-    aiControlEnabled && !isEphemeral && !groupId ? createDeleteCustomModelTool() : null
-  const memoryTool = memoryEnabled && !isEphemeral && !groupId ? createMemoryTool(userId) : null
-  const maskGeneratorTool = !isEphemeral && !groupId ? createMaskGeneratorTool() : null
-  const todoTool = !isEphemeral && !groupId ? createTodoTool(userId) : null
-  const writeDocTool = !isEphemeral && !groupId ? createWriteDocTool(userId) : null
+    aiControlEnabled && !isEphemeral && !groupId && !isGameMask ? createDeleteCustomModelTool() : null
+  const memoryTool = memoryEnabled && !isEphemeral && !groupId && !isGameMask ? createMemoryTool(userId) : null
+  const maskGeneratorTool =
+    !isEphemeral && !groupId && !isGameMask ? createMaskGeneratorTool() : null
+  const todoTool =
+    !isEphemeral && !groupId && !isGameMask ? createTodoTool(userId) : null
+  const writeDocTool =
+    !isEphemeral && !groupId && !isGameMask ? createWriteDocTool(userId) : null
   // 代码文档落库需要 conversationId,但新对话的 convId 在下方才解析:
   // 改为工厂惰性单例 —— 首次 execute 时 convId 已确定,拿当届值建工具。
   // 用 const 局部变量中转,不依赖 TS 对闭包内可变捕获变量的收窄
   let writeCodeToolInstance: ReturnType<typeof createWriteCodeTool> | null = null
-  const writeCodeTool = !isEphemeral && !groupId
+  const writeCodeTool = !isEphemeral && !groupId && !isGameMask
     ? () => {
         const existing = writeCodeToolInstance
         if (existing) return existing
@@ -1140,14 +1189,14 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
         return created
       }
     : null
-  const tripTool = !groupId ? createTripTool(userId) : null
+  const tripTool = !groupId && !isGameMask ? createTripTool(userId) : null
 
   // 本地文件工具(无 execute:文件操作在用户本地机器执行,远程服务器碰不到磁盘)。
   // 注入三重闸门:①客户端上报 localFilesEnabled(仅 Tauri+用户开关会为 true)
-  // ②DB 开关 localFilesEnabledDb ③非临时非对比模式。tool call 输出后本轮即结束,
+  // ②DB 开关 localFilesEnabledDb ③非临时非对比模式 ④游戏干净车道。tool call 输出后本轮即结束,
   // 前端 onToolCall 经 Tauri 在工作区沙箱内执行(删除需卡片确认),经 addToolOutput 回填续跑。
   const localFileTool =
-    body.localFilesEnabled === true && localFilesEnabledDb && !isEphemeral && !groupId
+    body.localFilesEnabled === true && localFilesEnabledDb && !isEphemeral && !groupId && !isGameMask
       ? createLocalFileTool()
       : null
   if (localFileTool) {
@@ -1170,9 +1219,9 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   }
 
   // 代码编辑器工具(无 execute:操作的是 DB 里的 CodeDoc + 前端 Diff 审查,不碰磁盘)。
-  // 注入条件:客户端上报 codePanelOpen(用户打开了代码面板)且非临时非对比模式。
+  // 注入条件:客户端上报 codePanelOpen(用户打开了代码面板)且非临时非对比模式;游戏回合不注入。
   const codeEditTool =
-    body.codePanelOpen === true && !isEphemeral && !groupId
+    body.codePanelOpen === true && !isEphemeral && !groupId && !isGameMask
       ? createCodeEditTool()
       : null
   if (codeEditTool) {
@@ -1182,8 +1231,9 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
 
   // 预览验证工具(无 execute:前端渲染 iframe 预览收集 console/脚本错误回填)。
   // 与 write_code 同闸门(普通聊天恒挂载)——它是 write_code 的验证闭环下半场:
-  // 模型写完 HTML 主动自查,报错回来自修。执行在前端(不依赖 Tauri,Web 端可用)。
-  const previewCheckTool = !isEphemeral && !groupId ? createPreviewCheckTool() : null
+  // 模型写完 HTML 主动自查,报错回来自修。执行在前端(不依赖 Tauri,Web 端可用);游戏回合不注入。
+  const previewCheckTool =
+    !isEphemeral && !groupId && !isGameMask ? createPreviewCheckTool() : null
   if (previewCheckTool) {
     systemParts.push(PREVIEW_CHECK_TOOL_PROMPT)
   }
@@ -1204,7 +1254,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   let knowledgeTool: ReturnType<typeof createKnowledgeTool> | null = null
   let knowledgeSubjectHint = ""
   try {
-    if (studyModeOn || (await hasKnowledgeChunks(userId))) {
+    if (!isGameMask && (studyModeOn || (await hasKnowledgeChunks(userId)))) {
       knowledgeTool = createKnowledgeTool(userId, effectiveMask?.subject)
       const prefSubject = effectiveMask?.subject
       const prefLabel = prefSubject ? (KNOWLEDGE_SUBJECT_LABELS[prefSubject] ?? prefSubject) : ""
@@ -1222,7 +1272,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // 故临时模式/对比模式整体不挂载(与其它写入类工具同闸门)。学习模式强制挂载。
   let practiceTool: ReturnType<typeof createPracticeTool> | null = null
   let recordPracticeTool: ReturnType<typeof createRecordPracticeTool> | null = null
-  if (!isEphemeral && !groupId) {
+  if (!isEphemeral && !groupId && !isGameMask) {
     try {
       if (studyModeOn || (await hasQuestions(userId))) {
         practiceTool = createPracticeTool(userId)
@@ -1236,6 +1286,17 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
 
   if (searchTool) {
     const engineDisplayName = engine === "tavily" ? "Tavily" : "百度千帆"
+    // 平台定向口径:用户已选定时工具 schema 里根本没有 platform 参数(见 lib/ai/search.ts),
+    // 这里只需交代"结果来自哪个口径 + 回退后必须如实说明";'auto' 才需要教模型何时传参。
+    const platformGuidance =
+      searchPlatform === "auto"
+        ? [
+            "平台定向(提高体感的关键):用户点名要在某个站内查资料时(B站评论区/UP主、小红书笔记、知乎回答、微博话题、贴吧帖子、豆瓣评分、抖音视频)，给 web_search 多传一个 platform 参数，结果会只含该站内容。",
+            "拿不准用户是不是要站内结果时就不传 platform(全网检索)。站内索引可能比全网稀薄，零结果时工具会自动回退全网并在结果里说明——回退发生时，必须向用户交代「这些是全网来源，不是该站内内容」。",
+          ].join("\n")
+        : searchPlatform === "all"
+          ? "用户已明确选择「全网」检索，结果不限站点。"
+          : `用户已强制把检索限定在「${getSearchPlatform(searchPlatform).label}」，工具只会返回该站内容；若结果里注明已回退全网，必须如实交代来源已变。`
     systemParts.push([
       '## 联网搜索能力',
       `你拥有 web_search 工具(基于 ${engineDisplayName} 搜索 API)。当用户问题涉及以下场景时,**主动调用 web_search** 一次或多次获取实时信息再作答。`,
@@ -1243,6 +1304,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       '- 需要事实性数据(股价、天气、比赛结果、排行榜、版本号)',
       '- 引用具体来源、查证知识、用户要求查一查',
       '- 你对某个事实没有把握、训练数据可能已过时',
+      platformGuidance,
       '普通闲聊、通用知识问答、代码翻译/数学等不需要联网。回答时请自然引用来源，不要编造链接。',
     ].join('\n'))
   }
@@ -1324,7 +1386,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   }
   // 学习模式能力段:/study 导师对话流。业界验证范式(ChatGPT Study Mode/Khanmigo):
   // 答案守卫+苏格拉底引导做在系统层,配逃生舱防"伪引导";结课小结+学情回灌让错题参与对话。
-  if (studyModeOn) {
+  if (studyModeOn && !isGameMask) {
     systemParts.push([
       '## 学习模式(导师)',
       '本会话处于学习模式:你是导师,目标是让用户真正学会,而不是替他给出答案。',
@@ -2043,8 +2105,8 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
           })
         }
         // Extract long-term memories in the background (never blocks the chat)
-        // 临时模式永不提取:借号者的聊天不得污染长期记忆
-        if (memoryEnabled && !isEphemeral && content) {
+        // 临时模式永不提取:借号者的聊天不得污染长期记忆;游戏回合同样不提取(沉浸叙事非用户事实)
+        if (memoryEnabled && !isEphemeral && !isGameMask && content) {
           extractAndSaveMemories({
             userId,
             model: provider(realModelId),

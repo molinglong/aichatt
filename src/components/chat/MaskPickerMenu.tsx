@@ -5,6 +5,7 @@ import { Search, ChevronDown, Settings as SettingsIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BUILTIN_MASKS } from '@/lib/ai/builtin-masks'
 import { BUILTIN_MASK_LIBRARY } from '@/lib/ai/builtin-masks-library'
+import { BUILTIN_GAMES } from '@/lib/ai/builtin-games'
 import type { MaskDTO } from '@/lib/ai/mask-types'
 
 interface MaskPickerMenuProps {
@@ -20,8 +21,8 @@ interface MaskPickerMenuProps {
   onClear: () => void
 }
 
-/** 折叠分区:我的面具(置顶) / 精选 / 面具库(默认折叠,39 项里的长尾) */
-type GroupKey = 'mine' | 'curated' | 'library'
+/** 折叠分区:我的面具(置顶) / 精选 / 游戏 / 面具库(默认折叠,39 项里的长尾) */
+type GroupKey = 'mine' | 'curated' | 'game' | 'library'
 
 interface MaskRow {
   id: string
@@ -76,6 +77,7 @@ export function MaskPickerMenu({
   const [collapsed, setCollapsed] = useState<Record<GroupKey, boolean>>({
     mine: false,
     curated: false,
+    game: false,
     library: true,
   })
   const searchRef = useRef<HTMLInputElement>(null)
@@ -93,6 +95,9 @@ export function MaskPickerMenu({
     groups.push({ key: 'mine', label: '我的面具', rows: userMasks })
   }
   groups.push({ key: 'curated', label: '精选', rows: BUILTIN_MASKS })
+  if (BUILTIN_GAMES.length > 0) {
+    groups.push({ key: 'game', label: '游戏', rows: BUILTIN_GAMES })
+  }
   if (BUILTIN_MASK_LIBRARY.length > 0) {
     groups.push({ key: 'library', label: '面具库', rows: BUILTIN_MASK_LIBRARY })
   }

@@ -5,6 +5,7 @@ import { type BuddyPersonality, type BuddyMood } from '@/lib/buddy-config'
 import { cn } from '@/lib/utils'
 import { X, Palette, Brain, MessageSquare, Sparkles } from 'lucide-react'
 import { useState } from 'react'
+import { useBackToClose } from '@/hooks/useBackToClose'
 
 const PERSONALITY_OPTIONS: { value: BuddyPersonality; label: string; desc: string }[] = [
   { value: 'friendly', label: '友善型', desc: '温暖体贴，会关心你' },
@@ -53,6 +54,10 @@ export function BuddySettingsPanel() {
   } = useBuddyStore()
 
   const [localName, setLocalName] = useState(config.name)
+
+  // 系统/浏览器「返回」先收面板:面板不占路由,而壳内返回键固定走 WebView goBack
+  // (与 MobileDrawer/SettingsModal 同一套哨兵机制,不加的话手机端按返回直接退出 App)
+  useBackToClose(settingsOpen, toggleSettings)
 
   if (!settingsOpen) return null
 

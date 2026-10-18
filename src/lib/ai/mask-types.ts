@@ -6,7 +6,7 @@
  * - 用户面具：'user:<cuid>' 前缀 + Mask 表主键
  */
 import { z } from 'zod'
-import { BUILTIN_MASKS } from './builtin-masks'
+import { ALL_BUILTIN_MASKS } from './builtin-masks'
 
 export const USER_MASK_PREFIX = 'user:'
 
@@ -27,7 +27,7 @@ export const MASK_ESCAPE_HATCH = [
 
 /**
  * maskId → 面具徽标（头像 emoji + 名称）。
- * 内置面具查 BUILTIN_MASKS，自定义面具（user:<cuid>）查传入的用户面具列表；
+ * 内置面具（精选/面具库/游戏）查 ALL_BUILTIN_MASKS，自定义面具（user:<cuid>）查传入的用户面具列表；
  * 无面具或面具已删（含未知 id）返回 null，调用方不显示徽标。
  * client/server 通用，供侧边栏列表、搜索对话框等处复用。
  */
@@ -40,7 +40,7 @@ export function resolveMaskBadge(
     const m = userMasks?.find((x) => x.id === maskId)
     return m ? { avatar: m.avatar, name: m.name } : null
   }
-  const b = BUILTIN_MASKS.find((x) => x.id === maskId)
+  const b = ALL_BUILTIN_MASKS.find((x) => x.id === maskId)
   return b ? { avatar: b.avatar, name: b.name } : null
 }
 

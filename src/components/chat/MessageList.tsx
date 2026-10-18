@@ -9,6 +9,7 @@ import { MessageBubble } from './MessageBubble'
 import { useChatStore } from '@/store/chat-store'
 import {
   estimateMessageHeight,
+  isListFollowing,
   messageHeightStore,
   registerListScrollFacade,
   type ListScrollFacade,
@@ -122,6 +123,21 @@ export function MessageList({
     // 程序化滚动(start 对齐)让目标顶边离开容器沿 24px,复刻旧 DOM 跳转的语义
     scrollPaddingStart: 24,
   })
+
+  // 尺寸校正补偿开关(3.17 是实例可覆写字段,不在 options 上):贴底跟随/校正期间
+  // 禁用 TanStack 补偿 —— 补偿把 scrollTop 推离贴底位置,与 ChatPanel 每帧贴底赋值
+  // 互相拉扯,整列表上下跳(移动端表现为打开会话一直闪)。跟随时贴底逻辑已保证
+  // 视口=底部,上方 item 校正无需补偿;自由浏览时保留默认语义(上方 item 变化才
+  // 补偿),回看不跳变。卸载时还原,避免单例字段泄漏。
+  useEffect(() => {
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, v) => {
+      if (isListFollowing()) return false
+      return item.start < (v.scrollOffset ?? 0)
+    }
+    return () => {
+      virtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined
+    }
+  }, [virtualizer])
 
   // refs 惯例:render 体不写 .current,统一在 effect 同步(React 18 并发安全)
   const virtualizerRef = useRef(virtualizer)

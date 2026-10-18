@@ -45,6 +45,12 @@ Write-Host "=== [2/6] 本地构建 npm run build (独立 distDir, 与 dev 的 .n
 $LocalDist = ".next-deploy"
 Push-Location $ProjectRoot
 try {
+    # client 必须与本次部署的 schema 同步: src/generated/prisma 是 gitignored, stash/回滚
+    # 都不会动它 —— 本地按开发中 schema generate 过的话, 超前字段会被编译进产物推上线
+    # (2026-10-17 实锤: 线上 DB 无该列, /api/memories 报 "Memory.status does not exist" 500),
+    # 故每次构建前强制重生成
+    npx prisma generate
+    if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: prisma generate 失败" -ForegroundColor Red; exit 1 }
     $env:NEXT_DIST_DIR = $LocalDist
     npm run build
     $buildExit = $LASTEXITCODE

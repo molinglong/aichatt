@@ -458,6 +458,9 @@ html {
 @media (max-width: 767px) {
   .m-set .text-\[11px\] { font-size: 12.5px; }
   .m-set .text-\[10px\] { font-size: 12px; }
+  /* 额度类数字/标签大量用 10.5px(公共池余量格、模型行副信息、附加余额行),原先漏在档外,
+     实测手机端 43 条 <12px 文本里绝大多数是这一档。类名里的小数点必须转义。 */
+  .m-set .text-\[10\.5px\] { font-size: 12.5px; }
   /* 生图模型卡上的 'turbo'/'plus'/'openai' 徽标用的是 text-[9px],不在 11/10 两档里,单独补 */
   .m-set .text-\[9px\] { font-size: 12px; }
   /* 表单控件同档抬到拇指尺寸:桌面用的 py-1/px-2 + 12px select/input 在手机上既按不准,
@@ -553,9 +556,11 @@ body {
     text-wrap: balance;
   }
 
-  /* 聊天消息滚动容器:防止整页橡皮筋回弹 */
+  /* 聊天消息滚动容器:防止整页橡皮筋回弹;虚拟化 item 是 absolute+translateY 布局,
+     浏览器滚动锚定(overflow-anchor)会抢着调 scrollTop,与贴底/补偿逻辑打架 → 关掉 */
   .scroll-contain {
     overscroll-behavior: contain;
+    overflow-anchor: none;
   }
 
   /* 方案 C 手机端设置 Tabs 用:横向滚动条藏掉(全局 *::-webkit-scrollbar 会给出可见轨道),
@@ -1436,6 +1441,98 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   }
 }
 
+/* ── 图文混排:正文内联图卡(MarkdownRenderer [图N] 占位符替换)────────────
+   与 preview-inline-images.html 方案 A 同源:圆角 12px / 限高 300px / cover 裁切 /
+   no-referrer(与服务端白名单探测同口径);破图退化为承托条,绝不留碎图标。
+   容器用 span(display:block):占位符常出现在 <p> 内,块级元素嵌段落在 SSR 下会告警 */
+.inline-fig {
+  display: block;
+  margin: 6px 0 14px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--line));
+  background: rgb(var(--surface-muted));
+}
+.inline-fig-img {
+  display: block;
+  position: relative;
+}
+.inline-fig-img img {
+  display: block;
+  width: 100%;
+  max-height: 300px;
+  object-fit: cover;
+  background: rgb(var(--surface-muted));
+}
+/* 骨架承托:图未 onLoad 前垫底,撤出后不留残影 */
+.inline-fig-sk {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, rgb(var(--surface-muted)) 30%, rgb(var(--surface-subtle)) 50%, rgb(var(--surface-muted)) 70%);
+  background-size: 220% 100%;
+  animation: inline-fig-sh 1.15s linear infinite;
+}
+@keyframes inline-fig-sh {
+  to { background-position: -120% 0; }
+}
+.inline-fig-cap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px 8px;
+  background: rgb(var(--surface));
+  border-top: 1px solid rgb(var(--line));
+}
+.inline-fig-cap .desc {
+  font-size: 11.5px;
+  color: rgb(var(--content-secondary));
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-fig-cap .src {
+  font-size: 10.5px;
+  color: rgb(var(--content-muted));
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-fig-cap .meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgb(var(--content-muted));
+  flex: 0 0 auto;
+}
+/* 破图承托条:图加载失败时整卡退化,来源域名 + 查看原图外链 */
+.inline-fig-broken {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 92px;
+  background: rgb(var(--surface-muted));
+  color: rgb(var(--content-muted));
+}
+.inline-fig-broken .t {
+  font-size: 11.5px;
+  color: rgb(var(--content-muted));
+}
+.inline-fig-broken .o {
+  font-size: 11px;
+  color: rgb(var(--content-secondary));
+  text-decoration: underline;
+}
+/* 窄屏限高 190(预览稿 D-1 同源):手机气泡窄,300px 高的 cover 裁切吃屏 */
+@media (max-width: 640px) {
+  .inline-fig-img img {
+    max-height: 190px;
+  }
+}
+
 /* 流式呈现动效:段级上浮 + 句级淡入(preview-stream-effects.html 的 A3 选型)。
    作用域只有 live 档(.md-live),即「生成中的 assistant 消息」;历史消息与定格后走
    rich 档,不挂这两个类,因此打开长对话零动画风暴。
@@ -2258,15 +2355,19 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   transition: none;
 }
 
-/* 通道① 轻提示:手机端 toast 玻璃胶囊居中(重排 iziToast 宿主;桌面 topRight 不受影响) */
+/* 通道① 轻提示:手机端 toast 玻璃胶囊居中(重排 iziToast 宿主;桌面 topRight 不受影响)
+   top 挂 --m-chrome-top 体系(2026-10-17 真机反馈:写死 104px 在部署缺这条规则时退化到
+   iziToast 原生 top:0 贴顶,被刘海/状态栏压住):浏览器内(sat=0)=104px 与原值等值,
+   真机/PWA 全屏 sat>0 时自动下移;bottom 同理让出手势条 Home Indicator。 */
 @media (max-width: 767px) {
   .iziToast-wrapper-topRight {
     left: 0;
     right: 0;
-    top: 104px;
+    top: calc(var(--m-chrome-top, 16px) + 88px);
     display: flex;
     flex-direction: column;
     align-items: center;
+    text-align: center; /* capsule 宽度 100%,toast 是其中的 inline-block: 不覆盖原生 right 则胶囊仍靠右,居中意图落空 */
     pointer-events: none;
   }
   .iziToast-wrapper-topRight .iziToast {
@@ -2274,10 +2375,206 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
     max-width: 320px;
     pointer-events: auto;
   }
+  .iziToast-wrapper-bottomCenter {
+    bottom: max(var(--sab, 0px), 12px);
+  }
   .iziToast-wrapper-bottomCenter .iziToast {
     width: max-content;
     max-width: 320px;
   }
+}
+
+/* ── 游戏面板块（:::gamestatus / :::gamechoice）────────────────────────
+ * 与试卷卡片区分: HUD 感描边卡 + 强调色标题图标。status 纯展示;choice 为可点行动,
+ * 点击走 input-bridge 的 sendTextAsUser → ChatPanel.handleSend 当作 user 消息发出。
+ * 变量全部复用主题 token(--accent/--surface/--line/…),深浅色与暖色主题自适应。 */
+.rich-md .game-panel {
+  margin: 0.9rem 0;
+  border: 1px solid rgb(var(--line));
+  border-radius: 0.75rem;
+  background: rgb(var(--surface));
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
+  overflow: hidden;
+}
+.rich-md .game-panel:first-child {
+  margin-top: 0;
+}
+.rich-md .game-panel:last-child {
+  margin-bottom: 0;
+}
+.rich-md .game-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgb(var(--content-secondary));
+  background: rgb(var(--surface-subtle));
+  border-bottom: 1px solid rgb(var(--line));
+  user-select: none;
+}
+.rich-md .game-panel-head svg {
+  color: rgb(var(--accent));
+}
+
+/* 状态网格: 数值型通栏画进度条,文本型自适应列 chip */
+.rich-md .game-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.55rem 0.9rem;
+  padding: 0.7rem 0.85rem;
+}
+/* 车仪表排: 连续数值状态并排成一行(开口朝下的 270° 刻度环 + 指针) */
+.rich-md .game-gauge-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+.rich-md .game-gauge-cell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.rich-md .game-gauge-svg {
+  display: block;
+  width: 100%;
+  max-width: 104px;
+  height: auto;
+}
+.rich-md .game-stat-label {
+  font-size: 12.5px;
+  color: rgb(var(--content-secondary));
+}
+.rich-md .game-stat-value {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: rgb(var(--content-primary));
+  font-variant-numeric: tabular-nums;
+}
+.rich-md .game-stat-chip {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid rgb(var(--line));
+  border-radius: 0.5rem;
+  background: rgb(var(--surface-subtle));
+}
+.rich-md .game-gauge-tick {
+  stroke: rgb(var(--line-strong));
+}
+.rich-md .game-gauge-track {
+  stroke: rgb(var(--line));
+}
+.rich-md .game-gauge-needle {
+  stroke: rgb(var(--accent));
+  transition: transform 0.3s ease;
+}
+.rich-md .game-gauge-hub {
+  fill: rgb(var(--accent));
+}
+.rich-md .game-gauge-value {
+  font-size: 13px;
+  font-weight: 700;
+  fill: rgb(var(--content-primary));
+  font-variant-numeric: tabular-nums;
+}
+.rich-md .game-gauge-max {
+  font-size: 9px;
+  fill: rgb(var(--content-muted));
+}
+
+/* 游戏正文阅读卡(视觉小说层): 仅游戏对局消息的 md 段套此层,日常对话不受影响。
+   章节行(###)与对话段(blockquote)的渲染层预处理见 MarkdownRenderer.toGameNarrativeMd */
+.rich-md .game-narrative {
+  margin: 0.9rem 0;
+  padding: 20px 22px;
+  border: 1px solid rgb(var(--line));
+  border-radius: 12px;
+  background: rgb(var(--surface));
+}
+.rich-md .game-narrative p {
+  font-size: 15px;
+  line-height: 1.95;
+  text-align: justify;
+  text-indent: 2em;
+  color: rgb(var(--content-primary));
+  margin: 0 0 0.9em;
+}
+.rich-md .game-narrative p:last-child {
+  margin-bottom: 0;
+}
+.rich-md .game-narrative h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgb(var(--content-secondary));
+  margin: 0 0 14px;
+}
+.rich-md .game-narrative h3::before {
+  content: "";
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgb(var(--accent));
+}
+/* 对话段去引用壳: 不缩进 + 降一级灰 */
+.rich-md .game-narrative blockquote {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0 0 0.9em;
+  border-radius: 0;
+}
+.rich-md .game-narrative blockquote p {
+  text-indent: 0;
+  color: rgb(var(--content-secondary));
+}
+.rich-md .game-narrative blockquote:last-child {
+  margin-bottom: 0;
+}
+
+/* 行动按钮: 竖排满宽,hover 强调色;自由行动走输入框,末尾一行提示 */
+.rich-md .game-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.7rem 0.85rem;
+}
+.rich-md .game-choice-btn {
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgb(var(--content-primary));
+  border: 1px solid rgb(var(--line));
+  border-radius: 0.55rem;
+  background: rgb(var(--surface));
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.05s ease;
+}
+.rich-md .game-choice-btn:hover {
+  border-color: rgb(var(--accent) / 0.55);
+  background: rgb(var(--accent-soft));
+}
+.rich-md .game-choice-btn:active {
+  transform: scale(0.99);
+}
+.rich-md .game-choice-hint {
+  padding: 0 0.85rem 0.6rem;
+  font-size: 11px;
+  color: rgb(var(--content-muted));
 }
 
 /* ── 推理档位滑杆(reasoning-tier)───────────────────────────────

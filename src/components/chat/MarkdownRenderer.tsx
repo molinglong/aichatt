@@ -1,6 +1,6 @@
 'use client'
 
-import React, { memo, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react'
+import React, { memo, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect, useContext, createContext } from 'react'
 import { useRenderProbe } from '@/lib/client-diagnostics'
 import { usePathname } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
@@ -12,14 +12,15 @@ import type { Components } from 'react-markdown'
 import type { PluggableList } from 'unified'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
-import { BookPlus, Check, ChevronDown, ChevronUp, Copy, Sparkles, Wrench, StickyNote, Eye } from 'lucide-react'
-import { parseExamSegments, parseChoice, parseEssay, parseTimeline, parseSentence, parseSourceRefLine, countEssayChars, essayToPlainText, type ExamKind, type ExamSourceRef, type ExamChoiceOption, type ExamSentencePart } from '@/lib/ai/exam-markdown'
+import { BookPlus, Check, ChevronDown, ChevronUp, Copy, ImageOff, Sparkles, Wrench, StickyNote, Eye, Gauge, Zap } from 'lucide-react'
+import { parseExamSegments, parseChoice, parseEssay, parseTimeline, parseSentence, parseSourceRefLine, countEssayChars, essayToPlainText, parseGameStatus, parseGameChoice, type ExamKind, type ExamSourceRef, type ExamChoiceOption, type ExamSentencePart, type GameStat } from '@/lib/ai/exam-markdown'
 import { useContextMenuStore, type ContextMenuItem } from '@/store/contextMenuStore'
-import { insertTextToInput } from '@/lib/input-bridge'
+import { insertTextToInput, sendTextAsUser } from '@/lib/input-bridge'
 import { useChatStore } from '@/store/chat-store'
 import dynamic from 'next/dynamic'
 import { ChartCard } from './ChartCard'
 import { parseChartMetadata } from '@/lib/chart-parser'
+import type { InlineImageRef } from './ToolCallCard'
 
 // 可视化熔断开关: 一行降级——出现渲染死循环/性能退化时改 false,
 // 全部消息回到纯文本渲染(两段式渲染的保险丝;历史坑: 流式重渲染 Maximum update depth)
@@ -63,6 +64,11 @@ interface MarkdownRendererProps {
    * 不跑 KaTeX/highlight/试卷块)。生成中不再裸语法符号, 定格时块几何已就位。
    */
   live?: boolean
+  /**
+   * 图文混排白名单(服务端搜索结果里已过滤编号的图):
+   * 正文 [图N] 占位符据此替换成内联图卡。不传/空 = 无图,占位符原样保留。
+   */
+  inlineImages?: InlineImageRef[]
 }
 
 // ── 试卷块（材料/设问/作答）与关键词双色标注 ────────────────────────
@@ -289,6 +295,122 @@ function ChartBlock({ source, children }: { source: string; children?: React.Rea
   )
 }
 
+// ── 图文混排:正文 [图N] 占位符 → 内联图卡 ─────────────────────────────
+// 数据链:服务端搜索工具输出白名单图(编号 n)→ MessageBubble 提取 → 本组件 context。
+// 模型正文只写 [图1],渲染前把已知编号替换成 markdown 图片语法(alt 带哨兵前缀),
+// mdComponents.img 识别哨兵后渲染 InlineImageCard;未知编号/无图消息原样保留,零扰动。
+// 哨兵不能用 __ 或 _ 开头结尾:图片 alt 按 CommonMark 行内内容解析,下划线会被吃成
+// 强调(实测 __inline:1__ → alt="inline:1"),字母+冒号+连字符才能原样穿过解析器。
+const INLINE_IMG_ALT_PREFIX = 'inline-img:'
+const INLINE_IMG_ALT_RE = /^inline-img:(\d+)$/
+/** [图1] / [图 1](模型偶尔夹空格);全角括号不认 —— 服务端提示词已钉死半角格式 */
+const INLINE_IMG_TOKEN_RE = /\[图\s*(\d+)\]/g
+const EMPTY_INLINE_IMAGES: InlineImageRef[] = []
+
+const InlineImagesContext = createContext<InlineImageRef[]>(EMPTY_INLINE_IMAGES)
+
+function formatImgBytes(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.round(bytes / 1024)} KB`
+}
+
+/**
+ * 把 md 里可解析的 [图N] 替换为 `![__inline:N__](<url>)`。
+ * 与 promoteStandaloneMath 同款逐行扫描:围栏代码块内不替换(防误改代码示例);
+ * 编号不在白名单(含本消息无图)时原样保留,token 继续以文字可见,不吞内容。
+ * URL 走 CommonMark 尖括号目的地,带括号/逗号的图床直链不会被链接解析截断。
+ */
+function substituteInlineImages(md: string, images: InlineImageRef[]): string {
+  if (images.length === 0 || !md.includes('[图')) return md
+  const byN = new Map(images.map((i) => [i.n, i]))
+  const lines = md.split('\n')
+  let inFence = false
+  let fenceChar = ''
+  for (let i = 0; i < lines.length; i++) {
+    const fence = lines[i].trim().match(/^(`{3,}|~{3,})/)
+    if (fence) {
+      if (!inFence) {
+        inFence = true
+        fenceChar = fence[1][0]
+      } else if (fence[1][0] === fenceChar) {
+        inFence = false
+        fenceChar = ''
+      }
+      continue
+    }
+    if (inFence) continue
+    if (!lines[i].includes('[图')) continue
+    lines[i] = lines[i].replace(INLINE_IMG_TOKEN_RE, (token, num) => {
+      const img = byN.get(Number(num))
+      if (!img) return token
+      const safeUrl = img.url.replace(/</g, '%3C').replace(/>/g, '%3E')
+      return `![${INLINE_IMG_ALT_PREFIX}${img.n}](<${safeUrl}>)`
+    })
+  }
+  return lines.join('\n')
+}
+
+/**
+ * 内联图卡:圆角/限高/cover 与预览稿 A-1 一致;图注取 Tavily description,
+ * 来源域名走 URL host;onError 退化为承托条(绝不留碎图标)。
+ * referrerpolicy="no-referrer" 与服务端白名单探测口径一致(防盗链按无 Referer 放行)。
+ */
+const InlineImageCard = memo(function InlineImageCard({ image }: { image: InlineImageRef }) {
+  const [failed, setFailed] = useState(false)
+  // 骨架承托到 onLoad 才撤:图未到位时不露白底,正文也不跳动
+  const [loaded, setLoaded] = useState(false)
+  const caption = image.description?.trim()
+  return (
+    <span className="inline-fig" data-n={image.n}>
+      {!failed ? (
+        <a
+          href={image.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-fig-img"
+          title={caption || image.host}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={image.url}
+            alt={caption || image.host || '搜索配图'}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            decoding="async"
+            onLoad={() => setLoaded(true)}
+            onError={() => setFailed(true)}
+          />
+          {!loaded && <span className="inline-fig-sk" aria-hidden />}
+        </a>
+      ) : (
+        <span className="inline-fig-broken">
+          <ImageOff className="w-3.5 h-3.5" aria-hidden />
+          <span className="t">图片加载失败 · {image.host}</span>
+          <a href={image.url} target="_blank" rel="noopener noreferrer" className="o">
+            查看原图
+          </a>
+        </span>
+      )}
+      {!failed && (
+        <span className="inline-fig-cap">
+          {caption ? <span className="desc">{caption}</span> : null}
+          <span className="src">{image.host}</span>
+          {image.bytes ? <span className="meta">{formatImgBytes(image.bytes)}</span> : null}
+        </span>
+      )}
+    </span>
+  )
+})
+
+/** mdComponents.img 入口:alt 带哨兵 → 图卡;其余(历史消息里的裸 markdown 图等)走原样式 */
+function InlineImageSlot({ src, alt }: { src?: string; alt?: string }) {
+  const images = useContext(InlineImagesContext)
+  const m = alt?.match(INLINE_IMG_ALT_RE)
+  const img = m ? images.find((i) => i.n === Number(m[1])) : undefined
+  if (img && src) return <InlineImageCard image={img} />
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src} alt={m ? '' : alt ?? ''} className="my-2 max-w-full rounded-xl border border-line" />
+}
+
 // markdown 元素 → 项目中性灰 token 样式。只映射视觉关键元素,
 // strong/em 等走浏览器默认;不引入 @tailwindcss/typography(依赖与样式都可控)
 // 行内容器(h1-h4/p/li/a/th/td/strong/em)的 children 统一过 withInlineMarks 接上双色高亮
@@ -363,10 +485,8 @@ const mdComponents: Components = {
   },
   // 行内 code 样式;块级 code 在 pre 内由 globals.css 的 .rich-md pre code 覆盖为无背景无边框
   code: CodeInline,
-  img: ({ src, alt }) => (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt={alt ?? ''} className="my-2 max-w-full rounded-xl border border-line" />
-  ),
+  // 图片:alt 带 __inline:N__ 哨兵 → 内联图卡(图文混排);其余走普通样式
+  img: (props) => <InlineImageSlot src={props.src} alt={props.alt} />,
   // strong/em 接入高亮管线(视觉仍走浏览器默认,如 **加粗==术语==** 也能标红)
   strong: ({ children }) => <strong>{withInlineMarks(children)}</strong>,
   em: ({ children }) => <em>{withInlineMarks(children)}</em>,
@@ -494,8 +614,9 @@ function closePendingAtoms(text: string): string {
 
 /** 行内三件套: 加粗 / 行内码 / 斜体; 未闭合定界符按「已成形的最终样式」渲染(见 closePendingAtoms)。
  *  外层再按句切 span.md-sent 承载句级淡入:span 的 key 只跟句序走,
- *  打字机在同一句内推进时该 span 不重挂载,故一句只淡入一次。 */
-function liveInline(text: string, keyBase: string): React.ReactNode[] {
+ *  打字机在同一句内推进时该 span 不重挂载,故一句只淡入一次。
+ *  images: 图文混排白名单(流式期 [图N] 也直接换卡,不等 rich 定格) */
+function liveInline(text: string, keyBase: string, images: InlineImageRef[]): React.ReactNode[] {
   const out: React.ReactNode[] = []
   splitLiveSentences(closePendingAtoms(text)).forEach((sent, si) => {
     const sentKey = `${keyBase}-s${si}`
@@ -503,6 +624,14 @@ function liveInline(text: string, keyBase: string): React.ReactNode[] {
     sent.split(LIVE_INLINE_RE).forEach((part, i) => {
       if (!part) return
       const key = `${sentKey}-${i}`
+      const imgToken = part.match(/^\[图\s*(\d+)\]$/)
+      if (imgToken) {
+        const img = images.find((x) => x.n === Number(imgToken[1]))
+        if (img) {
+          nodes.push(<InlineImageCard key={key} image={img} />)
+          return
+        }
+      }
       if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
         nodes.push(<strong key={key}>{part.slice(2, -2)}</strong>)
       } else if (part.length > 2 && part.startsWith('`') && part.endsWith('`')) {
@@ -591,17 +720,17 @@ function parseLiveBlocks(md: string): LiveBlock[] {
   return blocks
 }
 
-function renderLiveBlock(b: LiveBlock, k: number): React.ReactNode {
+function renderLiveBlock(b: LiveBlock, k: number, images: InlineImageRef[]): React.ReactNode {
   if (b.type === 'h') {
     const level = Math.min(4, Math.max(1, b.level)) as 1 | 2 | 3 | 4
-    return mdEl(`h${level}` as MdElName, { children: liveInline(b.text, `h${k}`) }, k)
+    return mdEl(`h${level}` as MdElName, { children: liveInline(b.text, `h${k}`, images) }, k)
   }
-  if (b.type === 'p') return mdEl('p', { children: liveInline(b.text, `p${k}`) }, k)
-  if (b.type === 'quote') return mdEl('blockquote', { children: liveInline(b.text, `q${k}`) }, k)
+  if (b.type === 'p') return mdEl('p', { children: liveInline(b.text, `p${k}`, images) }, k)
+  if (b.type === 'quote') return mdEl('blockquote', { children: liveInline(b.text, `q${k}`, images) }, k)
   if (b.type === 'ul' || b.type === 'ol') {
     return mdEl(
       b.type,
-      { children: b.items.map((t, i) => mdEl('li', { children: liveInline(t, `l${k}-${i}`), }, `${k}-${i}`)) },
+      { children: b.items.map((t, i) => mdEl('li', { children: liveInline(t, `l${k}-${i}`, images), }, `${k}-${i}`)) },
       k,
     )
   }
@@ -615,10 +744,10 @@ function renderLiveBlock(b: LiveBlock, k: number): React.ReactNode {
     {
       children: (
         <>
-          {mdEl('thead', { children: head.map((c, i) => mdEl('th', { children: liveInline(c, `th${k}-${i}`) }, `h${i}`)) }, k)}
+          {mdEl('thead', { children: head.map((c, i) => mdEl('th', { children: liveInline(c, `th${k}-${i}`, images) }, `h${i}`)) }, k)}
           <tbody>
             {body.map((r, ri) => (
-              <tr key={ri}>{r.map((c, ci) => mdEl('td', { children: liveInline(c, `td${k}-${ri}-${ci}`) }, `c${ci}`))}</tr>
+              <tr key={ri}>{r.map((c, ci) => mdEl('td', { children: liveInline(c, `td${k}-${ri}-${ci}`, images) }, `c${ci}`))}</tr>
             ))}
           </tbody>
         </>
@@ -631,7 +760,10 @@ function renderLiveBlock(b: LiveBlock, k: number): React.ReactNode {
 const LiveMarkdown = memo(function LiveMarkdown({ content }: { content: string }) {
   // 每帧一次行扫描(几十行量级), 比走 react-markdown 全管线低一个数量级
   const blocks = useMemo(() => parseLiveBlocks(content), [content])
-  return <div className="rich-md md-live">{blocks.map((b, k) => renderLiveBlock(b, k))}</div>
+  // 图文混排:占位符在流式期直接换卡(图随搜索结果先到,不必等 rich 定格)
+  const images = useContext(InlineImagesContext)
+  const rendered = useMemo(() => blocks.map((b, k) => renderLiveBlock(b, k, images)), [blocks, images])
+  return <div className="rich-md md-live">{rendered}</div>
 })
 
 /**
@@ -717,7 +849,7 @@ const RichSegment = memo(function RichSegment({ content, promote = true }: { con
   )
 })
 
-const EXAM_TAG: Record<ExamKind, string> = { choice: '选择题', material: '材料', question: '设问', answer: '作答', poem: '诗句', lyrics: '歌词', essay: '作文', timeline: '时间轴', translate: '译文', sentence: '成分分析' }
+const EXAM_TAG: Record<ExamKind, string> = { choice: '选择题', material: '材料', question: '设问', answer: '作答', poem: '诗句', lyrics: '歌词', essay: '作文', timeline: '时间轴', translate: '译文', sentence: '成分分析', gamestatus: '状态', gamechoice: '行动' }
 
 /** 单组题面: 题干 + 试卷式选项（长选项通栏，全部短选项时自动两列）；选项内高亮照常生效 */
 function ChoiceGroupView({ stem, options }: { stem: string; options: ExamChoiceOption[] }) {
@@ -1142,59 +1274,230 @@ function ExamBlock({
   )
 }
 
-function RichMarkdown({ content }: { content: string }) {
-  // 试卷块切分: 无 ::: 时单段,与旧版渲染结构一致
-  const segments = useMemo(() => parseExamSegments(content), [content])
+/** 车仪表式数值表: 270° 刻度环 + 指针 + 下方数值。纯 SVG,零依赖。
+ * 指针角度 = 135° + 270° × ratio(0 在左下、满值在右下、开口朝下),与预览页 B 形态同源 */
+function GameGauge({ stat }: { stat: GameStat }) {
+  const ratio = Math.max(0, Math.min(1, (stat.cur ?? 0) / (stat.max || 1)))
+  const C = 2 * Math.PI * 44
+  const ARC = C * 0.75
+  const needle = (135 + 270 * ratio) * (Math.PI / 180)
+  const nx = 60 + 32 * Math.cos(needle)
+  const ny = 60 + 32 * Math.sin(needle)
+  const ticks: React.ReactNode[] = []
+  for (let i = 0; i <= 10; i++) {
+    const t = (135 + 27 * i) * (Math.PI / 180)
+    const r1 = i % 5 === 0 ? 50 : 52
+    ticks.push(
+      <line
+        key={i}
+        className="game-gauge-tick"
+        x1={60 + r1 * Math.cos(t)}
+        y1={60 + r1 * Math.sin(t)}
+        x2={60 + 56 * Math.cos(t)}
+        y2={60 + 56 * Math.sin(t)}
+        strokeWidth={i % 5 === 0 ? 2 : 1}
+      />,
+    )
+  }
   return (
-    <div className="rich-md">
-      {segments.map((seg, i) => {
-        if (seg.type === 'md') return <RichSegment key={i} content={seg.text} />
-        // 出题组判定: answer 块向前回溯连续 exam 块(材料/设问/选择题),任一块首行带出处即整组视为出题;
-        // md 段或 answer 块截断回溯(跨过 answer 就是下一道题,避免出处串组)。
-        // 语文主观题是 material+question+answer 三连,出处常写在 material 首行——只看紧邻前块会漏判,答案不折叠
-        const prevQuizRef = (() => {
-          for (let j = i - 1; j >= 0; j--) {
-            const s = segments[j]
-            if (s.type !== 'exam' || s.kind === 'answer') break
-            const ref = parseSourceRefLine(s.text).sourceRef
-            if (ref) return ref
-          }
-          return null
-        })()
-        // 出题组联动: 题块向后找紧邻 answer(允许中间隔 translate 译文块)——齐备才显示「收进题库」;
-        // 跨过其他块截断,避免出处串组
-        const nextAnswerText = (() => {
-          for (let j = i + 1; j < segments.length; j++) {
-            const s = segments[j]
-            if (s.type !== 'exam') break
-            if (s.kind === 'answer') return s.text
-            if (s.kind !== 'translate') break
-          }
-          return null
-        })()
-        const isQuizStem = seg.kind === 'choice' || seg.kind === 'question'
-        const stemRef = isQuizStem ? parseSourceRefLine(seg.text).sourceRef : null
-        return (
-          <ExamBlock
-            key={i}
-            kind={seg.kind}
-            text={seg.text}
-            joinTop={i > 0 && segments[i - 1].type === 'exam'}
-            joinBottom={i < segments.length - 1 && segments[i + 1].type === 'exam'}
-            answerCollapsible={seg.kind === 'answer' && !!prevQuizRef}
-            quizAnswerText={isQuizStem && stemRef && nextAnswerText ? nextAnswerText : undefined}
-          />
-        )
-      })}
+    <svg viewBox="0 0 120 120" className="game-gauge-svg" aria-hidden>
+      {ticks}
+      <circle
+        className="game-gauge-track"
+        cx={60}
+        cy={60}
+        r={44}
+        fill="none"
+        strokeWidth={4}
+        strokeDasharray={`${ARC} ${C}`}
+        transform="rotate(135 60 60)"
+      />
+      <line className="game-gauge-needle" x1={60} y1={60} x2={nx} y2={ny} strokeWidth={3} strokeLinecap="round" />
+      <circle className="game-gauge-hub" cx={60} cy={60} r={5} />
+      <text className="game-gauge-value" x={60} y={92} textAnchor="middle">
+        {stat.cur}
+        <tspan className="game-gauge-max">/{stat.max}</tspan>
+      </text>
+    </svg>
+  )
+}
+
+/** 游戏状态面板: 数值型(cur/max)渲染为车仪表(连续数值并排成一行),文本型渲染为标签+值 chip;
+ * 与试卷块同款卡片语言但独立视觉(深色 HUD 感),点击无副作用(纯展示) */
+function GameStatusCard({ text }: { text: string }) {
+  const stats = useMemo<GameStat[]>(() => parseGameStatus(text), [text])
+  if (!stats.length) return <RichSegment content={text} />
+  // 连续的数值状态合并进同一行仪表排,保持模型输出顺序
+  // (时间/地点 chip → 仪表行 → 现金/存款/职业 chip)
+  const blocks: React.ReactNode[] = []
+  let gaugeRun: GameStat[] = []
+  const flushGauges = () => {
+    if (!gaugeRun.length) return
+    blocks.push(
+      <div key={`gauge-${blocks.length}`} className="game-gauge-row">
+        {gaugeRun.map((s, j) => (
+          <div key={j} className="game-gauge-cell">
+            <GameGauge stat={s} />
+            <span className="game-stat-label">{s.label}</span>
+          </div>
+        ))}
+      </div>,
+    )
+    gaugeRun = []
+  }
+  stats.forEach((s, i) => {
+    if (s.cur !== undefined && s.max) {
+      gaugeRun.push(s)
+    } else {
+      flushGauges()
+      blocks.push(
+        <div key={i} className="game-stat game-stat-chip">
+          <span className="game-stat-label">{s.label}</span>
+          {s.value && <span className="game-stat-value">{s.value}</span>}
+        </div>,
+      )
+    }
+  })
+  flushGauges()
+  return (
+    <div className="game-panel game-status">
+      <div className="game-panel-head">
+        <Gauge className="w-3.5 h-3.5" aria-hidden />
+        <span>状态</span>
+      </div>
+      <div className="game-status-grid">{blocks}</div>
     </div>
   )
 }
 
-export const MarkdownRenderer = memo(function MarkdownRenderer({
+/** 游戏行动面板: 每行一个可点行动,点击即当作 user 消息发出(sendTextAsUser → ChatPanel.handleSend)。
+ * 自由行动不占选项——用户直接在输入框打字即可,故这里只渲染模型给出的具名行动 */
+function GameChoiceCard({ text }: { text: string }) {
+  const options = useMemo<string[]>(() => parseGameChoice(text), [text])
+  if (!options.length) return <RichSegment content={text} />
+  return (
+    <div className="game-panel game-choice">
+      <div className="game-panel-head">
+        <Zap className="w-3.5 h-3.5" aria-hidden />
+        <span>你的行动</span>
+      </div>
+      <div className="game-choice-list">
+        {options.map((opt, i) => (
+          <button key={i} type="button" className="game-choice-btn" onClick={() => sendTextAsUser(opt)}>
+            {opt}
+          </button>
+        ))}
+      </div>
+      <div className="game-choice-hint">或直接在下方输入框自定义行动</div>
+    </div>
+  )
+}
+
+/** 游戏正文预处理(仅渲染层): 章节行→三级标题、对话行→引用块(先补空行孤立成段),
+ * 配合 .game-narrative 阅读卡做"视觉小说"分层;大纲/检索读原文,不受影响。
+ * 模型常用单个换行写对话/章节,故按行孤立而非按段匹配 */
+function toGameNarrativeMd(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const t = line.trim()
+      if (!t) return ''
+      if (/^【[^】]+】$/.test(t)) return `\n### ${t}\n`
+      if (/^「/.test(t) || /^[^：\n]{1,12}：「/.test(t)) return `\n> ${t}\n`
+      return line
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function RichMarkdown({ content, inlineImages }: { content: string; inlineImages?: InlineImageRef[] }) {
+  // 图文混排白名单:md 段在进 RichSegment 前做 [图N] 替换(试卷/游戏块不插图为 wave1 口径)
+  const images = inlineImages ?? EMPTY_INLINE_IMAGES
+  // 试卷块切分: 无 ::: 时单段,与旧版渲染结构一致
+  const segments = useMemo(() => parseExamSegments(content), [content])
+  // 含游戏面板块的消息=游戏对局: 正文 md 段套阅读卡(叙事区),日常对话不受影响
+  const isGame = useMemo(
+    () => segments.some((s) => s.type === 'exam' && (s.kind === 'gamestatus' || s.kind === 'gamechoice')),
+    [segments],
+  )
+  const nodes: React.ReactNode[] = []
+  let mdRun: string[] = []
+  const flushMd = () => {
+    if (!mdRun.length) return
+    if (isGame) {
+      nodes.push(
+        <div key={`nar-${nodes.length}`} className="game-narrative">
+          <RichSegment content={toGameNarrativeMd(mdRun.join('\n\n'))} />
+        </div>,
+      )
+    } else {
+      mdRun.forEach((t) => nodes.push(<RichSegment key={`md-${nodes.length}`} content={substituteInlineImages(t, images)} />))
+    }
+    mdRun = []
+  }
+  segments.forEach((seg, i) => {
+    if (seg.type === 'md') {
+      mdRun.push(seg.text)
+      return
+    }
+    flushMd()
+    // 游戏面板块独立于试卷卡片语言,提前分流(不走 ExamBlock 的 join/出处/题库逻辑)
+    if (seg.kind === 'gamestatus') {
+      nodes.push(<GameStatusCard key={i} text={seg.text} />)
+      return
+    }
+    if (seg.kind === 'gamechoice') {
+      nodes.push(<GameChoiceCard key={i} text={seg.text} />)
+      return
+    }
+    // 出题组判定: answer 块向前回溯连续 exam 块(材料/设问/选择题),任一块首行带出处即整组视为出题;
+    // md 段或 answer 块截断回溯(跨过 answer 就是下一道题,避免出处串组)。
+    // 语文主观题是 material+question+answer 三连,出处常写在 material 首行——只看紧邻前块会漏判,答案不折叠
+    const prevQuizRef = (() => {
+      for (let j = i - 1; j >= 0; j--) {
+        const s = segments[j]
+        if (s.type !== 'exam' || s.kind === 'answer') break
+        const ref = parseSourceRefLine(s.text).sourceRef
+        if (ref) return ref
+      }
+      return null
+    })()
+    // 出题组联动: 题块向后找紧邻 answer(允许中间隔 translate 译文块)——齐备才显示「收进题库」;
+    // 跨过其他块截断,避免出处串组
+    const nextAnswerText = (() => {
+      for (let j = i + 1; j < segments.length; j++) {
+        const s = segments[j]
+        if (s.type !== 'exam') break
+        if (s.kind === 'answer') return s.text
+        if (s.kind !== 'translate') break
+      }
+      return null
+    })()
+    const isQuizStem = seg.kind === 'choice' || seg.kind === 'question'
+    const stemRef = isQuizStem ? parseSourceRefLine(seg.text).sourceRef : null
+    nodes.push(
+      <ExamBlock
+        key={i}
+        kind={seg.kind}
+        text={seg.text}
+        joinTop={i > 0 && segments[i - 1].type === 'exam'}
+        joinBottom={i < segments.length - 1 && segments[i + 1].type === 'exam'}
+        answerCollapsible={seg.kind === 'answer' && !!prevQuizRef}
+        quizAnswerText={isQuizStem && stemRef && nextAnswerText ? nextAnswerText : undefined}
+      />,
+    )
+  })
+  flushMd()
+  return <div className="rich-md">{nodes}</div>
+}
+
+function MarkdownRendererInner({
   content,
   className,
   rich,
   live,
+  inlineImages,
 }: MarkdownRendererProps) {
   useRenderProbe('MarkdownRenderer')
   // 两段式翻转淡入: 纯文本→富渲染的瞬间挂 md-enter(180ms 渐显),把排版硬切软化
@@ -1240,7 +1543,26 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
         className,
       )}
     >
-      <RichMarkdown content={content} />
+      <RichMarkdown content={content} inlineImages={inlineImages} />
     </div>
+  )
+}
+
+/**
+ * 外层壳:只负责挂 InlineImagesContext(图文混排 [图N] 数据源,rich/live 两档共用)。
+ * memo 在这一层做 props 比较,inner 不再自带 memo —— 与旧版比较行为等价,
+ * inlineImages 引用由调用方 useMemo 保证稳定(MessageBubble 按 message 提取)。
+ */
+export const MarkdownRenderer = memo(function MarkdownRenderer({
+  content,
+  className,
+  rich,
+  live,
+  inlineImages,
+}: MarkdownRendererProps) {
+  return (
+    <InlineImagesContext.Provider value={inlineImages ?? EMPTY_INLINE_IMAGES}>
+      <MarkdownRendererInner content={content} className={className} rich={rich} live={live} inlineImages={inlineImages} />
+    </InlineImagesContext.Provider>
   )
 })
