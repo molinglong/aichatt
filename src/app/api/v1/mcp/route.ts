@@ -10,6 +10,7 @@
  */
 import type { NextRequest } from "next/server"
 import { prisma } from "@/lib/db"
+import { upsertMemories } from "@/lib/memory/dedupe"
 import { gatewayJsonError, resolveGatewayUserId } from "@/lib/api/gateway-auth"
 
 export const runtime = "nodejs"
@@ -85,7 +86,7 @@ async function callTool(
     const query = typeof args.query === "string" ? args.query.trim() : ""
     if (!query) return { text: "搜索词为空,未执行。" }
     const rows = await prisma.memory.findMany({
-      where: { userId, content: { contains: query } },
+      where: { userId, status: "active", content: { contains: query } },
       orderBy: { updatedAt: "desc" },
       take: limit,
     })
@@ -102,15 +103,25 @@ async function callTool(
     if (!content) return { text: "记忆内容为空,未保存。" }
     const category =
       typeof args.category === "string" && args.category.trim() ? args.category.trim() : "general"
-    const row = await prisma.memory.create({
-      data: { userId, category, content, source: "manual" },
-    })
-    return { text: `已保存记忆 [${row.category}] ${row.content}` }
+    // 走统一写入管线:与已有记忆矛盾的旧条目会被标记取代,不再静默共存
+    const result = await upsertMemories(userId, [{ category, content }], { source: "manual" })
+    if (result.duplicates.includes(content)) {
+      return { text: `已有相同或相似记忆,未重复保存: ${content}` }
+    }
+    if (result.rejected.includes(content)) {
+      return { text: "内容不合规(至少 4 字、最多 200 字),未保存。" }
+    }
+    const note = result.supersededDetails.length
+      ? `（已取代 ${result.supersededDetails.length} 条矛盾旧记忆: ${result.supersededDetails
+          .map((d) => d.content)
+          .join(" / ")}）`
+      : ""
+    return { text: `已保存记忆 [${category}] ${content}${note}` }
   }
 
   if (name === "list_recent_memories") {
     const rows = await prisma.memory.findMany({
-      where: { userId },
+      where: { userId, status: "active" },
       orderBy: { updatedAt: "desc" },
       take: limit,
     })

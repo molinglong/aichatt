@@ -14,13 +14,31 @@
  */
 
 export { getCategoryLabel, buildMemorySystemPrompt } from "./prompt"
-export { getRelevantMemories, toBigrams } from "./relevance"
-export { saveExtractedMemories } from "./dedupe"
+export { getRelevantMemories, toBigrams, type InjectableMemory } from "./relevance"
+export { saveExtractedMemories, upsertMemories, type MemoryWriteItem, type MemoryWriteResult } from "./dedupe"
 export { extractAndSaveMemories } from "./extractor"
 export { parseMemoryArray, VALID_CATEGORIES, type ExtractedMemoryItem } from "./parser"
 export {
+  findConflicts,
+  findPairConflict,
+  detectConflictGroups,
+  suppressConflicting,
+  extractSlots,
+  type ConflictGroup,
+  type ConflictHit,
+} from "./conflict"
+export {
+  listMemoryFacts,
   listAllMemoryFacts,
-  listAllMemoryContents,
-  createAutoMemory,
+  listMemoryContents,
+  createMemory,
+  deleteMemory,
+  supersedeMemories,
+  restoreMemory,
+  markKeptBoth,
+  clearConflictPeers,
   deleteMemoriesByIds,
+  MEMORY_STATUS_ACTIVE,
+  MEMORY_STATUS_SUPERSEDED,
+  type MemoryFact,
 } from "./store"

@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
       if (settings?.memoryEnabled ?? true) {
         const messagesBody = body as AnthropicMessagesBody
         const memories = await prisma.memory.findMany({
-          where: { userId },
+          where: { userId, status: "active" },
           orderBy: { updatedAt: "desc" },
         })
         if (memories.length > 0) {

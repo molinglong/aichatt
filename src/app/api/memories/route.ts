@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/db"
+import { upsertMemories } from "@/lib/memory/dedupe"
+import { detectConflictGroups } from "@/lib/memory/conflict"
+import { MEMORY_STATUS_ACTIVE, MEMORY_STATUS_SUPERSEDED } from "@/lib/memory/store"
 
 const VALID_CATEGORIES = new Set([
   "user_info",
@@ -19,10 +22,15 @@ export async function GET() {
     return NextResponse.json({ error: "登录已失效，请重新登录后再试" }, { status: 401 })
   }
 
-  const [memories, user] = await Promise.all([
+  const [activeMemories, supersededMemories, user] = await Promise.all([
     prisma.memory.findMany({
-      where: { userId: session.user.id },
+      where: { userId: session.user.id, status: MEMORY_STATUS_ACTIVE },
       orderBy: [{ source: "desc" }, { updatedAt: "desc" }],
+    }),
+    // 已被取代的条目单独返回：UI 折叠展示，给用户「恢复」的反悔余地
+    prisma.memory.findMany({
+      where: { userId: session.user.id, status: MEMORY_STATUS_SUPERSEDED },
+      orderBy: { updatedAt: "desc" },
     }),
     prisma.user.findUnique({
       where: { id: session.user.id },
@@ -30,8 +38,26 @@ export async function GET() {
     }),
   ])
 
+  // 冲突组由服务端算好（纯本地槽位/常识判定，零 LLM 调用），前端只负责呈现与裁决
+  const groups = detectConflictGroups(
+    activeMemories.map((m) => ({
+      id: m.id,
+      content: m.content,
+      category: m.category,
+      updatedAt: m.updatedAt,
+      conflictPeers: m.conflictPeers,
+    }))
+  )
+  const conflicts = groups.map((g) => ({
+    ids: g.ids,
+    winnerId: g.winnerId,
+    reason: g.hits[0]?.reason ?? "两条记忆互相矛盾",
+  }))
+
   return NextResponse.json({
-    memories,
+    memories: activeMemories,
+    superseded: supersededMemories,
+    conflicts,
     memoryEnabled: user?.memoryEnabled ?? true,
   })
 }
@@ -45,13 +71,12 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}))
 
   // ─── 批量导入模式（从 ChatGPT / Claude 等导入多条记忆）────────────
-  // body.items: Array<{ category: string; content: string }>
-  // body.sourceDetail?: string（如 "ChatGPT"）
+  // 走统一写入管线：与站内已有画像互斥的条目（如外部说"27岁"、站内已记"高中生"）
+  // 不再静默共存，导入的这条胜出，旧条转入「已被取代」。
   if (Array.isArray(body.items)) {
     const sourceDetail = (body.sourceDetail ?? "").toString().trim().slice(0, 50)
     const rawItems = body.items as Array<Record<string, unknown>>
 
-    // 规范化 + 单条校验
     const normalized = rawItems
       .map((it) => {
         const category =
@@ -71,56 +96,25 @@ export async function POST(req: Request) {
       )
     }
 
-    // 与已有记忆做内容去重（包含关系视为重复）
-    const existing = await prisma.memory.findMany({
-      where: { userId: session.user.id },
-      select: { content: true },
-    })
-    const existingContents = existing.map((e) => e.content)
-    const isDuplicate = (c: string) =>
-      existingContents.some((e) => e.includes(c) || c.includes(e))
-
-    const toCreate = normalized.filter((it) => !isDuplicate(it.content))
-
-    if (toCreate.length === 0) {
-      return NextResponse.json(
-        { created: 0, skipped: normalized.length, total: normalized.length },
-        { status: 200 }
-      )
-    }
-
-    // 一次性写入
-    const userId = session.user.id
-    try {
-      await prisma.memory.createMany({
-        data: toCreate.map((it) => ({
-          userId,
-          category: it.category,
-          content: it.content,
-          source: "imported",
-          sourceDetail: sourceDetail || null,
-        })),
-      })
-    } catch (dbErr) {
-      console.error("[memories.POST] createMany failed:", dbErr)
-      const msg = dbErr instanceof Error ? dbErr.message : String(dbErr)
-      return NextResponse.json(
-        { error: `数据库写入失败: ${msg}`, detail: String(dbErr) },
-        { status: 500 }
-      )
-    }
+    const result = await upsertMemories(
+      session.user.id,
+      normalized.map((it) => ({ category: it.category, content: it.content })),
+      { source: "imported", sourceDetail: sourceDetail || null }
+    )
 
     return NextResponse.json(
       {
-        created: toCreate.length,
-        skipped: normalized.length - toCreate.length,
+        created: result.created,
+        skipped: result.duplicates.length + result.rejected.length,
+        superseded: result.superseded,
+        supersededDetails: result.supersededDetails,
         total: normalized.length,
       },
       { status: 201 }
     )
   }
 
-  // ─── 单条手动添加模式（原行为，向后兼容）─────────────────────────
+  // ─── 单条手动添加模式 ─────────────────────────────────────────────
   const content = (body.content ?? "").toString().trim()
   if (!content) {
     return NextResponse.json({ error: "内容不能为空" }, { status: 400 })
@@ -129,23 +123,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "内容过长（最多 200 字）" }, { status: 400 })
   }
 
-  // 与已有记忆去重
-  const existing = await prisma.memory.findMany({
-    where: { userId: session.user.id },
-    select: { content: true },
-  })
-  if (existing.some((e) => e.content.includes(content) || content.includes(e.content))) {
+  const category = (body.category ?? "manual").toString() || "manual"
+  const result = await upsertMemories(
+    session.user.id,
+    [{ category, content }],
+    { source: "manual" }
+  )
+
+  if (result.duplicates.includes(content)) {
     return NextResponse.json({ error: "已存在相同或相似的记忆" }, { status: 409 })
   }
+  if (result.rejected.includes(content)) {
+    return NextResponse.json({ error: "内容太短（至少 4 字）" }, { status: 400 })
+  }
 
-  const memory = await prisma.memory.create({
-    data: {
-      userId: session.user.id,
-      category: (body.category ?? "manual").toString() || "manual",
-      content,
-      source: "manual",
+  return NextResponse.json(
+    {
+      ...(result.createdRows[0] ?? null),
+      superseded: result.superseded,
+      supersededDetails: result.supersededDetails,
     },
-  })
-
-  return NextResponse.json(memory, { status: 201 })
+    { status: 201 }
+  )
 }

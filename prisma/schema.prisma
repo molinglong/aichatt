@@ -259,18 +259,22 @@ model Message {
 }
 
 model Memory {
-  id           String   @id @default(cuid())
-  userId       String
-  category     String   @default("general")
-  content      String
-  source       String   @default("auto") // auto 自动提取 | manual 手动添加 | imported 从其他 AI 导入
-  sourceDetail String?  // 导入来源名称，如 "ChatGPT" / "Claude" / "Grok"，仅 source=imported 时使用
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  userId        String
+  category      String   @default("general")
+  content       String
+  source        String   @default("auto") // auto 自动提取 | manual 手动添加 | imported 从其他 AI 导入
+  sourceDetail  String?  // 导入来源名称，如 "ChatGPT" / "Claude" / "Grok"，仅 source=imported 时使用
+  status        String   @default("active") // active 生效 | superseded 已被新记忆取代（不再注入，设置里可恢复）
+  supersededBy  String?  // 取代本条的记忆 id（仅 status=superseded；恢复时据此反向取代）
+  conflictPeers String?  // 已裁决「都保留」的对端记忆 id，逗号分隔（不再重复提示冲突）
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([userId, status])
 }
 
 // 用户自定义生图模型(OpenAI 兼容文生图端点)

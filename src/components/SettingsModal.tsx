@@ -83,6 +83,17 @@ interface MemoryInfo {
   source: string
   sourceDetail?: string | null
   updatedAt: string
+  /** active 生效 | superseded 已被新记忆取代(不注入 AI,可在「已被取代」里恢复) */
+  status?: string
+  /** 取代本条的记忆 id(仅 superseded) */
+  supersededBy?: string | null
+}
+
+/** 服务端算好的一组相互矛盾的记忆(本地槽位/常识判定,零 LLM) */
+interface MemoryConflictGroup {
+  ids: string[]
+  winnerId: string
+  reason: string
 }
 
 interface UserProfileInfo {
@@ -1018,6 +1029,11 @@ export function SettingsModal({
   const [memoryEditingId, setMemoryEditingId] = useState<string | null>(null)
   const [memoryEditDraft, setMemoryEditDraft] = useState('')
   const [memorySavingEdit, setMemorySavingEdit] = useState(false)
+  // ── 记忆矛盾消解：冲突裁决 + 已被取代分组 ──────────────────
+  const [memoryConflicts, setMemoryConflicts] = useState<MemoryConflictGroup[]>([])
+  const [supersededMemories, setSupersededMemories] = useState<MemoryInfo[]>([])
+  const [supersededOpen, setSupersededOpen] = useState(false)
+  const [memoryResolving, setMemoryResolving] = useState<string | null>(null)
   // ── 记忆导入（从 ChatGPT / Claude 等其他 AI 导入）──────────────
   const [memoryImportOpen, setMemoryImportOpen] = useState(false)
   const [memoryImportSource, setMemoryImportSource] = useState('')
@@ -1774,6 +1790,8 @@ export function SettingsModal({
         setProviders(provs)
         setKeys(keyList)
         setMemories(memoryData?.memories ?? [])
+        setSupersededMemories(memoryData?.superseded ?? [])
+        setMemoryConflicts(memoryData?.conflicts ?? [])
         setMemoryEnabled(memoryData?.memoryEnabled ?? true)
         setClarifyEnabled(clarifyData?.clarifyEnabled ?? true)
         setLocalFilesEnabled(localFilesData?.localFilesEnabled ?? false)
@@ -2355,8 +2373,10 @@ export function SettingsModal({
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || '添加失败')
       setMemoryDraft('')
-      setMemories((prev) => [data, ...prev])
-      toast.success('记忆已添加')
+      // 新表述可能取代了库里与之矛盾的旧记忆，整组状态以服务端为准重拉
+      if (data.superseded) await refreshMemories()
+      else setMemories((prev) => [data, ...prev])
+      toast.success(data.superseded ? `已添加，并取代 ${data.superseded} 条矛盾的旧记忆` : '记忆已添加')
     } catch (err) {
       toast.error(err instanceof Error && err.message ? err.message : '添加失败，请重试')
     } finally {
@@ -2371,7 +2391,8 @@ export function SettingsModal({
     try {
       const res = await fetch(`/api/memories/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error()
-      setMemories((prev) => prev.filter((m) => m.id !== id))
+      // 删除胜者会让被它压住的旧记忆回到生效态，整组状态以服务端为准重拉
+      await refreshMemories()
       toast.success('记忆已删除')
     } catch {
       toast.error('删除失败，请重试')
@@ -2403,14 +2424,79 @@ export function SettingsModal({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || '保存失败')
-      setMemories((prev) => prev.map((m) => (m.id === id ? { ...m, content } : m)))
       setMemoryEditingId(null)
       setMemoryEditDraft('')
+      // 正文改了 → 原先针对旧文本的「都保留」裁决作废，冲突组按新内容重算
+      await refreshMemories()
       toast.success('记忆已更新')
     } catch (err) {
       toast.error(err instanceof Error && err.message ? err.message : '保存失败，请重试')
     } finally {
       setMemorySavingEdit(false)
+    }
+  }
+
+  // ── 记忆矛盾消解 ────────────────────────────────────────
+  /** 写操作后统一重拉三态(生效/已被取代/冲突组)，避免本地状态与服务端漂移 */
+  async function refreshMemories() {
+    const data = await fetch('/api/memories').then((r) => r.json()).catch(() => null)
+    if (!data) return
+    setMemories(data.memories ?? [])
+    setSupersededMemories(data.superseded ?? [])
+    setMemoryConflicts(data.conflicts ?? [])
+  }
+
+  /**
+   * 用户对一组矛盾记忆的裁决。
+   * mode='supersede' → keepId 生效、其余标记被它取代；
+   * mode='keep-both' → 两条都留下(如"杭州人 + 现居上海"本就是两回事)，不再提示这组。
+   */
+  async function handleResolveConflict(
+    group: MemoryConflictGroup,
+    keepId: string | null,
+    mode: 'supersede' | 'keep-both'
+  ) {
+    setMemoryResolving(group.ids.join('-'))
+    try {
+      const conflictIds = group.ids.filter((id) => id !== keepId)
+      const res = await fetch('/api/memories/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keepId: keepId ?? group.ids[0],
+          conflictIds: mode === 'keep-both' ? group.ids : conflictIds,
+          mode,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || '')
+      }
+      await refreshMemories()
+      toast.success(mode === 'keep-both' ? '两条都保留，不再提示这组冲突' : '已按你的选择处理')
+    } catch (err) {
+      toast.error(err instanceof Error && err.message ? err.message : '处理失败，请重试')
+    } finally {
+      setMemoryResolving(null)
+    }
+  }
+
+  /** 恢复一条被取代的旧记忆（同时反向取代当初压住它的那条） */
+  async function handleRestoreMemory(id: string) {
+    setMemoryDeleting(id)
+    try {
+      const res = await fetch(`/api/memories/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore' }),
+      })
+      if (!res.ok) throw new Error()
+      await refreshMemories()
+      toast.success('已恢复这条记忆')
+    } catch {
+      toast.error('恢复失败，请重试')
+    } finally {
+      setMemoryDeleting(null)
     }
   }
 
@@ -2499,14 +2585,17 @@ export function SettingsModal({
       if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : '导入失败')
       const created = typeof data.created === 'number' ? data.created : 0
       const skipped = typeof data.skipped === 'number' ? data.skipped : 0
+      const supersededCount = typeof data.superseded === 'number' ? data.superseded : 0
+      const extras: string[] = []
+      if (skipped > 0) extras.push(`跳过 ${skipped} 条重复`)
+      if (supersededCount > 0) extras.push(`取代 ${supersededCount} 条矛盾的旧记忆`)
       toast.success(
-        skipped > 0
-          ? `已导入 ${created} 条记忆（跳过 ${skipped} 条重复）`
+        extras.length
+          ? `已导入 ${created} 条记忆（${extras.join('，')}）`
           : `已导入 ${created} 条记忆`
       )
-      // 刷新记忆列表
-      const refreshed = await fetch('/api/memories').then((r) => r.json()).catch(() => null)
-      if (refreshed?.memories) setMemories(refreshed.memories)
+      // 三态重拉：新导入的条目可能把站内旧画像挤成「已被取代」，冲突组也会变
+      await refreshMemories()
       closeMemoryImport()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '导入失败，请重试')
@@ -5780,6 +5869,73 @@ export function SettingsModal({
                       </div>
                     )}
 
+                    {/* ── 相互矛盾的记忆：服务端本地判出的冲突组，用户在此裁决 ──
+                        判据只认槽位/常识互斥(年龄↔学段、城市、身份)，判不出"其实是两回事"，
+                        所以三条出路都给：以新为准 / 以另一条为准 / 都保留(不再提示) ── */}
+                    {memoryConflicts.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <AlertCircle className="w-3 h-3 text-amber-500 shrink-0" />
+                          <p className="text-[11px] font-medium text-content-primary">
+                            发现 {memoryConflicts.length} 组相互矛盾的记忆
+                          </p>
+                        </div>
+                        <p className="text-[11px] text-content-muted leading-relaxed">
+                          AI 每轮只会看到其中一条（最新的那条）。选中要保留的，或都保留。
+                        </p>
+                        {memoryConflicts.map((group) => {
+                          const members = group.ids
+                            .map((id) => memories.find((m) => m.id === id))
+                            .filter((m): m is MemoryInfo => !!m)
+                          if (members.length < 2) return null
+                          const key = group.ids.join('-')
+                          const busy = memoryResolving === key
+                          return (
+                            <div
+                              key={key}
+                              className="rounded-lg border border-line/50 bg-surface-muted/40 p-2 space-y-1.5"
+                            >
+                              <p className="text-[10px] text-content-muted">{group.reason}</p>
+                              {members.map((m) => (
+                                <div key={m.id} className="flex items-start gap-2">
+                                  <p
+                                    className={cn(
+                                      'flex-1 min-w-0 text-xs break-words leading-relaxed',
+                                      m.id === group.winnerId
+                                        ? 'text-content-primary'
+                                        : 'text-content-secondary'
+                                    )}
+                                  >
+                                    {m.content}
+                                    {m.id === group.winnerId && (
+                                      <span className="ml-1 text-[10px] text-content-muted">（最新）</span>
+                                    )}
+                                  </p>
+                                  <button
+                                    onClick={() => handleResolveConflict(group, m.id, 'supersede')}
+                                    disabled={busy}
+                                    className="shrink-0 px-2 py-0.5 rounded-md text-[11px] font-medium bg-surface-subtle/80 text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-colors disabled:opacity-50"
+                                  >
+                                    以这条为准
+                                  </button>
+                                </div>
+                              ))}
+                              <div className="flex justify-end">
+                                <button
+                                  onClick={() => handleResolveConflict(group, null, 'keep-both')}
+                                  disabled={busy}
+                                  className="px-2 py-0.5 rounded-md text-[11px] text-content-muted hover:text-content-primary transition-colors disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                  都保留
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
                     {/* ── 记忆列表(自然展开,由弹窗滚动区统一滚动,
                         内嵌 max-h 小滚动区会把最后一条裁半且形成双层滚动)────────── */}
                     {memories.length === 0 ? (
@@ -5873,6 +6029,63 @@ export function SettingsModal({
                           </li>
                         ))}
                       </ul>
+                    )}
+
+                    {/* ── 已被取代的记忆：矛盾替换不物理删，留在这里供用户反悔 ── */}
+                    {supersededMemories.length > 0 && (
+                      <div className="pt-1">
+                        <button
+                          onClick={() => setSupersededOpen((v) => !v)}
+                          className="w-full flex items-center gap-1.5 px-1 py-1 rounded-md text-[11px] text-content-muted hover:text-content-secondary transition-colors"
+                        >
+                          {supersededOpen ? (
+                            <ChevronUp className="w-3 h-3 shrink-0" />
+                          ) : (
+                            <ChevronDown className="w-3 h-3 shrink-0" />
+                          )}
+                          已被新记忆取代（{supersededMemories.length}）
+                        </button>
+                        {supersededOpen && (
+                          <ul className="space-y-1.5 mt-1.5">
+                            {supersededMemories.map((m) => (
+                              <li
+                                key={m.id}
+                                className="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-surface-muted/40 border border-line/30"
+                              >
+                                <div className="flex-1 min-w-0 text-left">
+                                  <p className="text-xs text-content-muted break-words leading-relaxed line-through decoration-line-strong/60">
+                                    {m.content}
+                                  </p>
+                                  <p className="text-[10px] text-content-muted mt-0.5">
+                                    不再提供给 AI
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={() => handleRestoreMemory(m.id)}
+                                  disabled={memoryDeleting === m.id}
+                                  className="shrink-0 px-2 py-1 rounded-md text-[11px] text-content-secondary hover:text-content-primary hover:bg-surface-subtle/80 transition-colors flex items-center gap-1 disabled:opacity-50"
+                                  aria-label="恢复这条记忆"
+                                >
+                                  {memoryDeleting === m.id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3 h-3" />
+                                  )}
+                                  恢复
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteMemory(m.id)}
+                                  disabled={memoryDeleting === m.id}
+                                  className="shrink-0 p-1 rounded-md text-content-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                  aria-label="删除记忆"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}

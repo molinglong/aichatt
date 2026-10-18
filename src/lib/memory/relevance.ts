@@ -1,4 +1,5 @@
 import type { Memory } from "@/generated/prisma/client"
+import { suppressConflicting } from "./conflict"
 
 /**
  * 中文/英文 bigram 提取，用于本地相关度计算
@@ -14,23 +15,37 @@ export function toBigrams(text: string): Set<string> {
 }
 
 /**
+ * 注入用的记忆形状：比 Prisma 行窄，便于单测传字面量、也便于调用方只 select 需要的列。
+ * status 可选（老调用点或不带该列的查询按 active 处理）。
+ */
+export type InjectableMemory = Pick<
+  Memory,
+  "id" | "content" | "category" | "source" | "updatedAt"
+> & { status?: string | null }
+
+/**
  * 选择注入系统提示词的记忆（控制每次请求的固定 token 开销）：
+ * - 已被取代的记忆(status=superseded)一律不注入——它们只是留着给用户反悔的
  * - 身份信息(user_info)、偏好(preference)与手动添加的记忆始终注入
  *   ——这类信息在大多数对话中都可能用上，bigram 命中率太低会漏注入
  * - 其余记忆仅在内容与当前消息有实际相关度(bigram 命中)时注入
  * - 没有命中时用最近更新的记忆兜底填满配额,避免宽泛消息完全失去上下文
+ * - 最后做一次冲突抑制：同组互斥记忆(如「27岁」与「高中生」)只注入 updatedAt 最新的一条，
+ *   其余本次不注入。刻意不回填配额——宁缺勿冲，两条互斥事实一起进 prompt 会让模型瞎猜。
  */
 export function getRelevantMemories(
-  memories: Memory[],
+  memories: InjectableMemory[],
   userText: string,
   limit = 10
-): Memory[] {
-  if (memories.length === 0) return []
+): InjectableMemory[] {
+  // 被取代的记忆先出局（存量脏数据里 status 缺失的按 active 处理）
+  const active = memories.filter((m) => (m.status ?? "active") !== "superseded")
+  if (active.length === 0) return []
 
-  const isAlways = (m: Memory) =>
+  const isAlways = (m: InjectableMemory) =>
     m.source === "manual" || m.category === "user_info" || m.category === "preference"
-  const always = memories.filter(isAlways)
-  const rest = memories.filter((m) => !isAlways(m))
+  const always = active.filter(isAlways)
+  const rest = active.filter((m) => !isAlways(m))
 
   // 与当前消息的实际相关度：bigram 命中率
   // （不再加新鲜度加分，否则闲聊如"你好"也会注入全部记忆）
@@ -65,5 +80,9 @@ export function getRelevantMemories(
           .slice(0, fill)
       : []
 
-  return [...always, ...matched, ...recent]
+  const { kept } = suppressConflicting(
+    [...always, ...matched, ...recent],
+    (m) => m.updatedAt
+  )
+  return kept
 }
