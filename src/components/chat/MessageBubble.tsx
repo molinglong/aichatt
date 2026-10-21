@@ -456,8 +456,14 @@ function MessageBubbleInner({
   // 尾切按换行对齐:逐字符滑窗时每进一个字窗头就掉一个字,窗内每一行都得重新
   // 断行(实测 tlen 恒定时整段高度 ±39px 震荡,观感就是"字一跳一跳")。
   // 钉到窗内首个换行后,已上屏的行不再重排,只有末行随打字机延长
+  // 折叠过渡(思考完毕自动收起)期间保持小窗:否则同一帧里“尾窗切全文 + 解除 120px
+  // 限高 + grid 开始折叠”三件事一起发生,内容先撑高上千 px 再被 0fr 压回
+  // (桌面实测 scrollHeight 762→1899→762)。收起完成后块高为 0,继续用小窗无感;
+  // 用户手动展开(showReasoning=true)则立即改回全文。
+  const liveReasoningWindow =
+    isThinkingActive || (thinkingThisMount && isStreaming && !showReasoning)
   const liveReasoningText = (() => {
-    if (!isThinkingActive || typedReasoning.length <= REASON_TAIL) return typedReasoning
+    if (!liveReasoningWindow || typedReasoning.length <= REASON_TAIL) return typedReasoning
     const tail = typedReasoning.slice(-REASON_TAIL)
     const nl = tail.indexOf('\n')
     return '…' + (nl === -1 ? tail : tail.slice(nl + 1))
@@ -495,10 +501,14 @@ function MessageBubbleInner({
   // Typewriter effect: only for live streaming, not for historical messages
   // Skip typewriter when message is already complete (streaming ended) to avoid
   // performance issues with long messages on page refresh
-  const { displayText, isTyping } = useTypewriter(
+  const { displayText: typedText, isTyping } = useTypewriter(
     bodyText,
     Boolean(isAssistant && isCurrentlyStreaming) // Only enable during active stream
   )
+  // 非生成中直接用原文:useTypewriter 首次挂载先返回空串(store 为空,effect 后才揭示),
+  // 虚拟化会在那一帧量到“空壳”高度(实测 73px),随后正文撑回 1156px —— 冷启动长会话
+  // 因此整轨收缩/回长上千 px。生成结束时的原行为也是一次性显示全文,观感不变。
+  const displayText = isCurrentlyStreaming ? typedText : bodyText
 
   // Show cursor while AI is streaming OR typewriter is still catching up
   const showCursor = isCurrentlyStreaming || isTyping
@@ -799,40 +809,16 @@ function MessageBubbleInner({
     message.id, message.role,
   ])
 
-  // 已装好"等抬手"监听的清理器;非空表示一次触屏长按正在进行
-  const touchMenuArmRef = useRef<(() => void) | null>(null)
-  useEffect(() => () => touchMenuArmRef.current?.(), [])
-
   const handleMessageContextMenu = useCallback(
     (e: React.MouseEvent) => {
-      if (!window.matchMedia('(pointer: coarse)').matches) {
-        if (assembleAndOpenMenu(e.clientX, e.clientY)) e.preventDefault()
-        return
-      }
-      if (bodyText.length === 0) return
-      // 安卓长按先派 contextmenu、选区随后才建立,此刻读 getSelection() 恒为空 → 复制退化成整条;
-      // 且菜单会在手指仍压屏时弹出,压住选区手柄。故只吞系统原生气泡,装配推到抬手后同一长按点。
-      e.preventDefault()
-      touchMenuArmRef.current?.()
-      const x = e.clientX
-      const y = e.clientY
-      const disarm = () => {
-        touchMenuArmRef.current = null
-        document.removeEventListener('touchend', onTouchEnd, true)
-        document.removeEventListener('touchcancel', disarm, true)
-        window.clearTimeout(fallback)
-      }
-      function onTouchEnd() {
-        disarm()
-        assembleAndOpenMenu(x, y)
-      }
-      // 兜底:个别 WebView 长按手势被系统吃掉后不再派 touchend,不能让菜单永远不来
-      const fallback = window.setTimeout(onTouchEnd, 900)
-      touchMenuArmRef.current = disarm
-      document.addEventListener('touchend', onTouchEnd, true)
-      document.addEventListener('touchcancel', disarm, true)
+      // 触屏(手机):交还浏览器原生文本选择菜单(复制/全选/搜索)。复制是手机端主力动作,
+      // 原生可拖选中间一段、精确到选区;自定义菜单在安卓上引发的"先于选区建立""压住
+      // 选区手柄"两个真机坑一并消失。消息操作栏已常驻复制/编辑/引用/重新生成/错题本,
+      // 长按不再是唯一入口,不存在功能缺口。
+      if (window.matchMedia('(pointer: coarse)').matches) return
+      if (assembleAndOpenMenu(e.clientX, e.clientY)) e.preventDefault()
     },
-    [assembleAndOpenMenu, bodyText]
+    [assembleAndOpenMenu]
   )
 
   // 分支摘要对用户不可见:这条 system 消息只是「喂给模型的上文」的载体,
@@ -965,7 +951,7 @@ function MessageBubbleInner({
                           onWheel={isThinkingActive ? onReasonWinWheel : undefined}
                           onTouchMove={isThinkingActive ? onReasonWinTouchMove : undefined}
                           onTouchEnd={isThinkingActive ? () => { reasonTouchYRef.current = null } : undefined}
-                          className={cn(isThinkingActive && 'max-h-[120px] overflow-y-auto overscroll-contain [scroll-behavior:auto]')}
+                          className={cn(liveReasoningWindow && 'max-h-[120px] overflow-y-auto overscroll-contain [scroll-behavior:auto]')}
                         >
                           <p className="text-xs text-content-secondary whitespace-pre-wrap break-words leading-relaxed">
                             {liveReasoningText}

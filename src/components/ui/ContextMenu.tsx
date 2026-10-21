@@ -365,6 +365,7 @@ export function ContextMenuHost() {
     <div
       ref={menuRef}
       role="menu"
+      data-context-menu
       aria-label={header ?? '上下文菜单'}
       onKeyDown={handleMenuKeyDown}
       onMouseLeave={scheduleSubmenuClose}

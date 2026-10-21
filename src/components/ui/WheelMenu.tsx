@@ -176,6 +176,7 @@ export function WheelMenu({ items, x, y, size = 180, onAction, menuRef, holdMode
         ref={menuRef}
         className={'wheel-wrap' + (canceling ? ' cancel' : '')}
         role="menu"
+        data-context-menu
         aria-label="上下文轮盘"
         style={{ left: pos.left, top: pos.top }}
       >

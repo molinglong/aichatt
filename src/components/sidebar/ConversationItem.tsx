@@ -246,11 +246,14 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
     }
   }, [pushing, id, title])
 
+  // 已装好「等抬手」监听的清理器;非空表示一次触屏长按正在进行
+  const touchMenuArmRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => touchMenuArmRef.current?.(), [])
+
   // ── 右键菜单:会话级操作集合(hover 按钮之外补充的桌面端入口) ──
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     // 批量管理模式下不弹单条操作菜单(此处的动作对象是勾选集合)
     if (selectable) return
-    e.preventDefault()
     const { openContextMenu } = useContextMenuStore.getState()
     const items: ContextMenuItem[] = []
     if (onRename) {
@@ -313,7 +316,42 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
         onSelect: () => onDelete(id),
       })
     }
-    openContextMenu({ x: e.clientX, y: e.clientY }, items)
+    const openAt = (x: number, y: number) => openContextMenu({ x, y }, items)
+
+    // 桌面:右键当下即弹
+    if (!window.matchMedia('(pointer: coarse)').matches) {
+      e.preventDefault()
+      openAt(e.clientX, e.clientY)
+      return
+    }
+
+    // 触屏(安卓):长按先派 contextmenu、手指仍压屏,此刻弹菜单会被抬手合成的
+    // click/mousedown 秒关;行本身是 Link,抬手还会补发一次导航。与 MessageBubble
+    // 同一范式:只吞系统事件,装配推到抬手后的同一长按点。
+    e.preventDefault()
+    touchMenuArmRef.current?.()
+    const x = e.clientX
+    const y = e.clientY
+    const disarm = () => {
+      touchMenuArmRef.current = null
+      document.removeEventListener('touchend', onTouchEnd, true)
+      document.removeEventListener('touchcancel', disarm, true)
+      window.clearTimeout(fallback)
+    }
+    function onTouchEnd(ev: TouchEvent) {
+      disarm()
+      // 阻止长按 Link 抬手后补发的 click,避免菜单刚开就跳转会话
+      if (ev.cancelable) ev.preventDefault()
+      openAt(x, y)
+    }
+    // 兜底:个别 WebView 长按手势被系统吃掉后不再派 touchend,不能让菜单永远不来
+    const fallback = window.setTimeout(() => {
+      disarm()
+      openAt(x, y)
+    }, 900)
+    touchMenuArmRef.current = disarm
+    document.addEventListener('touchend', onTouchEnd, true)
+    document.addEventListener('touchcancel', disarm, true)
   }, [
     selectable,
     onRename,

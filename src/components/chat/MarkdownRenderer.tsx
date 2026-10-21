@@ -195,6 +195,9 @@ const CodeBlock = memo(function CodeBlock({ children }: { children?: React.React
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     if (!code.trim()) return
+    // 触屏(手机):交还浏览器原生文本菜单,代码可拖选复制;工具行已有复制/预览常驻按钮,
+    // 右键独有的「交给 AI」三项在手机上让位给系统选择。
+    if (window.matchMedia('(pointer: coarse)').matches) return
     e.preventDefault()
     const langLabel = language || '这段'
     const mdSource = '```' + language + '\n' + code + '\n```'
