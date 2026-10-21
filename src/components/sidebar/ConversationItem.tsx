@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, memo } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
-import { Trash2, Pencil, Check, X, GitBranch, Copy, Download, FileJson, Upload } from 'lucide-react'
+import { Trash2, Pencil, Check, X, GitBranch, Copy, Download, FileJson, Upload, MailOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import { downloadConversationBundle } from '@/lib/portable-client'
@@ -264,6 +264,15 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
         onSelect: beginEdit,
       })
     }
+    // 未读时给"标记为已读":纯前端已读时间(localStorage),蓝点随 store 更新即时消失
+    if (showUnreadDot) {
+      items.push({
+        id: 'mark-read',
+        label: '标记为已读',
+        icon: <MailOpen className="w-3.5 h-3.5" />,
+        onSelect: () => useChatStore.getState().markConversationRead(id),
+      })
+    }
     items.push({
       id: 'branch',
       label: branching ? '正在创建分支…' : '分支此对话',
@@ -354,6 +363,7 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
     document.addEventListener('touchcancel', disarm, true)
   }, [
     selectable,
+    showUnreadDot,
     onRename,
     beginEdit,
     branching,

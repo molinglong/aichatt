@@ -1143,6 +1143,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // 系统通知:AI 回复完成后弹系统级通知(前端经 @tauri-apps/plugin-notification 调用)
         .plugin(tauri_plugin_notification::init())
+        // 触感反馈:手机端长按弹菜单/选中菜单项时震动(前端经 @tauri-apps/plugin-haptics 调用)
+        .plugin(tauri_plugin_haptics::init())
         // 搭子窗口(悬浮球)暂时禁用:安卓适配期移动端不支持多窗口,桌面端一并下线。
         // 恢复:取消下方注释块,并在 tauri.conf.json 的 app.windows 中加回 buddy 窗口配置。
         .setup(|app| {

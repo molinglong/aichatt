@@ -1,5 +1,6 @@
 import { create, type StateCreator, type StoreApi, type UseBoundStore } from 'zustand'
 import type { ReactNode } from 'react'
+import { haptic } from '@/lib/haptics'
 
 /**
  * 右键菜单项数据模型 —— 场景方只声明数据,渲染/定位/翻转/关闭
@@ -46,8 +47,12 @@ const storeInitializer: StateCreator<ContextMenuState> = (set) => ({
   y: 0,
   items: [],
   header: undefined,
-  openContextMenu: (pos, items, header) =>
-    set({ open: true, x: pos.x, y: pos.y, items, header }),
+  openContextMenu: (pos, items, header) => {
+    // 触感:菜单弹出瞬间一次轻震。这里仍在手势调用栈内(click/touchend),
+    // 满足 Web Vibration API 的用户激活要求;桌面指针下 haptic 内部直接跳过
+    haptic('light')
+    set({ open: true, x: pos.x, y: pos.y, items, header })
+  },
   closeContextMenu: () => set({ open: false, items: [], header: undefined }),
 })
 

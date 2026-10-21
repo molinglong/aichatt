@@ -171,6 +171,44 @@ test("会话菜单刚弹时的惯性微滚不得关掉菜单", async ({ page }) 
   await expect(menu(page)).toHaveCount(0)
 })
 
+test("手机长按会话条目触发一次轻震（菜单弹出）", async ({ page }) => {
+  await emulateCoarsePointer(page)
+  // 桩掉 navigator.vibrate:Web 侧触感走这条降级通路(APK 内走 haptics 插件)
+  await page.evaluate(() => {
+    const w = window as unknown as { __vibes: unknown[] }
+    w.__vibes = []
+    Object.defineProperty(navigator, "vibrate", {
+      configurable: true,
+      value: (ms: number | number[]) => {
+        w.__vibes.push(ms)
+        return true
+      },
+    })
+  })
+  await runConversationLongPress(page)
+  const vibes = await page.evaluate(() => (window as unknown as { __vibes: unknown[] }).__vibes)
+  expect(vibes, "菜单弹出瞬间应恰好一次 8ms 轻震").toEqual([8])
+})
+
+test("会话菜单可标记为已读，蓝点随即消失", async ({ page }) => {
+  // 造未读:把该会话的已读时间回拨到 1，再整页重载让 store 从 localStorage 读回
+  const href = await conversationRow(page).getAttribute("href")
+  const convId = href!.split("/").pop()!
+  await page.evaluate((id) => {
+    localStorage.setItem("chat:lastReadAt", JSON.stringify({ [id]: 1 }))
+  }, convId)
+  await page.goto("/chat")
+  const dot = conversationRow(page).locator('[aria-label="未读"]')
+  await expect(dot, "未读蓝点应先出现，否则测不到清除效果").toBeVisible()
+
+  await emulateCoarsePointer(page)
+  await runConversationLongPress(page)
+  await expect(menuItem(page, "标记为已读")).toBeVisible()
+  await page.screenshot({ path: "test-results/mobile-longpress-mark-read.png" })
+  await menuItem(page, "标记为已读").click()
+  await expect(dot, "标记已读后蓝点必须消失").toHaveCount(0)
+})
+
 test("桌面右键消息仍当下即弹", async ({ page }) => {
   await lastBubble(page).evaluate((el) => {
     const r = el.getBoundingClientRect()

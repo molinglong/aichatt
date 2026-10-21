@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { haptic } from '@/lib/haptics'
 import { useContextMenuStore, type ContextMenuItem } from '@/store/contextMenuStore'
 import { WheelMenu } from './WheelMenu'
 
@@ -265,6 +266,8 @@ export function ContextMenuHost() {
   // ⚠️ 必须在所有 hook 之后、早退 return 之前定义 —— 条件性跳过 hook 会导致 React hooks 数量不匹配崩溃
   const runItem = useCallback(
     (item: ContextMenuItem) => {
+      // 触感:普通项一次选择反馈,危险项(删除类)用告警档,与系统菜单手感对齐
+      haptic(item.danger ? 'warning' : 'selection')
       closeContextMenu()
       item.onSelect?.()
     },
@@ -326,6 +329,7 @@ export function ContextMenuHost() {
             onClick={(e) => {
               if (hasSubmenu) {
                 // 触屏没有 hover:点击切换子菜单展开
+                haptic('selection')
                 if (submenu?.id === item.id) setSubmenu(null)
                 else openSubmenuAt(e.currentTarget, item.id)
                 return
