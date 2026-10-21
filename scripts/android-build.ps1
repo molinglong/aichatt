@@ -9,13 +9,15 @@
 #     of touching system settings we copy the .so in as a plain file and drive Gradle
 #     with its rustBuild* tasks excluded (they would call the CLI and hit the same wall).
 #
-# Usage: powershell -File scripts\android-build.ps1 [-Abi aarch64|armv7|i686|x86_64] [-Debug]
+# Usage: powershell -File scripts\android-build.ps1 [-Abi aarch64|armv7|i686|x86_64] [-Debug] [-Stamp yyyyMMddHH]
 # Default is a release build signed with the key material kept outside the repo
 # (D:\aichatt-secrets\keystore.properties). Pass -Debug for the fast dev variant.
+# -Stamp overrides the hourly version stamp when republishing within the same hour.
 param(
     [ValidateSet('aarch64', 'armv7', 'i686', 'x86_64')]
     [string]$Abi = 'aarch64',
-    [switch]$Debug
+    [switch]$Debug,
+    [string]$Stamp = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -54,7 +56,8 @@ if ($LASTEXITCODE -gt 7) { throw "robocopy tauri cli failed with code $LASTEXITC
 # written directly so the Gradle fallback path (CLI may die on the symlink wall before
 # regenerating it) also sees the stamped values; on the CLI path it gets regenerated
 # from tauri.android.conf.json to the same numbers.
-$stamp   = Get-Date -Format 'yyyyMMddHH'
+$stamp   = if ($Stamp) { $Stamp } else { Get-Date -Format 'yyyyMMddHH' }
+if ($stamp -notmatch '^\d{10}$') { throw "-Stamp must be yyyyMMddHH (10 digits), got '$stamp'" }
 $version = "0.2.$stamp"
 $p       = $version.Split('.')
 $vcode   = [string]([long]$p[0] * 1000000 + [long]$p[1] * 1000 + [long]$p[2])
