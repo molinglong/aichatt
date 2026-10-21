@@ -1262,6 +1262,7 @@ pub fn run() {
         lf_search,
         lf_read_full_file,
         updater_check,
+        updater_status,
         updater_download,
         updater_install,
     ]);

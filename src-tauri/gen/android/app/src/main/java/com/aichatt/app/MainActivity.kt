@@ -2,6 +2,7 @@ package com.aichatt.app
 
 import android.content.Context
 import android.os.Bundle
+import android.os.PowerManager
 import android.util.Log
 import android.view.ActionMode
 import android.view.Menu
@@ -13,9 +14,41 @@ import android.widget.FrameLayout
 import androidx.activity.enableEdgeToEdge
 
 class MainActivity : TauriActivity() {
+  private var updateWakeLock: PowerManager.WakeLock? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+  }
+
+  /**
+   * 更新包下载期间持 PARTIAL_WAKE_LOCK:Rust 下载线程在切后台/息屏时继续跑。
+   * 由 updater.rs 经 JNI 按方法名字符串调用,改名要同步两处(R8 开启后还需 keep)。
+   */
+  fun acquireDownloadWakeLock() {
+    if (updateWakeLock?.isHeld == true) return
+    try {
+      val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+      updateWakeLock =
+        pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "aichatt:update-download").apply {
+          setReferenceCounted(false)
+          // 1 小时上限兜底;正常结束由 releaseDownloadWakeLock 立即释放
+          acquire(60 * 60 * 1000L)
+        }
+      Log.d("AIChattUpdate", "wake lock acquired")
+    } catch (e: Exception) {
+      Log.w("AIChattUpdate", "acquire wake lock failed: $e")
+    }
+  }
+
+  fun releaseDownloadWakeLock() {
+    try {
+      updateWakeLock?.let { if (it.isHeld) it.release() }
+    } catch (e: Exception) {
+      Log.w("AIChattUpdate", "release wake lock failed: $e")
+    }
+    updateWakeLock = null
+    Log.d("AIChattUpdate", "wake lock released")
   }
 
   /**

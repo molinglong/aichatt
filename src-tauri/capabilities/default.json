@@ -63,6 +63,7 @@
     "allow-lf-undo",
     "allow-lf-exec",
     "allow-updater-check",
+    "allow-updater-status",
     "allow-updater-download",
     "allow-updater-install"
   ]

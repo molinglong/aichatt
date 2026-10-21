@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 触感反馈(haptics 插件):长按菜单弹出/选中时的震动 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 更新包后台下载:下载期间持 PARTIAL_WAKE_LOCK,息屏/切后台不停 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

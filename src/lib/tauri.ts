@@ -130,6 +130,20 @@ export interface AppUpdateInfo {
   size: number
   /** update.apk 已完整落盘,可直接唤起安装器 */
   downloaded: boolean
+  /** 同一版本的半成品字节数(>0 表示可从断点继续) */
+  partialBytes: number
+}
+
+/** updater_status 返回的下载状态(与 Rust UpdateStatus 字段对齐) */
+export interface AppUpdateStatus {
+  downloading: boolean
+  received: number
+  total: number
+  partialBytes: number
+  /** 后台下载失败时事件可能丢,回前台用这里补错误文案 */
+  lastError: string | null
+  /** 已完整落盘的版本号 */
+  downloadedVersion: string | null
 }
 
 /** 用户点「忽略此版本」记录的版本号 localStorage key */
@@ -394,6 +408,19 @@ export const tauri = {
   },
 
   /**
+   * 下载状态查询。WebView 切后台会冻住 JS,期间的 progress/done/error 事件可能丢,
+   * 回前台后靠它补齐;旧 APK 没有这条命令,invoke 抛错返回 null(横幅退回旧行为)。
+   */
+  async updateStatus(): Promise<AppUpdateStatus | null> {
+    try {
+      return await androidInvoke<AppUpdateStatus>('updater_status')
+    } catch (err) {
+      console.error('[tauri] updater_status failed:', err)
+      return null
+    }
+  },
+
+  /**
    * 唤起系统安装器。成功返回 null;失败返回 Rust 侧原文(含被回收的 Java 异常 toString),
    * 由横幅直接显示——真机没有控制台,错误必须上屏。
    */
@@ -420,7 +447,7 @@ export const tauri = {
     return listenAndroidEvent('updater://done', handler)
   },
 
-  /** 下载失败 updater://error(负载为错误文案),半截包已被 Rust 侧删除 */
+  /** 下载失败 updater://error(负载为错误文案);半截包保留在缓存里,重试自动续传 */
   onUpdateError(handler: (message: string) => void): () => void {
     return listenAndroidEvent('updater://error', (payload) => handler(String(payload)))
   },

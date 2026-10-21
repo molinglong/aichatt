@@ -40,6 +40,7 @@ fn main() {
             "lf_exec",
             // 应用内自更新(仅安卓)
             "updater_check",
+            "updater_status",
             "updater_download",
             "updater_install",
         ])),

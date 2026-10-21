@@ -9,7 +9,6 @@ import {
   setUpdateIgnoredVersion,
   type AppUpdateInfo,
 } from '@/lib/tauri'
-import { cn } from '@/lib/utils'
 
 /**
  * 应用内自更新横幅(仅安卓壳,浏览器/桌面永不渲染)。
@@ -41,11 +40,31 @@ export function UpdateBanner() {
       setErrorMessage(message)
       setPhase('error')
     })
-    tauri.updateCheck().then((found) => {
+    // 状态查询兜底:WebView 切后台会冻住 JS,期间的事件可能已经错过。
+    // 旧 APK 没有 updater_status 时返回 null,原有行为不变,只靠事件。
+    Promise.all([tauri.updateCheck(), tauri.updateStatus()]).then(([found, status]) => {
       if (disposed || !found) return
       setInfo(found)
       if (getUpdateIgnoredVersion() === found.version) return
-      setPhase(found.downloaded ? 'ready' : 'found')
+      if (status?.downloading) {
+        setPhase('downloading')
+        setProgress({ received: status.received, total: status.total })
+        return
+      }
+      if (found.downloaded) {
+        setPhase('ready')
+        return
+      }
+      // 后台跑到一半失败时 error 事件会丢,这里补上;重试会从断点续传
+      if (status?.lastError) {
+        setErrorMessage(status.lastError)
+        setPhase('error')
+        return
+      }
+      setPhase('found')
+      if (found.partialBytes > 0) {
+        setProgress({ received: found.partialBytes, total: found.size })
+      }
     })
     return () => {
       disposed = true
@@ -54,6 +73,39 @@ export function UpdateBanner() {
       offError()
     }
   }, [])
+
+  // 下载中每秒对一次状态:App 回前台(visibilitychange)时立即补,不靠已丢的事件。
+  useEffect(() => {
+    if (phase !== 'downloading') return
+    let disposed = false
+    const sync = async () => {
+      const status = await tauri.updateStatus()
+      if (disposed || !status) return
+      if (status.downloading) {
+        setProgress({ received: status.received, total: status.total })
+        return
+      }
+      if (status.downloadedVersion && status.downloadedVersion === info?.version) {
+        setPhase('ready')
+        return
+      }
+      if (status.lastError) {
+        setErrorMessage(status.lastError)
+        setPhase('error')
+      }
+    }
+    const timer = window.setInterval(() => void sync(), 1000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void sync()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    void sync()
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [phase, info?.version])
 
   const dismiss = useCallback(() => {
     if (info) setUpdateIgnoredVersion(info.version)
@@ -117,11 +169,19 @@ export function UpdateBanner() {
             <span className="max-w-[46vw] truncate text-[13px]">
               {phase === 'ready' ? '安装包已就绪' : `新版本 v${info.version}`}
               {phase === 'found' && info.size > 0 && (
-                <span className="text-content-muted"> · {mb(info.size)}</span>
+                <span className="text-content-muted">
+                  {info.partialBytes > 0 ? ` · 已下 ${mb(info.partialBytes)}` : ` · ${mb(info.size)}`}
+                </span>
               )}
             </span>
             <button onClick={phase === 'ready' ? install : startDownload} className={primaryBtn}>
-              {phase === 'ready' ? (installing ? '打开中…' : '安装') : '更新'}
+              {phase === 'ready'
+                ? installing
+                  ? '打开中…'
+                  : '安装'
+                : info.partialBytes > 0
+                  ? '继续'
+                  : '更新'}
             </button>
             <button onClick={dismiss} className={closeBtn} aria-label="忽略此版本">
               <X className="h-4 w-4" />
@@ -135,6 +195,7 @@ export function UpdateBanner() {
               <span className="text-[13px]">
                 下载更新{progress.total > 0 ? ` ${pct}%` : ''} · {mb(progress.received)}
                 {progress.total > 0 ? ` / ${mb(progress.total)}` : ''}
+                <span className="text-content-muted"> · 可切后台</span>
               </span>
               <div className="h-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/15">
                 <div
