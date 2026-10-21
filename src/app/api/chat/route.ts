@@ -1094,7 +1094,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
 
   // 联网搜索能力(仅在用户配置了联网搜索 Key 且本次请求主动开启了 webSearch 时才挂上工具)
   // - webSearchEnabled: 客户端本次是否主动开启,默认 false,避免模型无脑触发搜索消耗额度。
-  // - 引擎: 客户端通过 searchEngine 指定(qianfan | tavily)，由 Settings 滑块控制
+  // - 引擎: 客户端通过 searchEngine 指定(qianfan | tavily | deepseek)，由 Settings 选择器控制
   const webSearchEnabled = webSearch === true
   const engine: SearchEngineId = searchEngine ?? "qianfan"
   // 平台定向口径:客户端没传/传了非法值 → 'auto'(模型自判),行为与改造前完全一致。
@@ -1285,7 +1285,8 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   }
 
   if (searchTool) {
-    const engineDisplayName = engine === "tavily" ? "Tavily" : "百度千帆"
+    const engineDisplayName =
+      engine === "tavily" ? "Tavily" : engine === "deepseek" ? "DeepSeek" : "百度千帆"
     // 平台定向口径:用户已选定时工具 schema 里根本没有 platform 参数(见 lib/ai/search.ts),
     // 这里只需交代"结果来自哪个口径 + 回退后必须如实说明";'auto' 才需要教模型何时传参。
     const platformGuidance =
@@ -1752,7 +1753,17 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     scheduleCompressionCheck()
   }
 
-  const result = streamText({
+    // 单轮工具循环的步数预算:编码场景(代码面板开/本地文件授权,典型链路"读→改→跑→修→验证")
+  // 放宽到 10 步,普通对话 5 步。最后一步留给作答(见下方 prepareStep 的第一条规则),
+  // 预算不会被检索/工具调用全部吃掉。
+  const stepBudget =
+    body.codePanelOpen === true || body.localFilesEnabled === true ? 10 : 5
+  // 客户端工具停步(local_file/code_edit/preview_check 由前端回填后续跑)不算预算耗尽:
+  // stopWhen 记一笔，onFinish 只在真正撞上步数上限时才补"继续"提示，
+  // 否则每张本地文件/代码卡片后面都会多挂一句无意义的提示。
+  let pausedForHostTool = false
+
+const result = streamText({
     model,
     messages: outboundMessages,
     ...(finalSystem ? { system: finalSystem } : {}),
@@ -1814,64 +1825,64 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
           },
         }
       : {}),
-    // 课本类面具首步强制检索——凡绑定 subject 的学科面具(政治/历史/数学/英语)一律命中。
-    // 小模型在长 system prompt 下会凭已知答案跳过 search_knowledge,纯指令约束不完全可靠
-    // (思考模式下尤其如此:推理里两次想到课本又放下,最终凭记忆作答);第 0 步定向
-    // toolChoice 保证必检索,后续步骤恢复自由。
-    // deepThink 分支:思考开启的请求里强制 tool_choice 会被上游 400(DeepSeek/DashScope
-    // 实测,错误不以 APICallError 透出,前端只见兜底文案)。改用 per-step providerOptions
-    // 把第 0 步临时切成非思考请求再强制检索,第 1 步起恢复 call 级思考配置——AI SDK
-    // prepareStep 的 providerOptions 与 call 级做逐层深合并(mergeObjects),step 同名值
-    // 覆盖 call 值。千问系以 reasoningEffort:"none" 关思考:DashScope fetch 层
-    // (openai-reasoning-adapter)遇 "none" 强制 enable_thinking:false,与 deepThink 关的
-    // 已验证请求形态完全一致;DeepSeek 系覆写 thinking.type 为 disabled(call 级的
-    // reasoningEffort 会被深合并保留,待实测上游是否接受"thinking disabled + effort"组合,
-    // 若 400 则把 effort 挪到第 1 步起的 per-step 注入)。自定义/中转站模型思考开关不受控,
-    // 维持原 auto 行为(靠能力段软规则),避免 400。
-    ...(knowledgeTool && effectiveMask?.subject
-      ? {
-          prepareStep: ({ stepNumber }: { stepNumber: number }) => {
-            if (stepNumber !== 0) return undefined
-            // 关思考覆盖只对思考参数受控的内置供应商构造;显式标注目标类型——
-            // 否则两个三元分支会被 TS 归一化成联合(注入 openai?: undefined 之类),
-            // 撞上 SharedV4ProviderOptions 的索引签名(JSONObject 拒绝 undefined)。
-            // 千问经 DashScope fetch 层转 enable_thinking:false,与 deepThink 关的
-            // 已验证请求形态一致。
-            const thinkingOff: SharedV4ProviderOptions | undefined =
-              modelDef.provider === "deepseek"
-                ? { deepseek: { thinking: { type: "disabled" } } }
-                : modelDef.provider === "qianwen"
-                  ? { openai: { reasoningEffort: "none" } }
-                  : undefined
-            // deepThink 开且思考关不掉(自定义/中转站)→ 不强制,维持 auto(避免上游 400)
-            if (deepThink && !thinkingOff) return undefined
-            // as const 必须保留:无上下文类型的字面量会把 toolName 拓宽成 string,
-            // 与 PrepareStepResult 的 ToolChoice 工具名联合类型冲突。
-            // 恒定单形状返回:各分支若返回不同键集合的对象,TS 会对返回类型联合做
-            // 归一化(给成员注入 openai?: undefined 之类),撞上 SharedV4ProviderOptions
-            // 的索引签名(JSONObject)报错;providerOptions 传 undefined 时 AI SDK
-            // mergeObjects 跳过该键,等价于不覆盖。
-            return {
-              toolChoice: { type: 'tool', toolName: KNOWLEDGE_TOOL_NAME },
-              providerOptions: thinkingOff,
-            } as const
-          },
-        }
-      : {}),
+    // 工具循环的两条 per-step 规则:
+    // ① 最后一步禁掉全部工具。搜索类问题常把预算耗在"搜一轮→看结果→再搜"上,到点后
+    //    模型只吐出过渡语("再搜一次。")就被 stopWhen 掐断,那句过渡语会被当成最终答案
+    //    入库,用户拿到的是半句话。工具全部摘掉后模型只能拿已有的工具结果作答,
+    //    保证每一轮都以完整回答收尾(activeTools 为空时 provider 层直接不发 tools 参数,
+    //    与 thinking/tool_choice 的上游兼容问题无关)。
+    // ② 课本类面具首步强制检索——凡绑定 subject 的学科面具(政治/历史/数学/英语)一律命中。
+    //    小模型在长 system prompt 下会凭已知答案跳过 search_knowledge,纯指令约束不完全可靠
+    //    (思考模式下尤其如此:推理里两次想到课本又放下,最终凭记忆作答);第 0 步定向
+    //    toolChoice 保证必检索,后续步骤恢复自由。
+    //    deepThink 分支:思考开启的请求里强制 tool_choice 会被上游 400(DeepSeek/DashScope
+    //    实测,错误不以 APICallError 透出,前端只见兜底文案)。改用 per-step providerOptions
+    //    把第 0 步临时切成非思考请求再强制检索,第 1 步起恢复 call 级思考配置——AI SDK
+    //    prepareStep 的 providerOptions 与 call 级做逐层深合并(mergeObjects),step 同名值
+    //    覆盖 call 值。千问系以 reasoningEffort:"none" 关思考:DashScope fetch 层
+    //    (openai-reasoning-adapter)遇 "none" 强制 enable_thinking:false,与 deepThink 关的
+    //    已验证请求形态完全一致;DeepSeek 系覆写 thinking.type 为 disabled(call 级的
+    //    reasoningEffort 会被深合并保留,待实测上游是否接受"thinking disabled + effort"组合,
+    //    若 400 则把 effort 挪到第 1 步起的 per-step 注入)。自定义/中转站模型思考开关不受控,
+    //    维持原 auto 行为(靠能力段软规则),避免 400。
+    prepareStep: ({ stepNumber }: { stepNumber: number }) => {
+      if (stepNumber >= stepBudget - 1) return { activeTools: [] }
+      if (!knowledgeTool || !effectiveMask?.subject || stepNumber !== 0) return undefined
+      // 关思考覆盖只对思考参数受控的内置供应商构造;显式标注目标类型——
+      // 否则两个三元分支会被 TS 归一化成联合(注入 openai?: undefined 之类),
+      // 撞上 SharedV4ProviderOptions 的索引签名(JSONObject 拒绝 undefined)。
+      // 千问经 DashScope fetch 层转 enable_thinking:false,与 deepThink 关的
+      // 已验证请求形态一致。
+      const thinkingOff: SharedV4ProviderOptions | undefined =
+        modelDef.provider === "deepseek"
+          ? { deepseek: { thinking: { type: "disabled" } } }
+          : modelDef.provider === "qianwen"
+            ? { openai: { reasoningEffort: "none" } }
+            : undefined
+      // deepThink 开且思考关不掉(自定义/中转站)→ 不强制,维持 auto(避免上游 400)
+      if (deepThink && !thinkingOff) return undefined
+      // as const 必须保留:无上下文类型的字面量会把 toolName 拓宽成 string,
+      // 与 PrepareStepResult 的 ToolChoice 工具名联合类型冲突。
+      // 恒定单形状返回:各分支若返回不同键集合的对象,TS 会对返回类型联合做
+      // 归一化(给成员注入 openai?: undefined 之类),撞上 SharedV4ProviderOptions
+      // 的索引签名(JSONObject)报错;providerOptions 传 undefined 时 AI SDK
+      // mergeObjects 跳过该键,等价于不覆盖。
+      return {
+        toolChoice: { type: 'tool', toolName: KNOWLEDGE_TOOL_NAME },
+        providerOptions: thinkingOff,
+      } as const
+    },
     // 让模型能"思考 → 调工具 → 拿到结果 → 继续生成最终答案",
     // 默认 stepCountIs(1) 会在调完一次工具后立刻停下,无法完成多步链式调用。
     // local_file / code_edit / preview_check 均为无服务端 execute 的客户端工具(文件操作在
     // 用户本地机器 / Diff 审查与预览验证在前端):本步一旦发出任一调用立即停步,等前端
     // 执行回填后经 sendAutomaticallyWhen 续跑;否则多步循环会带着"悬空 tool-call"继续
     // 步进——模型拿不到结果就给出半截正文,前端回填后续跑判据又被正文挡住,流程死停。
-    // 步数预算:编码场景(代码面板开/本地文件授权,典型链路"读→改→跑→修→验证")放宽到
-    // 10 步,普通对话维持 5 步(ZCode 经验:隔离边界给硬上限,主链路预算从宽)。
+    // 步数预算见上方的 stepBudget(ZCode 经验:隔离边界给硬上限,主链路预算从宽)。
     stopWhen: ({ steps }) => {
-      const maxSteps =
-        body.codePanelOpen === true || body.localFilesEnabled === true ? 10 : 5
-      if (steps.length >= maxSteps) return true
       const last = steps[steps.length - 1]
-      return !!last?.content?.some(
+      // 客户端工具需前端回填后另起一轮：先判它，保证 onFinish 能区分"等前端"与"预算耗尽"
+      const hostToolPause = !!last?.content?.some(
         (p) =>
           (p as { type?: string; toolName?: string }).type === "tool-call" &&
           [
@@ -1881,6 +1892,11 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
             PROJECT_CHECK_TOOL_NAME,
           ].includes((p as { toolName?: string }).toolName as string)
       )
+      if (hostToolPause) {
+        pausedForHostTool = true
+        return true
+      }
+      return steps.length >= stepBudget
     },
     // A 流式恢复: 累积快照文本并节流(600ms)写库。
     // 注意: onChunk 返回 Promise 会暂停流处理,这里保持同步 + fire-and-forget。
@@ -1980,6 +1996,16 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
         if (content) {
           console.log(`[chat] FALLBACK_SPLIT: model=${modelId}, extracted answer from reasoning tail (reasoningLen=${savedReasoning?.length ?? 0}, contentLen=${content.length})`)
         }
+      }
+
+      // 步数到顶收尾:流结束时模型仍在要工具(finishReason='tool-calls'),说明预算用尽前
+      // 它没来得及把结果写成回答——典型形态是只剩一句过渡语("再搜一次。")。补一句可操作
+      // 提示,不让用户对着半句话发愣;正文为空时也补上,避免历史里出现空白助手消息。
+      if (finishReason === 'tool-calls' && !pausedForHostTool) {
+        console.warn(`[chat] STEP_BUDGET_EXHAUSTED: model=${modelId}, textLen=${content.length}`)
+        content = content.trim()
+          ? `${content}\n\n（本轮工具调用已达上限，回复「继续」我接着处理。）`
+          : '（本轮工具调用已达上限，回复「继续」我接着处理。）'
       }
 
       // 检出 [IMG:...] 标记并调用生图(自动根据用户选择的模型分发)

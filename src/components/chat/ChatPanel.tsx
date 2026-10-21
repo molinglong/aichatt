@@ -1275,6 +1275,7 @@ export function ChatPanel({
   // 用户上滑的每一小步都被拉回,表现为"生成时往上滑不动"。程序化滚动恒向下,不会误触发方向检测。
   const shouldAutoScrollRef = useRef(true)
   const prevScrollTopRef = useRef(0)
+  const prevScrollHeightRef = useRef(0)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
 
   // 虚拟化尺寸校正的补偿决策要读跟随状态(MessageList 经 bridge 消费):注册 getter,
@@ -1312,13 +1313,20 @@ export function ChatPanel({
     const el = messagesScrollEl
     if (!el) return
     prevScrollTopRef.current = el.scrollTop
+    prevScrollHeightRef.current = el.scrollHeight
     const update = () => {
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+      const scrollHeight = el.scrollHeight
+      // 布局收缩(虚拟化把估算高度换成实测值)会连 scrollTop 一起被浏览器夹小,
+      // 那不是用户上滑。这一帧不关跟随,真上滑会在下一个 scroll 事件补判。
+      const shrank = scrollHeight < prevScrollHeightRef.current - 1
+      prevScrollHeightRef.current = scrollHeight
+      const distanceFromBottom = scrollHeight - el.scrollTop - el.clientHeight
       const scrolledUp = el.scrollTop < prevScrollTopRef.current - 2
       prevScrollTopRef.current = el.scrollTop
       const intentRecent = performance.now() - lastUserIntentRef.current < 400
       if (
         scrolledUp &&
+        !shrank &&
         shouldAutoScrollRef.current &&
         distanceFromBottom > 24 &&
         (!coarsePointerRef.current || intentRecent)
@@ -1339,6 +1347,7 @@ export function ChatPanel({
   // 避免动画与用户滚动形成拉锯;仅在跟随状态下执行。
   // ResizeObserver 驱动:内容把滚动容器撑高即顺势贴底,替代旧的 150ms 轮询
   // (轮询既会在内容静止时空转,又最快滞后 150ms)。
+  // 每轮生成开始:强制恢复跟随并立即回底(上一轮的脱离状态不延续)。
   useEffect(() => {
     if (!isLoading) return
     shouldAutoScrollRef.current = true
@@ -1346,6 +1355,14 @@ export function ChatPanel({
     const el = messagesScrollEl
     if (!el) return
     el.scrollTop = el.scrollHeight
+  }, [isLoading, messagesScrollEl])
+
+  // 贴底跟随:只要仍在跟随状态就常驻观察高度变化,不再只限生成中 ——
+  // 打开历史会话的虚拟化估算→实测、生成结束后的打字机追平/富文本/公式渲染,
+  // 都可能在 isLoading 变 false 之后才把内容撑高;提前断开会让页面停在半空。
+  useEffect(() => {
+    const el = messagesScrollEl
+    if (!el) return
     let raf = 0
     const ro = new ResizeObserver(() => {
       if (raf) return
@@ -1363,7 +1380,7 @@ export function ChatPanel({
       ro.disconnect()
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [isLoading, messagesScrollEl])
+  }, [messagesScrollEl])
 
   // 进入历史会话定位到最新一条:滚动容器挂载时 scrollTop 恒为 0,而消息是 createdAt
   // 升序渲染,顶部即最早的消息 —— 不主动置底就会停在第一条。
