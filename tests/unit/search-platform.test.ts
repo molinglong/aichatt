@@ -183,6 +183,22 @@ test("全网零结果不重试,note 走原兜底文案", async () => {
   }
 })
 
+test("同一 query 重复调用:回放上次结果,不再打上游", async () => {
+  const t = createWebSearchTool("qianfan", "k", "all")
+  const calls: FetchCall[] = []
+  const restore = stubFetch(calls, "hit")
+  try {
+    const first = await runExecute(t, { query: "广西 河池 社保" })
+    // 空白差异（首尾空格 / 连续空格）视为同一条查询
+    const second = await runExecute(t, { query: "  广西   河池 社保 " })
+    assert.equal(calls.length, 1, "重复 query 不该再发上游请求")
+    assert.equal(second.results.length, first.results.length)
+    assert.match(second.note, /已经搜过/)
+  } finally {
+    restore()
+  }
+})
+
 test("命中站内结果时 note 声明已限定平台", async () => {
   const t = createWebSearchTool("qianfan", "k", "tieba")
   const calls: FetchCall[] = []

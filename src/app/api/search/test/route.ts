@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db"
 import { decrypt } from "@/lib/crypto"
 import { executeQianfanSearch } from "@/lib/ai/search-engines/qianfan"
 import { executeTavilySearch } from "@/lib/ai/search-engines/tavily"
+import { executeDeepseekSearch } from "@/lib/ai/search-engines/deepseek"
 import type { SearchEngineId } from "@/lib/ai/search-engines"
 import { SEARCH_ENGINES } from "@/lib/ai/search-engines"
 
@@ -52,7 +53,9 @@ export async function POST(req: NextRequest) {
     const results =
       engine === "tavily"
         ? await executeTavilySearch(query, apiKey, 3)
-        : await executeQianfanSearch(query, apiKey, 3)
+        : engine === "deepseek"
+          ? await executeDeepseekSearch(query, apiKey, 3)
+          : await executeQianfanSearch(query, apiKey, 3)
     return NextResponse.json({ ok: true, items: results, engine })
   } catch (err) {
     const message = err instanceof Error ? err.message : "搜索失败"

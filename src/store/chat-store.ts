@@ -14,6 +14,7 @@ import {
   toSearchPlatformId,
   type SearchPlatformId,
 } from '@/lib/ai/search-platforms'
+import type { SearchEngineId } from '@/lib/ai/search-engines'
 
 /** 最近使用模型历史上限:超过此值的最旧条目会被淘汰 */
 const MAX_RECENT_MODELS = 10
@@ -112,9 +113,9 @@ interface ChatState {
   /** 当前对话的面具 id(内置面具见 @/lib/ai/builtin-masks). null 表示未启用面具. */
   conversationMaskId: string | null
   setConversationMaskId: (maskId: string | null) => void
-  /** 当前联网搜索引擎：qianfan | tavily，默认 qianfan */
-  searchEngine: 'qianfan' | 'tavily'
-  setSearchEngine: (engine: 'qianfan' | 'tavily') => void
+  /** 当前联网搜索引擎：qianfan | tavily | deepseek，默认 qianfan */
+  searchEngine: SearchEngineId
+  setSearchEngine: (engine: SearchEngineId) => void
   /** 联网搜索平台定向口径：'auto'(默认，模型按问题自判) | 'all'(强制全网) | 具体平台 id(强制站内)。
    *  纯本地偏好，持久化 localStorage('chat:searchPlatform')；见 @/lib/ai/search-platforms */
   searchPlatform: SearchPlatformId
@@ -223,9 +224,10 @@ interface ChatState {
   toggleModelSpecialSection: (section: 'favorites' | 'recent') => void
 }
 
-const getInitialSearchEngine = (): 'qianfan' | 'tavily' => {
+const getInitialSearchEngine = (): SearchEngineId => {
   if (typeof window === 'undefined') return 'qianfan'
-  return localStorage.getItem('chat:searchEngine') === 'tavily' ? 'tavily' : 'qianfan'
+  const saved = localStorage.getItem('chat:searchEngine')
+  return saved === 'tavily' || saved === 'deepseek' ? saved : 'qianfan'
 }
 
 /** 平台定向初值：非法/过期取值一律落 'auto'（默认行为 = 改造前，不干涉模型） */

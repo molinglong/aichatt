@@ -6,6 +6,7 @@ import {
   type TavilyImageResult,
   type TavilySearchResult,
 } from "./search-engines/tavily"
+import { executeDeepseekSearch, type DeepseekSearchResult } from "./search-engines/deepseek"
 import { type SearchEngineId } from "./search-engines"
 import {
   SEARCH_PLATFORM_IDS,
@@ -18,7 +19,10 @@ import {
 /**
  * 统一搜索结果格式（各引擎的 execute 函数返回此类型）
  */
-export type SearchResultItem = QianfanSearchResult | TavilySearchResult
+export type SearchResultItem =
+  | QianfanSearchResult
+  | TavilySearchResult
+  | DeepseekSearchResult
 
 /**
  * 结构化搜索结果项（工具 output 的一部分,前端 ToolCallCard 直接渲染）
@@ -153,6 +157,14 @@ export function createWebSearchTool(
   const userDecided = userPlatform !== "auto"
   const platformMenu = UGC_PLATFORMS.map((p) => `${p.id}=${p.label}(${p.tip})`).join("、")
 
+  // 本轮检索结果缓存：同一 query（忽略首尾/连续空白与大小写）重复调用时直接回放上次结果，
+  // 并附上一句止损说明。模型偶尔会换标点/空格反复提交同一条查询，结果不会变，却把
+  // 步数预算耗光；回放而不是返回空结果，避免它把"重复"误判成"搜索失败"再换措辞重试。
+  const searchedQueries = new Map<
+    string,
+    { results: FormattedSearchResult[]; images: EmbeddableImage[] }
+  >()
+
   const description =
     engine === "tavily"
       ? `联网搜索工具。当需要获取实时信息、最新新闻、当前事件、或用户明确要求搜索时使用。
@@ -161,7 +173,7 @@ export function createWebSearchTool(
 结果可能附带已筛选的实拍图片，按返回说明以 [图N] 占位符引用，不要自己编造图片链接。
 用户点名要在某个平台（如 B站/小红书/知乎）上查资料时，通过 platform 参数指定，只返回该站内容。`
       : `联网搜索工具。当需要获取实时信息、最新新闻、当前事件、或用户明确要求搜索时使用。
-输入中文或英文搜索关键词，工具会返回百度搜索结果（标题、链接、摘要）。
+输入中文或英文搜索关键词，工具会返回${engine === "deepseek" ? "DeepSeek" : "百度"}搜索结果（标题、链接、摘要）。
 搜索结果会包含网页标题、URL 和内容摘要，请基于这些信息回答用户问题并注明来源。
 用户点名要在某个平台（如 B站/小红书/知乎）上查资料时，通过 platform 参数指定，只返回该站内容。`
 
@@ -192,12 +204,31 @@ export function createWebSearchTool(
       const domains = platformDomains(effective)
       const label = getSearchPlatform(effective).label
 
-      const runOnce = (siteFilter: string[]) =>
-        engine === "tavily"
-          ? executeTavilySearchWithImages(query, apiKey, TOP_N, siteFilter)
-          : executeQianfanSearch(query, apiKey, TOP_N, siteFilter).then(
-              (results) => ({ results, images: [] as TavilyImageResult[] })
-            )
+      // 重复查询：回放上次结果 + 明确要求立即作答（不再打上游）
+      const cacheKey = `${effective}::${query.replace(/\s+/g, " ").trim().toLowerCase()}`
+      const cached = searchedQueries.get(cacheKey)
+      if (cached) {
+        return {
+          query,
+          engine,
+          platform: effective,
+          platformLabel: label,
+          ...(cached.images.length > 0 ? { images: cached.images } : {}),
+          results: cached.results,
+          note: "这条查询本轮已经搜过，结果不会变化，以下为上次结果。请立即基于已有结果和你的知识作答，不要再重复搜索；信息不足就如实告知用户。",
+        }
+      }
+
+      const runOnce = async (siteFilter: string[]) => {
+        if (engine === "tavily") {
+          return executeTavilySearchWithImages(query, apiKey, TOP_N, siteFilter)
+        }
+        const results =
+          engine === "deepseek"
+            ? await executeDeepseekSearch(query, apiKey, TOP_N, siteFilter)
+            : await executeQianfanSearch(query, apiKey, TOP_N, siteFilter)
+        return { results, images: [] as TavilyImageResult[] }
+      }
 
       try {
         let { results, images: rawImages } = await runOnce(domains)
@@ -225,9 +256,18 @@ export function createWebSearchTool(
             : domains.length > 0
               ? `本次已限定平台「${label}」，以下结果均来自该站。请基于这些结果回答并注明来源；若信息不足，如实告知，不要擅自改用其他站点的内容顶替。`
               : results.length === 0
-                ? `搜索「${query}」未找到相关结果。请基于你已有的知识回答，并如实告知用户搜索结果为空。`
+                ? `搜索「${query}」未找到相关结果。不要再换措辞重复搜同一个问题；请立即基于你已有的知识回答，并如实告知用户这次没有检索到官方/权威数据。`
                 : "请基于以上搜索结果回答用户的问题，并在回答中自然引用来源。如果搜索结果不充分或信息已过时，请如实告知用户。") +
           imageNote(embeddable)
+
+        const formatted = results.map(
+          (r): FormattedSearchResult => ({
+            title: r.title,
+            ...(r.url ? { url: r.url } : {}),
+            ...(r.snippet ? { snippet: r.snippet.slice(0, 300) } : {}),
+          })
+        )
+        searchedQueries.set(cacheKey, { results: formatted, images: embeddable })
 
         return {
           query,
@@ -236,13 +276,7 @@ export function createWebSearchTool(
           platformLabel: label,
           ...(fellBack ? { fellBack: true } : {}),
           ...(embeddable.length > 0 ? { images: embeddable } : {}),
-          results: results.map(
-            (r): FormattedSearchResult => ({
-              title: r.title,
-              ...(r.url ? { url: r.url } : {}),
-              ...(r.snippet ? { snippet: r.snippet.slice(0, 300) } : {}),
-            })
-          ),
+          results: formatted,
           note,
         }
       } catch (error) {

@@ -53,7 +53,7 @@ const APPLY: Partial<Record<SettingKey, (value: string) => void | Promise<void>>
     useChatStore.getState().setSidebarOpen(value === 'open')
   },
   search_engine: (value) => {
-    if (value === 'qianfan' || value === 'tavily') {
+    if (value === 'qianfan' || value === 'deepseek' || value === 'tavily') {
       useChatStore.getState().setSearchEngine(value)
     }
   },

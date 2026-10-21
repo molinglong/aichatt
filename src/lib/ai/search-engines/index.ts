@@ -15,6 +15,12 @@ export const SEARCH_ENGINES = {
     description: "Tavily Search API，支持英文及多语言搜索，免费额度可用",
     docsUrl: "https://docs.tavily.com/documentation/api-reference/endpoint/search",
   },
+  deepseek: {
+    id: "deepseek",
+    name: "DeepSeek",
+    description: "DeepSeek 自研搜索，成功请求才计费（5 元/千次），与模型 Key 同一体系",
+    docsUrl: "https://api-docs.deepseek.com/zh-cn/guides/search/",
+  },
 } as const
 
 export type SearchEngineId = keyof typeof SEARCH_ENGINES

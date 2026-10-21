@@ -1691,6 +1691,7 @@ export function SettingsModal({
   // 联网搜索多引擎: 支持的引擎列表
   const SEARCH_ENGINE_LIST = [
     { id: 'qianfan' as const, name: '百度千帆', desc: '中文搜索强，需单独申请', docsUrl: 'https://cloud.baidu.com/doc/QIANFAN/s/3l6bavkfm' },
+    { id: 'deepseek' as const, name: 'DeepSeek', desc: '自研搜索，成功请求才计费（5 元/千次），中文覆盖待实测', docsUrl: 'https://api-docs.deepseek.com/zh-cn/guides/search/' },
     { id: 'tavily' as const, name: 'Tavily', desc: '英文及多语言，免费额度可用', docsUrl: 'https://docs.tavily.com/documentation/api-reference/endpoint/search' },
   ]
 
@@ -3548,6 +3549,9 @@ export function SettingsModal({
                 {activeSection === 'search' && (() => {
                   // 当前选中引擎
                   const engineDef = SEARCH_ENGINE_LIST.find((e) => e.id === searchEngine) ?? SEARCH_ENGINE_LIST[0]
+                  // 滑轨三档位置：按列表下标均分（index / (n-1)）
+                  const engineIds = SEARCH_ENGINE_LIST.map((e) => e.id)
+                  const engineIndex = Math.max(0, engineIds.indexOf(searchEngine))
                   const key = searchKeys.find((k) => k.engine === searchEngine)
                   const draft = searchDraftKeys[searchEngine] ?? ''
                   const saving = searchKeySaving[searchEngine] ?? false
@@ -3570,36 +3574,37 @@ export function SettingsModal({
 
                         {/* 滑块轨道(仅桌面) */}
                         <div className="relative hidden md:block">
-                          {/* 左/右标签 */}
+                          {/* 三段标签 */}
                           <div className="flex justify-between items-center mb-1.5 px-0.5">
-                            <span className={cn(
-                              'text-[10px] font-medium transition-colors',
-                              searchEngine === 'qianfan' ? 'text-accent' : 'text-content-muted'
-                            )}>百度千帆</span>
-                            <span className={cn(
-                              'text-[10px] font-medium transition-colors',
-                              searchEngine === 'tavily' ? 'text-accent' : 'text-content-muted'
-                            )}>Tavily</span>
+                            {SEARCH_ENGINE_LIST.map((e) => (
+                              <span
+                                key={e.id}
+                                className={cn(
+                                  'text-[10px] font-medium transition-colors',
+                                  searchEngine === e.id ? 'text-accent' : 'text-content-muted'
+                                )}
+                              >
+                                {e.name}
+                              </span>
+                            ))}
                           </div>
 
-                          {/* 音量风格滑块轨道 */}
+                          {/* 音量风格滑块轨道：thumb 与填充按档位百分比移动 */}
                           <div className="relative h-2 rounded-full bg-surface-muted border border-line/60">
                             {/* 渐变填充 */}
                             <div
-                              className={cn(
-                                'absolute top-0 bottom-0 left-0 rounded-full bg-accent/60 transition-all duration-200',
-                                searchEngine === 'tavily' ? 'right-0' : 'w-1/2'
-                              )}
+                              className="absolute top-0 bottom-0 left-0 rounded-full bg-accent/60 transition-all duration-200"
+                              style={{ width: `${(engineIndex / (SEARCH_ENGINE_LIST.length - 1)) * 100}%` }}
                             />
                             {/* 滑块thumb */}
                             <input
                               type="range"
                               min={0}
-                              max={1}
+                              max={SEARCH_ENGINE_LIST.length - 1}
                               step={1}
-                              value={searchEngine === 'tavily' ? 1 : 0}
+                              value={engineIndex}
                               onChange={(e) => {
-                                const next = e.target.value === '1' ? 'tavily' : 'qianfan'
+                                const next = SEARCH_ENGINE_LIST[Number(e.target.value)].id
                                 useChatStore.getState().setSearchEngine(next)
                                 setSearchTestResult(null)
                               }}
@@ -3608,10 +3613,8 @@ export function SettingsModal({
                             />
                             {/* 滑块圆点 */}
                             <div
-                              className={cn(
-                                'absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white dark:bg-surface border-2 border-accent shadow-md transition-all duration-200 cursor-pointer',
-                                searchEngine === 'tavily' ? 'right-0 mr-[-8px]' : 'left-1/2 ml-[-8px]'
-                              )}
+                              className="absolute top-1/2 w-4 h-4 rounded-full bg-white dark:bg-surface border-2 border-accent shadow-md transition-all duration-200 cursor-pointer -translate-x-1/2 -translate-y-1/2"
+                              style={{ left: `${(engineIndex / (SEARCH_ENGINE_LIST.length - 1)) * 100}%` }}
                             />
                           </div>
                         </div>

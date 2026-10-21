@@ -60,7 +60,7 @@ export const SETTINGS_REGISTRY: readonly SettingDef[] = [
   {
     key: 'search_engine',
     label: '联网搜索引擎',
-    allowedValues: ['qianfan', 'tavily'],
+    allowedValues: ['qianfan', 'deepseek', 'tavily'],
   },
   {
     key: 'style_preset',
@@ -125,7 +125,7 @@ export function isAllowedValue(key: string, value: string): boolean {
 const VALUE_LABELS: Record<string, Record<string, string>> = {
   theme: { light: '浅色', dark: '深色', system: '跟随系统' },
   sidebar: { open: '展开', close: '收起' },
-  search_engine: { qianfan: '百度千帆', tavily: 'Tavily' },
+  search_engine: { qianfan: '百度千帆', deepseek: 'DeepSeek', tavily: 'Tavily' },
   style_preset: Object.fromEntries(STYLE_PRESETS.map((p) => [p.id, p.label])),
   reply_length: Object.fromEntries(REPLY_LENGTH_LEVELS.map((l) => [l.id, l.label])),
   mask: { off: '关闭' },
