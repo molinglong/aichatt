@@ -79,6 +79,11 @@ src-tauri/gen/android/local.properties
 src-tauri/gen/android/app/build/
 # 安卓构建产物（APK 只作本机分发用，不入库）
 *.apk
+# 安卓 release 签名材料（真实密钥在 D:\aichatt-secrets，仓库外；此处仅兜底）
+*.jks
+*.keystore
+keystore.properties
+aichatt-release.p12
 # 旧仓库备份目录
 .git-backup-*/
 # 日志与诊断输出

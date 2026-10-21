@@ -13,6 +13,24 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Release signing material lives outside the repo (keystore + passwords). The repo
+// only knows the path; debug builds and repo clones without the file keep working.
+val releaseSigning = Properties().apply {
+    val secretsFile = file(
+        System.getenv("AICHATT_KEYSTORE_PROPERTIES") ?: "D:/aichatt-secrets/keystore.properties"
+    )
+    if (secretsFile.exists()) {
+        secretsFile.inputStream().use { load(it) }
+    }
+}
+val releaseSigningReady = releaseSigning.getProperty("storeFile") != null
+if (!releaseSigningReady && gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) {
+    throw GradleException(
+        "Release signing config missing: expected D:/aichatt-secrets/keystore.properties " +
+        "or AICHATT_KEYSTORE_PROPERTIES. Never produce an unsigned release by accident."
+    )
+}
+
 android {
     compileSdk = 36
     namespace = "com.aichatt.app"
@@ -23,6 +41,20 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (releaseSigningReady) {
+            create("release") {
+                storeFile = file(releaseSigning.getProperty("storeFile"))
+                storePassword = releaseSigning.getProperty("storePassword")
+                keyAlias = releaseSigning.getProperty("keyAlias")
+                keyPassword = releaseSigning.getProperty("keyPassword")
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = false
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -37,7 +69,10 @@ android {
             }
         }
         getByName("release") {
-            isMinifyEnabled = true
+            signingConfig = signingConfigs.findByName("release")
+            // First release wave keeps R8 off until a real-device smoke test: the APK
+            // size win comes from the release native lib, not from dex shrinking.
+            isMinifyEnabled = false
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))

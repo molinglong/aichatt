@@ -9,7 +9,14 @@
 #     of touching system settings we copy the .so in as a plain file and drive Gradle
 #     with its rustBuild* tasks excluded (they would call the CLI and hit the same wall).
 #
-# Usage: powershell -File scripts\android-build.ps1 [aarch64|armv7|i686|x86_64]
+# Usage: powershell -File scripts\android-build.ps1 [-Abi aarch64|armv7|i686|x86_64] [-Debug]
+# Default is a release build signed with the key material kept outside the repo
+# (D:\aichatt-secrets\keystore.properties). Pass -Debug for the fast dev variant.
+param(
+    [ValidateSet('aarch64', 'armv7', 'i686', 'x86_64')]
+    [string]$Abi = 'aarch64',
+    [switch]$Debug
+)
 $ErrorActionPreference = 'Stop'
 
 $repo       = Split-Path -Parent $PSScriptRoot
@@ -17,9 +24,10 @@ $src        = Join-Path $repo 'src-tauri'
 $mirrorRoot = 'D:\aichatt-android'
 $dest       = Join-Path $mirrorRoot 'src-tauri'
 $cli        = Join-Path $mirrorRoot 'node_modules\@tauri-apps\cli\tauri.js'
-$log        = Join-Path $mirrorRoot 'build.log'
-$gradleLog  = Join-Path $mirrorRoot 'gradle.log'
-$abi        = if ($Args.Count -gt 0) { $Args[0] } else { 'aarch64' }
+$variant    = if ($Debug) { 'debug' } else { 'release' }
+$log        = Join-Path $mirrorRoot "build-$variant.log"
+$gradleLog  = Join-Path $mirrorRoot "gradle-$variant.log"
+$abi        = $Abi
 
 $tripleMap = @{ aarch64 = 'aarch64-linux-android'; armv7 = 'armv7-linux-androideabi';
                 i686 = 'i686-linux-android'; x86_64 = 'x86_64-linux-android' }
@@ -70,12 +78,13 @@ try {
   # cmd owns the redirect: PowerShell 5.1 turns a native command's stderr into an
   # error record while ErrorActionPreference=Stop, which killed the build on its
   # first informational line. tauri.android.conf.json is auto-merged by the CLI.
-  cmd /c ('node "{0}" android build --apk --debug --target {1} > "{2}" 2>&1' -f $cli, $abi, $log)
+  $modeFlag = if ($Debug) { '--debug ' } else { '' }
+  cmd /c ('node "{0}" android build --apk {1}--target {2} > "{3}" 2>&1' -f $cli, $modeFlag, $abi, $log)
 
   if ($LASTEXITCODE -ne 0 -and (Get-Content $log -Raw) -match 'symbolic link') {
     Write-Output 'CLI blocked on symlink privilege -> copying .so and running Gradle directly'
     $arch = $archMap[$abi]
-    $so   = Join-Path $dest ('target\{0}\debug\libaichatt_lib.so' -f $tripleMap[$abi])
+    $so   = Join-Path $dest ('target\{0}\{1}\libaichatt_lib.so' -f $tripleMap[$abi], $variant)
     if (-not (Test-Path $so)) { throw "cargo produced no shared library at $so" }
     $jniDir = Join-Path $dest ('gen\android\app\src\main\jniLibs\{0}' -f $jniMap[$abi])
     New-Item -ItemType Directory -Force -Path $jniDir | Out-Null
@@ -88,8 +97,9 @@ try {
 
     Push-Location (Join-Path $dest 'gen\android')
     try {
-      cmd /c ('gradlew.bat :app:assemble{0}Debug -x rustBuild{0}Debug -x rustBuildUniversalDebug > "{1}" 2>&1' `
-        -f $arch, $gradleLog)
+      $taskSuffix = if ($Debug) { 'Debug' } else { 'Release' }
+      cmd /c ('gradlew.bat :app:assemble{0}{1} -x rustBuild{0}{1} -x rustBuildUniversal{1} > "{2}" 2>&1' `
+        -f $arch, $taskSuffix, $gradleLog)
       if ($LASTEXITCODE -ne 0) { Get-Content $gradleLog -Tail 40; throw "gradle failed with code $LASTEXITCODE" }
     } finally { Pop-Location }
   } elseif ($LASTEXITCODE -ne 0) {
@@ -100,9 +110,10 @@ try {
   Pop-Location
 }
 
-$apk = Get-ChildItem -Path (Join-Path $dest 'gen\android\app') -Recurse -Filter '*-debug.apk' |
+$apk = Get-ChildItem -Path (Join-Path $dest 'gen\android\app') -Recurse -Filter "*-$variant.apk" |
+  Where-Object { $_.Name -notlike '*-unsigned.apk' } |
   Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (-not $apk) { throw 'build reported success but no apk was produced' }
-$out = Join-Path $repo 'aichatt-debug.apk'
+if (-not $apk) { throw "build reported success but no signed $variant apk was produced" }
+$out = Join-Path $repo ("aichatt-{0}.apk" -f $variant)
 Copy-Item $apk.FullName $out -Force
-Write-Output ("APK: {0}  {1} MB" -f $out, [math]::Round($apk.Length / 1MB, 1))
+Write-Output ("APK ({0}): {1}  {2} MB" -f $variant, $out, [math]::Round($apk.Length / 1MB, 1))
