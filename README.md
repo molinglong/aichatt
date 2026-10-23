@@ -1,6 +1,30 @@
+<div align="center">
+
 # aichatt
 
-全栈 AI 学习助手 —— 不只是聊天，还为学习场景而生（错题本、间隔复习、教学模式）。
+**全栈 AI 学习助手 —— 不只是聊天，还为学习场景而生。**
+
+多模型对话 · 长期记忆 · 教学模式 · 错题本 · FSRS 间隔复习 · 生图工作台
+
+[![Next.js](https://img.shields.io/badge/Next.js-14-black)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org/)
+[![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)](https://tauri.app/)
+[![License](https://img.shields.io/badge/license-MIT-green)](#license)
+
+[核心功能](#核心功能) · [快速开始](#快速开始) · [部署](#部署)
+
+</div>
+
+<!-- 截图建议：放 2 张图——主对话界面 + 错题本/复习界面。没有截图时，首屏说服力会少一半。 -->
+
+## 为什么是 aichatt
+
+普通聊天工具解决“问一句答一句”；aichatt 想解决的是学习闭环：
+
+- **对话 → 课程**：把一次提问展开成结构化课程，而不是散落的回答
+- **错题 → 复习**：错题一键入库，FSRS 调度下次复习时间
+- **模型 → 对比**：同一问题并行对比多个模型，投票记录偏好
+- **数据 → 自己**：Postgres + Docker + Tauri 桌面端，数据在自己手里
 
 ## 核心功能
 
@@ -45,11 +69,16 @@ npm run dev
 | `npm run db:migrate` | Prisma 迁移（开发） |
 | `npm run db:studio` | Prisma Studio 数据查看 |
 | `npm run tauri:dev` | Tauri 桌面端开发模式 |
+| `npm run tauri:build` | 构建 Tauri 桌面端 |
 
 ## 部署
 
 提供 Docker 部署方案，详见 [DEPLOY.md](./DEPLOY.md) 与 [deploy/](./deploy/) 目录。
 
+## 安全披露
+
+如果你发现安全问题，请优先通过 **GitHub Security Advisory** 私下联系，不要在公开 Issue 中贴 PoC。确认后会尽快修复并在更新说明中致谢。
+
 ## License
 
-MIT
+MIT © 2026 molilong
