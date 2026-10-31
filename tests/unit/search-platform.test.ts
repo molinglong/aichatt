@@ -21,6 +21,8 @@ import { executeTavilySearch } from "../../src/lib/ai/search-engines/tavily"
 
 type FetchCall = { url: string; body: Record<string, unknown> }
 
+type Behavior = "hit" | "emptyIfFiltered" | "emptyAlways" | "mixedShell" | "allShellIfFiltered"
+
 /** 带过滤请求(站点白名单)与不带过滤请求(全网)的区分靠 body 里是否存在过滤字段 */
 function hasSiteFilter(body: Record<string, unknown>): boolean {
   return (
@@ -30,32 +32,47 @@ function hasSiteFilter(body: Record<string, unknown>): boolean {
 }
 
 /**
- * 装一个假 fetch，三种命中行为：
- * - "hit"            任何请求都命中一条
- * - "emptyIfFiltered" 带站点过滤时空、不带过滤时命中（= 站内无料、全网有料）
- * - "emptyAlways"     一律空（= 真·零结果）
+ * 装一个假 fetch，命中行为显式参数化：
+ * - "hit"                任何请求都命中一条
+ * - "emptyIfFiltered"    带站点过滤时空、不带过滤时命中（= 站内无料、全网有料）
+ * - "emptyAlways"        一律空（= 真·零结果）
+ * - "mixedShell"         命中一条正文 + 一条 Cloudflare 挑战页（= 定向时混进反爬壳）
+ * - "allShellIfFiltered" 带过滤时只命中壳页、不带过滤时正常（= 满屏壳页必须回退）
  * 刻意把"什么时候返回空"做成显式参数：上一版用布尔值，"全网请求"被当成"无过滤=命中"，
  * 直接把零结果分支测成了有结果分支。
+ * CONTENT 给 720 字：引擎实测站内摘要 550~930 字，太短测不出摘要截断上限。
  */
-function stubFetch(calls: FetchCall[], behavior: "hit" | "emptyIfFiltered" | "emptyAlways") {
+const LONG_CONTENT = "纳塔版本攻略正文".repeat(120) // 720 字，跨过 700 截断线
+const SHELL_TITLE = "Just a moment..."
+function itemsFor(behavior: Behavior, filtered: boolean) {
+  const hit = { title: "T", url: "https://www.bilibili.com/x", content: LONG_CONTENT }
+  const shell = { title: SHELL_TITLE, url: "https://www.bilibili.com/y", content: "Checking browser" }
+  switch (behavior) {
+    case "emptyAlways":
+      return []
+    case "emptyIfFiltered":
+      return filtered ? [] : [hit]
+    case "mixedShell":
+      return [hit, shell]
+    case "allShellIfFiltered":
+      return filtered ? [shell] : [hit]
+    default:
+      return [hit]
+  }
+}
+
+function stubFetch(calls: FetchCall[], behavior: Behavior = "hit") {
   const original = globalThis.fetch
   globalThis.fetch = (async (url: unknown, init: unknown) => {
     const opts = init as { method?: string; body?: string }
     const body = JSON.parse(String(opts.body ?? "{}")) as Record<string, unknown>
     calls.push({ url: String(url), body })
     const filtered = hasSiteFilter(body)
-    const hit =
-      behavior === "hit" ? true : behavior === "emptyAlways" ? false : !filtered
+    const items = itemsFor(behavior, filtered)
     return {
       ok: true,
       status: 200,
-      json: async () =>
-        hit
-          ? {
-              references: [{ title: "T", url: "https://www.bilibili.com/x", content: "C" }],
-              results: [{ title: "T", url: "https://www.bilibili.com/x", content: "C" }],
-            }
-          : { references: [], results: [] },
+      json: async () => ({ references: items, results: items }),
     }
   }) as typeof fetch
   return () => {
@@ -219,9 +236,76 @@ async function runExecute(
 ): Promise<{
   platform: string
   note: string
-  results: unknown[]
+  results: { title: string; url?: string; snippet?: string }[]
   fellBack?: boolean
 }> {
   const exec = t.execute as unknown as (i: unknown, o: unknown) => Promise<never>
   return await exec(input, { abortSignal: undefined, messages: [] })
 }
+
+test("米游社档位: 白名单齐备 + 强制生效 + note 如实声明", async () => {
+  assert.ok(platformDomains("miyoushe").includes("miyoushe.com"), "米游社缺域名白名单")
+  assert.equal(toSearchPlatformId("miyoushe"), "miyoushe")
+  const t = createWebSearchTool("qianfan", "k", "miyoushe")
+  const calls: FetchCall[] = []
+  const restore = stubFetch(calls, "hit")
+  try {
+    const out = await runExecute(t, { query: "原神 配队" })
+    assert.deepEqual(
+      (calls[0].body.search_filter as { match: { site: string[] } }).match.site,
+      ["miyoushe.com", "www.miyoushe.com", "bbs.miyoushe.com"]
+    )
+    assert.match(out.note, /已限定平台「米游社」/)
+  } finally {
+    restore()
+  }
+})
+
+test("平台定向请求 8 条、全网仍 5 条(Tavily max_results)", async () => {
+  const calls: FetchCall[] = []
+  const restore = stubFetch(calls, "hit")
+  try {
+    await runExecute(createWebSearchTool("tavily", "k", "zhihu"), { query: "q" })
+    await runExecute(createWebSearchTool("tavily", "k", "all"), { query: "q2" })
+    assert.equal(calls[0].body.max_results, 8, "定向应放到 8 条")
+    assert.equal(calls[1].body.max_results, 5, "全网保持 5 条")
+  } finally {
+    restore()
+  }
+})
+
+test("摘要上限 700 字:引擎给的长摘要不再被砍成碎片", async () => {
+  const calls: FetchCall[] = []
+  const restore = stubFetch(calls, "hit")
+  try {
+    const out = await runExecute(createWebSearchTool("tavily", "k", "all"), { query: "q" })
+    assert.equal(out.results.length, 1)
+    assert.equal(out.results[0].snippet?.length, 700)
+  } finally {
+    restore()
+  }
+})
+
+test("反爬壳页剔除并在 note 交代;满屏壳页视为站内无料、触发全网回退", async () => {
+  const calls: FetchCall[] = []
+  const restore = stubFetch(calls, "mixedShell")
+  try {
+    const out = await runExecute(createWebSearchTool("qianfan", "k", "bilibili"), { query: "q" })
+    assert.equal(out.results.length, 1, "Just a moment... 那条不该进结果")
+    assert.equal(out.results[0].title, "T")
+    assert.match(out.note, /反爬\/空壳页/)
+  } finally {
+    restore()
+  }
+
+  const calls2: FetchCall[] = []
+  const restore2 = stubFetch(calls2, "allShellIfFiltered")
+  try {
+    const out2 = await runExecute(createWebSearchTool("qianfan", "k", "douyin"), { query: "q" })
+    assert.equal(calls2.length, 2, "站内全是壳页时应恰好回退一次")
+    assert.equal(out2.fellBack, true)
+    assert.match(out2.note, /已自动回退全网/)
+  } finally {
+    restore2()
+  }
+})
