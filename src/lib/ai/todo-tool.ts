@@ -20,12 +20,12 @@ import { z } from "zod"
 
 export const TODO_TOOL_NAME = "manage_todo"
 
-export const TODO_OPERATIONS = ["add", "complete", "delete", "list"] as const
+export const TODO_OPERATIONS = ["add", "update", "complete", "delete", "list"] as const
 
 export const todoInputSchema = z.object({
   operation: z
     .enum(TODO_OPERATIONS)
-    .describe("add=添加待办 complete=标记完成 delete=删除 list=查看当前待办"),
+    .describe("add=添加待办 update=修改待办 complete=标记完成 delete=删除 list=查看当前待办"),
   items: z
     .array(
       z.object({
@@ -50,8 +50,25 @@ export const todoInputSchema = z.object({
     .max(60)
     .optional()
     .describe(
-      "complete/delete 必填：匹配关键词，与待办内容双向包含匹配（如「补牙」可匹配「周六 上午补牙」）"
+      "complete/delete/update 必填：匹配关键词，与待办内容双向包含匹配（如「补牙」可匹配「周六 上午补牙」）"
     ),
+  update: z
+    .object({
+      content: z
+        .string()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("新的待办内容；不改内容则省略"),
+      dueAt: z
+        .string()
+        .optional()
+        .describe(
+          "新的截止时间，ISO 8601（如 2026-10-27T20:00:00+08:00）；传空字符串表示清除截止时间；不改时间则省略"
+        ),
+    })
+    .optional()
+    .describe("update 必填：要改成什么，配合 match 定位待办；只改时间时只传 dueAt"),
 })
 
 export type TodoToolInput = z.infer<typeof todoInputSchema>
@@ -62,6 +79,7 @@ export interface TodoToolOutput {
   operation?: string
   added?: Array<{ content: string; dueAt?: string | null }>
   completed?: string[]
+  updated?: string[] // update 后的内容（展示用）
   deleted?: string[]
   todos?: Array<{ id: string; content: string; done: boolean; dueAt: string | null }>
   candidates?: string[] // match 命中多条时的候选项（ambiguous）
@@ -74,8 +92,9 @@ export const TODO_TOOL_PROMPT: string = [
   "## 待办管理（manage_todo 工具）",
   "- 用户提到记待办/提醒/安排事项（\"提醒我\"\"帮我记着\"\"加个待办\"）时调用 add 立即创建，不要只口头答应",
   "- \"做完了/完成了/勾掉\"→ complete；\"删掉/不用了/取消\"→ delete；\"看看待办/有什么安排\"→ list",
-  "- complete/delete 用 match 关键词与待办内容模糊匹配；返回 ambiguous 时列出候选项请用户确认，绝不擅自选择",
-  "- 时间解析：\"周五\"→ 本周五 23:59，\"明天上午\"→ 明日 12:00，转 ISO 8601 传 dueAt；解析不出就省略该字段",
+  "- 改内容或改时间（\"改成八点\"\"换成周六\"\"把那条改成买咖啡\"）→ update，match 定位 + 只传要改的字段；**禁止用 delete+add 代替修改**（多花一步预算，还会在两步之间留下空档导致待办丢失）",
+  "- complete/delete/update 用 match 关键词与待办内容模糊匹配；返回 ambiguous 时列出候选项请用户确认，绝不擅自选择",
+  "- 时间解析：以 system 里的「当前时间」为基准（\"周五\"→ 本周五 23:59，\"明天上午\"→ 明日 12:00），转 ISO 8601 传 dueAt；解析不出就省略该字段",
   "- 执行成功后用一句话确认结果（如\"已添加待办：周五 交物理作业\"），不要复述整个列表",
 ].join("\n")
 

@@ -12,6 +12,13 @@ export interface QianfanSearchResult {
   snippet: string
 }
 
+/** 千帆图片资源（references 中 type==='image' 的条目） */
+export interface QianfanImageResult {
+  url: string
+  /** 搜索结果自带的标题（中文，可直接作内联图注） */
+  title?: string
+}
+
 interface QianfanReference {
   id: number
   title: string
@@ -20,6 +27,7 @@ interface QianfanReference {
   date?: string
   type: string
   website?: string
+  image?: { url?: string }
 }
 
 interface QianfanRawResponse {
@@ -29,20 +37,19 @@ interface QianfanRawResponse {
   message?: string
 }
 
+/** 图文混排候选图数量：白名单会再截前 6 探体积、最终上屏最多 3 张 */
+const IMG_CANDIDATE_K = 8
+
 /**
- * 调用百度千帆搜索 API。
- * @param query  搜索关键词
- * @param apiKey 千帆 AppBuilder API Key（Bearer Token）
- * @param topN   返回网页结果数量（默认 5）
- * @param siteFilter 站点白名单（平台定向，官方字段 search_filter.match.site）。
- *        空/不传 = 不加过滤。注意 top_k 与站点白名单叠加后，命中数可能少于 topN。
+ * 调用千帆搜索 API 并取回原始 references。
+ * withImages 时同请求加 image 资源类型（一次调用拿网页+图片，不多花一次请求）。
  */
-export async function executeQianfanSearch(
+async function callQianfan(
   query: string,
   apiKey: string,
-  topN: number = 5,
-  siteFilter?: string[]
-): Promise<QianfanSearchResult[]> {
+  options: { topN: number; siteFilter?: string[]; withImages: boolean }
+): Promise<QianfanReference[]> {
+  const { topN, siteFilter, withImages } = options
   const response = await fetch(
     "https://qianfan.baidubce.com/v2/ai_search/web_search",
     {
@@ -54,7 +61,10 @@ export async function executeQianfanSearch(
       body: JSON.stringify({
         messages: [{ role: "user", content: query }],
         search_source: "baidu_search_v2",
-        resource_type_filter: [{ type: "web", top_k: topN }],
+        resource_type_filter: [
+          { type: "web", top_k: topN },
+          ...(withImages ? [{ type: "image", top_k: IMG_CANDIDATE_K }] : []),
+        ],
         ...(siteFilter && siteFilter.length > 0
           ? { search_filter: { match: { site: siteFilter } } }
           : {}),
@@ -74,11 +84,51 @@ export async function executeQianfanSearch(
     )
   }
 
-  const refs = data.references ?? []
+  return data.references ?? []
+}
 
-  return refs.map((r) => ({
+function toSearchResult(r: QianfanReference): QianfanSearchResult {
+  return {
     title: r.title || "无标题",
     url: r.url || "",
     snippet: r.content || "",
-  }))
+  }
+}
+
+/**
+ * 调用百度千帆搜索 API。
+ * @param query  搜索关键词
+ * @param apiKey 千帆 AppBuilder API Key（Bearer Token）
+ * @param topN   返回网页结果数量（默认 5）
+ * @param siteFilter 站点白名单（平台定向，官方字段 search_filter.match.site）。
+ *        空/不传 = 不加过滤。注意 top_k 与站点白名单叠加后，命中数可能少于 topN。
+ */
+export async function executeQianfanSearch(
+  query: string,
+  apiKey: string,
+  topN: number = 5,
+  siteFilter?: string[]
+): Promise<QianfanSearchResult[]> {
+  const refs = await callQianfan(query, apiKey, { topN, siteFilter, withImages: false })
+  return refs.map(toSearchResult)
+}
+
+/**
+ * 网页 + 图片一次取回（图文混排用）。
+ * 图片 URL 多为 http:// 直链，协议改写与白名单过滤统一在 search.ts 的
+ * selectEmbeddableImages 里做（本项目内所有图源走同一条质量门）。
+ */
+export async function executeQianfanSearchWithImages(
+  query: string,
+  apiKey: string,
+  topN: number = 5,
+  siteFilter?: string[]
+): Promise<{ results: QianfanSearchResult[]; images: QianfanImageResult[] }> {
+  const refs = await callQianfan(query, apiKey, { topN, siteFilter, withImages: true })
+  const results = refs.filter((r) => r.type !== "image").map(toSearchResult)
+  const images = refs
+    .filter((r) => r.type === "image")
+    .map((r) => ({ url: r.image?.url || r.url || "", ...(r.title ? { title: r.title } : {}) }))
+    .filter((i) => !!i.url)
+  return { results, images }
 }

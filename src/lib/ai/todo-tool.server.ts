@@ -17,7 +17,7 @@ export function createTodoTool(userId: string) {
       "删除（\"把补牙那条删了\"）或查看待办时调用。添加支持自然语言时间（自动转截止时间）；" +
       "完成/删除按内容关键词模糊匹配，命中多条会返回候选项，需向用户确认。",
     inputSchema: todoInputSchema,
-    execute: async ({ operation, items, match }): Promise<TodoToolOutput> => {
+    execute: async ({ operation, items, match, update }): Promise<TodoToolOutput> => {
       if (operation === "add") {
         if (!items || items.length === 0) {
           return { ok: false, operation, reason: "invalid_input", message: "add 需要至少一条待办内容" }
@@ -54,10 +54,52 @@ export function createTodoTool(userId: string) {
         }
       }
 
-      // complete / delete：按内容模糊匹配
+      // complete / delete / update：按内容模糊匹配
       const keyword = (match ?? "").trim()
       if (!keyword) {
-        return { ok: false, operation, reason: "invalid_input", message: "complete/delete 需要 match 关键词" }
+        return {
+          ok: false,
+          operation,
+          reason: "invalid_input",
+          message: `${operation} 需要 match 关键词`,
+        }
+      }
+
+      // update 的入参先在落库前校验完：内容空白/时间非法一律打回，
+      // 免得"改时间"因为解析失败变成"清空时间"这类静默破坏。
+      let nextContent: string | undefined
+      let nextDueAt: Date | null | undefined
+      if (operation === "update") {
+        if (!update || (update.content === undefined && update.dueAt === undefined)) {
+          return {
+            ok: false,
+            operation,
+            reason: "invalid_input",
+            message: "update 需要提供 content 或 dueAt（至少一项）",
+          }
+        }
+        if (update.content !== undefined) {
+          const trimmed = update.content.trim()
+          if (!trimmed) {
+            return { ok: false, operation, reason: "invalid_input", message: "待办内容不能为空" }
+          }
+          nextContent = trimmed
+        }
+        if (update.dueAt !== undefined) {
+          if (update.dueAt.trim() === "") {
+            nextDueAt = null // 空字符串 = 清除截止时间
+          } else {
+            nextDueAt = parseDueDate(update.dueAt) ?? undefined
+            if (nextDueAt === undefined) {
+              return {
+                ok: false,
+                operation,
+                reason: "invalid_input",
+                message: `无法解析时间「${update.dueAt}」，请用 ISO 8601（如 2026-10-27T20:00:00+08:00）`,
+              }
+            }
+          }
+        }
       }
       const candidates = await prisma.todo.findMany({
         where: {
@@ -91,6 +133,17 @@ export function createTodoTool(userId: string) {
           data: { done: true, doneAt: new Date() },
         })
         return { ok: true, operation, completed: [hit.content] }
+      }
+      if (operation === "update") {
+        const data: { content?: string; dueAt?: Date | null } = {}
+        if (nextContent !== undefined) data.content = nextContent
+        if (nextDueAt !== undefined) data.dueAt = nextDueAt
+        const updated = await prisma.todo.update({
+          where: { id: hit.id },
+          data,
+          select: { content: true },
+        })
+        return { ok: true, operation, updated: [updated.content] }
       }
       await prisma.todo.delete({ where: { id: hit.id } })
       return { ok: true, operation, deleted: [hit.content] }

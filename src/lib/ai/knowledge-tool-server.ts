@@ -11,8 +11,12 @@ import { prisma } from '@/lib/db'
 import { Prisma } from '@/generated/prisma/client'
 import {
   knowledgeInputSchema,
+  knowledgeOutlineInputSchema,
   type KnowledgeHit,
   type KnowledgeToolOutput,
+  type KnowledgeOutlineDoc,
+  type KnowledgeOutlineOutput,
+  type KnowledgeOutlineSection,
 } from './knowledge-tool'
 
 /** 每块返回给模型的正文截断长度(检索引用够用,控制 token) */
@@ -69,6 +73,126 @@ export function createKnowledgeTool(userId: string, preferredSubject?: string) {
   })
 }
 
+/** 中文册别 → 阿拉伯数字，便于“必修四”命中 title/grade 里的“必修4” */
+function normalizeOutlineTitle(raw: string): string {
+  const cn: Record<string, string> = { 一: '1', 二: '2', 三: '3', 四: '4', 五: '5', 六: '6' }
+  return raw
+    .replace(/必修\s*([一二三四五六])/g, (_, c: string) => `必修${cn[c]}`)
+    .replace(/选择性必修\s*([一二三四])/g, (_, c: string) => `选择性必修 ${cn[c]}`)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+type RawOutlineRow = {
+  docTitle: string
+  grade: string | null
+  subject: string
+  kind: string
+  chapter: string | null
+  section: string | null
+  heading: string
+  sortOrder: number
+  preview: string
+}
+
+/**
+ * 课本目录工具：返回用户知识库中课本的「单元—课—框题」树。
+ * 与 search_knowledge 分工：拟提纲/翻目录/看课本结构用它；查定义/原文/细节仍用 search_knowledge。
+ * 不返回整本书正文，只给 160 字开头预览，控制 token。
+ */
+export function createKnowledgeOutlineTool(userId: string) {
+  return tool({
+    description:
+      '列出用户知识库中课本的目录结构（单元/课/框题/少量开头预览）。用户要求“拟提纲、列知识框架、翻课本目录、看课本结构、按必修X整理”时，第一步调用本工具；title 传册别或书名关键词（如「必修四」「哲学与文化」「数学 必修 第一册」）。需要具体目题、定义或原文时，再调用 search_knowledge（kind=textbook）。不要用联网搜索代替课本目录。',
+    inputSchema: knowledgeOutlineInputSchema,
+    execute: async ({ title, subject, kind }): Promise<KnowledgeOutlineOutput> => {
+      try {
+        const kindFilter = kind ?? 'textbook'
+        const titleKey = title ? normalizeOutlineTitle(title) : ''
+        const like = titleKey ? `%${titleKey.replace(/[\\%_]/g, (m) => `\\${m}`)}%` : ''
+        const query = (withTitle: boolean) => prisma.$queryRaw<RawOutlineRow[]>(Prisma.sql`
+          SELECT d.title AS "docTitle", d.grade, d.subject, d.kind,
+                 c.chapter, c.section, c.heading, c."sortOrder",
+                 left(regexp_replace(c.content, '\\s+', ' ', 'g'), 160) AS preview
+          FROM "KnowledgeDoc" d
+          JOIN "KnowledgeChunk" c ON c."docId" = d.id
+          WHERE d."userId" = ${userId}
+            AND d.kind = ${kindFilter}
+            ${subject ? Prisma.sql`AND d.subject = ${subject}` : Prisma.empty}
+            ${withTitle && like ? Prisma.sql`AND (d.title ILIKE ${like} OR d.grade ILIKE ${like})` : Prisma.empty}
+          ORDER BY d."createdAt" DESC, c."sortOrder" ASC
+          LIMIT 700
+        `)
+        let rows = await query(true)
+        // 书名/学科归错时逐级回退，避免“明明有书却列不出目录”
+        if (!rows.length && titleKey) rows = await query(false)
+        if (!rows.length && subject) {
+          rows = await prisma.$queryRaw<RawOutlineRow[]>(Prisma.sql`
+            SELECT d.title AS "docTitle", d.grade, d.subject, d.kind,
+                   c.chapter, c.section, c.heading, c."sortOrder",
+                   left(regexp_replace(c.content, '\\s+', ' ', 'g'), 160) AS preview
+            FROM "KnowledgeDoc" d
+            JOIN "KnowledgeChunk" c ON c."docId" = d.id
+            WHERE d."userId" = ${userId} AND d.kind = ${kindFilter}
+            ORDER BY d."createdAt" DESC, c."sortOrder" ASC
+            LIMIT 700
+          `)
+        }
+
+        const docs: KnowledgeOutlineDoc[] = []
+        const docMap = new Map<string, KnowledgeOutlineDoc>()
+        let headingCount = 0
+        for (const r of rows) {
+          if (docs.length >= 3 && !docMap.has(r.docTitle)) continue
+          let doc = docMap.get(r.docTitle)
+          if (!doc) {
+            if (docs.length >= 3) continue
+            doc = {
+              title: r.docTitle,
+              grade: r.grade,
+              subject: r.subject,
+              kind: r.kind,
+              chapters: [],
+            }
+            docs.push(doc)
+            docMap.set(r.docTitle, doc)
+          }
+          if (headingCount >= 140) continue
+          const chapterKey = r.chapter ?? ''
+          let chapter = doc.chapters.find((c) => (c.chapter ?? '') === chapterKey)
+          if (!chapter) {
+            chapter = { chapter: r.chapter, sections: [] }
+            doc.chapters.push(chapter)
+          }
+          const sectionKey = r.section ?? ''
+          let section: KnowledgeOutlineSection | undefined = chapter.sections.find(
+            (s) => (s.section ?? '') === sectionKey
+          )
+          if (!section) {
+            section = { section: r.section, headings: [] }
+            chapter.sections.push(section)
+          }
+          if (!section.headings.some((h) => h.heading === r.heading)) {
+            section.headings.push({ heading: r.heading, preview: (r.preview || '').trim() })
+            headingCount++
+          }
+        }
+
+        return {
+          docs,
+          note: docs.length
+            ? '以上是知识库中的课本目录（单元/课/框题，preview 为框题开头）。拟提纲必须按此结构逐课展开，课名/框题名照抄，不得跳课或改名；需要具体目题、定义、原文时再调用 search_knowledge（kind="textbook"）。不要用联网搜索代替课本目录。'
+            : '知识库中没有匹配的课本目录。请让用户确认册别/书名，或建议上传对应教材；不要编造目录。',
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '未知目录错误'
+        console.error('[knowledge-outline]', message)
+        return { docs: [], error: message, note: '课本目录暂时不可用，请按已有课本检索结果作答，不要编造目录。' }
+      }
+    },
+  })
+}
+
 /** 按命中结果的类型组合生成使用提示(课本与资料的引用规则不同) */
 function buildResultNote(results: KnowledgeHit[], query: string): string {
   if (!results.length) {
@@ -106,7 +230,7 @@ export async function searchKnowledgeChunks(
   const esc = (t: string) => t.replace(/[\\%_]/g, (m) => `\\${m}`)
   const like = (t: string) => `%${esc(t)}%`
   const hitExpr = Prisma.join(
-    terms.map((t) => Prisma.sql`(CASE WHEN c.content ILIKE ${like(t)} THEN 1 ELSE 0 END)`),
+    terms.map((t) => Prisma.sql`(CASE WHEN c.content ILIKE ${like(t)} OR c.heading ILIKE ${like(t)} OR c.section ILIKE ${like(t)} THEN 1 ELSE 0 END)`),
     ' + '
   )
   const rows = await prisma.$queryRaw<RawChunkRow[]>(Prisma.sql`
@@ -117,7 +241,7 @@ export async function searchKnowledgeChunks(
     WHERE c."userId" = ${userId}
     ${subject ? Prisma.sql`AND d.subject = ${subject}` : Prisma.empty}
     ${kind ? Prisma.sql`AND d.kind = ${kind}` : Prisma.empty}
-    AND (${Prisma.join(terms.map((t) => Prisma.sql`c.content ILIKE ${like(t)}`), ' OR ')})
+    AND (${Prisma.join(terms.map((t) => Prisma.sql`(c.content ILIKE ${like(t)} OR c.heading ILIKE ${like(t)} OR c.section ILIKE ${like(t)})`), ' OR ')})
     ORDER BY (${hitExpr}) DESC, c."sortOrder" ASC
     LIMIT ${FETCH_LIMIT}
   `)
@@ -128,11 +252,14 @@ export async function searchKnowledgeChunks(
   const scored = rows.map((r) => {
     const c = lower(r.content)
     const h = lower(r.heading)
+    const s = lower(r.section || '')
     let score = 0
     if (h.includes(q)) score += 6
+    if (s.includes(q)) score += 4
     if (c.includes(q)) score += 4
     for (const k of keywords) {
       if (h.includes(lower(k))) score += 3
+      if (s.includes(lower(k))) score += 2
       if (c.includes(lower(k))) score += 1
     }
     return { r, score }

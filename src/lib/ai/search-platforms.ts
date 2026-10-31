@@ -25,12 +25,27 @@
  * - Tavily：B站/知乎/抖音/微博 5/5 命中站内；小红书虽有 5 条，但落在
  *   beian./openaccount./fevh5app. 这类备案与开放平台子域，不是笔记正文——
  *   「定向小红书找笔记」在两引擎上目前都拿不到理想结果，别当卖点。
+ *
+ * 2026-10-25 游戏向三档复测（`scripts/tmp-probe-game-platforms.mjs` 搜站内命中 +
+ * `scripts/tmp-probe-reader-hits.mjs` 把命中 URL 喂给 read_url 本体，各 3 组查询）：
+ * - **米游社**：千帆 15/15 与 Tavily 15/15 全命中站内，摘要 550–630 字，可直接引用。
+ *   但 `www.miyoushe.com` 是 SPA 壳，read_url 四条 URL 全部「无可读正文」——
+ *   所以这一档只能靠摘要，别承诺"读全文"。千帆命中的页面偏旧（崩铁 1.5/1.6 前瞻），
+ *   Tavily 能拿到当期版本（7.1/7.2），时效敏感的游戏资讯优先 Tavily。
+ * - **B站**：两引擎站内命中都够（千帆 12/15、Tavily 15/15），且**专栏正文 read_url 读得出**
+ *   （实测 750–5700 字），是「搜索定向 + 读全文」双通路唯一都成立的一档。
+ *   代价：Tavily 偶尔混进 `Just a moment...` 反爬壳页，由 search.ts 的壳过滤丢弃。
+ * - **抖音**：命中数好看（Tavily 15/15），但内容质量按引擎劈叉——千帆平均摘要仅 53 字
+ *   （只有关门标题），Tavily 平均 916 字；read_url 四条里三条「无可读正文」，读通的那条
+ *   拿到的是「精选/推荐/登录」导航壳。结论：抖音档只在 Tavily 下有真实增量，
+ *   且不承诺正文，别把它当成可替代 B站攻略的来源。
  */
 
 export type SearchPlatformId =
   | 'auto'
   | 'all'
   | 'bilibili'
+  | 'miyoushe'
   | 'xiaohongshu'
   | 'zhihu'
   | 'douyin'
@@ -68,7 +83,13 @@ export const SEARCH_PLATFORMS: readonly SearchPlatformDef[] = [
     id: 'bilibili',
     label: 'B站',
     domains: ['bilibili.com', 'www.bilibili.com', 'm.bilibili.com', 'space.bilibili.com'],
-    tip: 'B 站的视频简介、UP 主专栏、评论区话题',
+    tip: 'B 站的视频简介与专栏长文；专栏正文可用 read_url 读出全文，适合要完整攻略/步骤',
+  },
+  {
+    id: 'miyoushe',
+    label: '米游社',
+    domains: ['miyoushe.com', 'www.miyoushe.com', 'bbs.miyoushe.com'],
+    tip: '米哈游官方社区：原神/崩坏/星穹铁道/绝区零的攻略长帖与版本资讯，站内摘要已成段可直接引用，但网页正文读不出（App 壳）——需要细节别声称读过全文',
   },
   {
     id: 'xiaohongshu',
@@ -86,7 +107,7 @@ export const SEARCH_PLATFORMS: readonly SearchPlatformDef[] = [
     id: 'douyin',
     label: '抖音',
     domains: ['douyin.com', 'www.douyin.com'],
-    tip: '抖音的视频页与话题页',
+    tip: '抖音的视频页与话题页；摘要可能只有关门标题那么长，站内正文一律读不出——拿不到成段文字时如实说，不要拿标题当结论',
   },
   {
     id: 'weibo',
