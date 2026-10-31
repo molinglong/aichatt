@@ -23,7 +23,7 @@ export async function GET() {
       take: 20,
       select: {
         id: true, subject: true, topic: true, title: true,
-        content: true, analysis: true, mastery: true,
+        content: true, imageUrl: true, analysis: true, mastery: true,
         reps: true, lapses: true, dueAt: true, sourceQuestionId: true,
       },
     })

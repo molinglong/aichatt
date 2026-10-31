@@ -85,7 +85,9 @@ async function buildModel(userId: string, modelId: string): Promise<LanguageMode
   if (!apiKey) return null
 
   try {
-    return createProviderInstanceForEffectiveModel(modelDef, apiKey)(modelDef.id)
+    // 门面模型必须发上游真实 id(如 deepseek-standard → deepseek-flash);
+    // 直接用 modelDef.id 会被上游 400 拒绝,打标静默降级。
+    return createProviderInstanceForEffectiveModel(modelDef, apiKey)(modelDef.upstreamId ?? modelDef.id)
   } catch {
     return null
   }
