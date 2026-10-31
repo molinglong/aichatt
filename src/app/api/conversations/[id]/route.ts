@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { getUserId } from '@/lib/api-auth'
 import { prisma } from '@/lib/db'
 import { z } from 'zod'
 import { deleteReferencedFiles } from '@/lib/uploads'
@@ -10,6 +11,7 @@ import {
   formatMessageRows,
   type MessageRow,
 } from '@/lib/conversation-message-format'
+import { getFavoriteIdMap } from '@/lib/favorites'
 
 /** 首屏尾部窗口条数:长会话不再全量下发,更早部分由前端"查看更早消息"续载 */
 const MESSAGE_TAIL = 80
@@ -44,18 +46,21 @@ const TRIM_BUFFER = 40
  * }
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const session = await auth()
-  if (!session?.user?.id) {
+  // Bearer 优先(浏览器扩展读历史):无效 Bearer 不降级到 cookie
+  const hasBearer = /^Bearer\s+/i.test(req.headers.get('authorization') ?? '')
+  const session = hasBearer ? null : await auth()
+  const userId = session?.user?.id ?? (await getUserId(req))
+  if (!userId) {
     return NextResponse.json({ error: '登录已失效，请重新登录后再试' }, { status: 401 })
   }
 
   const { id } = params
   // 双向隔离:临时会话只能访问临时对话,反之亦然(防 id 直达穿透);
-  // 不匹配时自然落入 404 分支
-  const scope = ephemeralScope(session)
+  // Bearer 令牌只属于完整账号，强制只看正常对话
+  const scope = session ? ephemeralScope(session) : { isEphemeral: false }
 
   // A 流式恢复: 超时兜底——超过 10 分钟仍处于 streaming 的草稿行视为已中断,
   // 定格为普通消息,避免前端无限轮询(快照周期 600ms,正常生成远短于该阈值)。
@@ -72,7 +77,7 @@ export async function GET(
   const conversation = await prisma.conversation.findFirst({
     where: {
       id,
-      userId: session.user.id,
+      userId,
       ...scope,
     },
     select: {
@@ -85,6 +90,7 @@ export async function GET(
       replyLength: true,
       maskId: true,
       compareModels: true,
+      studyMode: true, // 学习会话:普通聊天页据此改道 /study?c=id
     },
   })
 
@@ -144,7 +150,13 @@ export async function GET(
   const earlierCursorId = hasEarlier ? rows[0]?.id ?? null : null
   const earlierCount = Math.max(0, totalMessageCount - rows.length)
 
-  const messages = formatMessageRows(rows)
+  // 收藏状态回填:消息操作栏的星标靠 favoriteId 判断是否已收藏。
+  // 与更早翻页/前台补拉端点同口径,否则翻页后老消息状态会错。
+  const favoriteIdMap = await getFavoriteIdMap(userId, rows.map((row) => row.id))
+  const messages = formatMessageRows(rows).map((message) => ({
+    ...message,
+    favoriteId: favoriteIdMap.get(message.id) ?? null,
+  }))
 
   let compareModels: string[] = []
   if (conversation.compareModels) {
@@ -158,7 +170,7 @@ export async function GET(
 
   // E 对比模式投票: 返回最新一轮投票(对比模式回显高亮用)
   const latestVote = await prisma.compareVote.findFirst({
-    where: { conversationId: id, userId: session.user.id },
+    where: { conversationId: id, userId },
     orderBy: { updatedAt: 'desc' },
     select: { groupId: true, votedModel: true },
   })
@@ -172,6 +184,7 @@ export async function GET(
     stylePreset: conversation.stylePreset ?? null, // 新版 preset(null = balanced)
     replyLength: conversation.replyLength ?? null, // 长度档(null = standard,不额外限制篇幅)
     maskId: conversation.maskId ?? null, // 面具(null = 无面具)
+    studyMode: conversation.studyMode, // 学习模式会话(前端改道学习室)
     compareModels,
     latestVote: latestVote ?? null,
     messages,

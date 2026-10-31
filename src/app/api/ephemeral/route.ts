@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { deleteReferencedFiles } from '@/lib/uploads'
 import { denyIfEphemeral } from '@/lib/ephemeral'
+import { sanitizeStoredContent } from '@/lib/conversation-message-format'
 import { monitor } from '@/lib/monitor'
 
 /**
@@ -58,7 +59,9 @@ export async function GET(req: NextRequest) {
         updatedAt: conversation.updatedAt,
         messageCount: conversation._count.messages,
       },
-      messages: messages.reverse(),
+      messages: messages
+        .reverse()
+        .map((m) => ({ ...m, content: sanitizeStoredContent(m.content) })),
     })
   }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { getUserId } from '@/lib/api-auth'
 import { prisma } from '@/lib/db'
 import { STYLE_PRESETS } from '@/lib/ai/style-presets'
 import { REPLY_LENGTH_LEVELS, DEFAULT_REPLY_LENGTH } from '@/lib/ai/reply-length'
@@ -7,17 +8,21 @@ import { getMaskById } from '@/lib/ai/mask-resolve'
 import { isEphemeralSession } from '@/lib/ephemeral'
 
 export async function GET(req: Request) {
-  const session = await auth()
-  if (!session?.user?.id) {
+  // Bearer 优先(浏览器扩展读历史):无效 Bearer 不降级到 cookie，与 /api/chat 同口径
+  const hasBearer = /^Bearer\s+/i.test(req.headers.get('authorization') ?? '')
+  const session = hasBearer ? null : await auth()
+  const userId = session?.user?.id ?? (await getUserId(req))
+  if (!userId) {
     return NextResponse.json({ error: '登录已失效，请重新登录后再试' }, { status: 401 })
   }
 
   // 会话隔离:临时会话只返回临时对话,正常会话只返回正常对话。
   // 例外:正常模式下 ?scope=ephemeral 查看隔离区(设置→用户中心 临时聊天找回专区)。
-  const ephemeral = isEphemeralSession(session)
+  // Bearer 令牌只属于完整账号，永远不返回临时会话。
+  const ephemeral = session ? isEphemeralSession(session) : false
   const { searchParams } = new URL(req.url)
   const scope = (searchParams.get('scope') ?? '').trim().toLowerCase()
-  const listEphemeral = ephemeral || scope === 'ephemeral'
+  const listEphemeral = hasBearer ? false : ephemeral || scope === 'ephemeral'
   const parsedLimit = parseInt(searchParams.get('limit') ?? '20', 10)
   const parsedOffset = parseInt(searchParams.get('offset') ?? '0', 10)
   const limit = Math.min(Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20, 100)
@@ -34,7 +39,7 @@ export async function GET(req: Request) {
   // 与 q 关键词为 AND 关系;只传筛选不传 q 时等于浏览该面具的全部对话。
   const maskFilter = (searchParams.get('maskId') ?? '').trim()
   const where = {
-    userId: session.user.id,
+    userId,
     isEphemeral: listEphemeral,
     ...(maskFilter
       ? maskFilter === 'none'
@@ -70,6 +75,7 @@ export async function GET(req: Request) {
         model: true,
         mode: true,
         maskId: true, // 列表尾随面具徽标用(ConversationItem)
+        studyMode: true, // 学习会话:历史入口据此跳 /study?c=id
         updatedAt: true,
       },
       skip: offset,

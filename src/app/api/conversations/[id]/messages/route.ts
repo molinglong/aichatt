@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { ephemeralScope } from "@/lib/ephemeral"
-import { formatMessageRows } from "@/lib/conversation-message-format"
+import { formatMessageRows, sanitizeStoredContent, sanitizeStoredReasoning } from "@/lib/conversation-message-format"
+import { getFavoriteIdMap } from "@/lib/favorites"
 
 /** 更早翻页一次下发的最大行数 */
 const EARLIER_PAGE_SIZE = 60
@@ -79,8 +80,13 @@ export async function GET(
     pageRows.reverse()
     // 游标 = 本页最早一条;空页(游标行即全库最早)时收摊
     const earlierCursorId = pageRows[0]?.id ?? null
+    // 星标状态与首屏端点同口径
+    const favoriteIdMap = await getFavoriteIdMap(session.user.id, pageRows.map((row) => row.id))
     return NextResponse.json({
-      messages: formatMessageRows(pageRows),
+      messages: formatMessageRows(pageRows).map((message) => ({
+        ...message,
+        favoriteId: favoriteIdMap.get(message.id) ?? null,
+      })),
       hasEarlier: hasRawMore && !!earlierCursorId,
       earlierCursorId,
     })
@@ -105,6 +111,8 @@ export async function GET(
       reasoning: true,
       metadata: true,
       model: true,
+      // 跨端回流(ChatPanel 切回前台补拉):单聊可见过滤要靠 groupId 判定其他模型的回复
+      groupId: true,
       streaming: true,
       createdAt: true,
     },
@@ -113,9 +121,17 @@ export async function GET(
   const hasMore = messages.length > limit
   const page = hasMore ? messages.slice(0, limit) : messages
   const nextCursor = hasMore ? page[page.length - 1]?.id : null
+  const favoriteIdMap = await getFavoriteIdMap(session.user.id, page.map((m) => m.id))
 
   return NextResponse.json({
-    messages: page,
+    // 这段分支不走 formatMessageRows(客户端在这里要 attachments/metadata 的原始 JSON 字符串),
+    // 但正文/思考仍要过一道清洗:历史行里可能留着上游泄漏的工具调用标记(DSML)。
+    messages: page.map((m) => ({
+      ...m,
+      content: sanitizeStoredContent(m.content),
+      reasoning: sanitizeStoredReasoning(m.reasoning),
+      favoriteId: favoriteIdMap.get(m.id) ?? null,
+    })),
     nextCursor,
   })
 }

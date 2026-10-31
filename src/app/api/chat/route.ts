@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import {
   streamText,
+  generateText,
   wrapLanguageModel,
   extractReasoningMiddleware,
   toUIMessageStream,
@@ -11,12 +12,17 @@ import {
 } from "ai"
 import type { SharedV4ProviderOptions } from "@ai-sdk/provider"
 import { auth } from "@/lib/auth"
+import { getUserId } from "@/lib/api-auth"
 import { prisma } from "@/lib/db"
 import { decrypt } from "@/lib/crypto"
 import { classifyUpstreamError, encodeUpstreamError } from "@/lib/error-catalog"
 import { getEffectiveModel, getCappedPublicPoolModel, createProviderInstanceForEffectiveModel } from "@/lib/ai/registry"
 import { buildCustomModelDefinition, resolveApiKey, createCustomLanguageModel } from "@/lib/ai/custom-model"
 import { buildMemorySystemPrompt, getRelevantMemories, extractAndSaveMemories } from "@/lib/memory"
+import {
+  registerActiveChatRun,
+  releaseActiveChatRun,
+} from "@/lib/ai/active-chat-runs.server"
 import { buildGeneralProfileSection } from "@/lib/profile/injection"
 import { loadGeneralProfile } from "@/lib/profile/load"
 import { generateImage, extractImagePrompts, IMG_MARKER_REGEX } from "@/lib/ai/image"
@@ -27,12 +33,19 @@ import { getMaskById } from '@/lib/ai/mask-resolve'
 import { MASK_ESCAPE_HATCH } from '@/lib/ai/mask-types'
 import { buildMatchedSettingsBlock } from "@/lib/write/work-settings"
 import { splitReasoningTail } from "@/lib/utils"
+import {
+  containsToolCallMarkup,
+  stripToolCallMarkup,
+  ToolMarkupStreamFilter,
+} from "@/lib/ai/tool-markup"
 import { createWebSearchTool } from "@/lib/ai/search"
-import { KNOWLEDGE_TOOL_NAME, KNOWLEDGE_SUBJECT_LABELS } from "@/lib/ai/knowledge-tool"
-import { createKnowledgeTool, hasKnowledgeChunks } from "@/lib/ai/knowledge-tool-server"
+import { KNOWLEDGE_TOOL_NAME, KNOWLEDGE_OUTLINE_TOOL_NAME, KNOWLEDGE_SUBJECT_LABELS } from "@/lib/ai/knowledge-tool"
+import { createKnowledgeOutlineTool, createKnowledgeTool, hasKnowledgeChunks } from "@/lib/ai/knowledge-tool-server"
 import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME } from "@/lib/ai/practice-tool"
 import { createPracticeTool, createRecordPracticeTool } from "@/lib/ai/practice-tool-server"
 import { hasQuestions } from "@/lib/study/question-bank"
+import { STUDY_COMPLETE_MARKER, getStudyAction, isStudyComplete, stripStudyMarker } from "@/lib/study/lesson-flow"
+import { archiveStudyLesson } from "@/lib/study/archive-lesson"
 import { CLARIFY_TOOL_NAME, CLARIFY_TOOL_PROMPT, createClarifyTool } from "@/lib/ai/clarify"
 import {
   LOCAL_FILE_TOOL_NAME,
@@ -87,6 +100,7 @@ import {
   TODO_DISABLED_PROMPT,
 } from "@/lib/ai/todo-tool"
 import { createTodoTool } from "@/lib/ai/todo-tool.server"
+import { buildTimeAnchorPrompt } from "@/lib/ai/time-anchor"
 import {
   MASK_TOOL_NAME,
   MASK_TOOL_PROMPT,
@@ -113,6 +127,10 @@ import {
   URL_READER_DISABLED_PROMPT,
 } from "@/lib/ai/url-reader"
 import { createUrlReaderTool } from "@/lib/ai/url-reader.server"
+import { CALC_TOOL_NAME, CALC_TOOL_PROMPT } from "@/lib/ai/calc-tool"
+import { createCalcTool } from "@/lib/ai/calc-tool.server"
+import { TIME_TOOL_NAME, TIME_TOOL_PROMPT } from "@/lib/ai/time-tool"
+import { createTimeTool } from "@/lib/ai/time-tool.server"
 import { buildMcpPromptSection } from "@/lib/ai/mcp/mcp-constants"
 import {
   loadMcpToolsForUser,
@@ -122,6 +140,7 @@ import {
 import { loadCompressionState, maybeCompressContext, shouldCompress } from "@/lib/context-compression"
 import type { SearchEngineId } from "@/lib/ai/search-engines"
 import {
+  UGC_PLATFORMS,
   getSearchPlatform,
   toSearchPlatformId,
   type SearchPlatformId,
@@ -157,6 +176,7 @@ interface ChatRequestBody {
   workspaceContext?: string // 工作区快照(客户端组装:目录树+AGENT.md 约定,≤8KB):仅 local_file 注入时采纳,注入 system
   codePanelOpen?: boolean // 客户端上报:代码编辑器面板是否打开,服务端据此注入 code_edit 工具
   studyMode?: boolean // /study 导师对话流:强制挂载课本检索/题库练题工具并注入教学能力段(临时模式页面已被 middleware 封锁)
+  studyApproach?: 'beginner' | 'partial' | 'review' // 学习起点;服务端白名单校验,缺省或未知值保留默认导师行为
   /** 「只重答这条」:就地改写该 user 消息并把新回答插回原时间位置,后续消息不归档 */
   reanswerEdit?: { editedId?: string; oldContent: string }
 }
@@ -271,6 +291,28 @@ const IMG_PREFIX = "[IMG:"
 const IMG_PLACEHOLDER = "\n\n> 🎨 正在生成图片…\n\n"
 
 /**
+ * 最后一步(工具预算用尽)的系统提示。
+ * 不能再用 activeTools: [] 硬摘工具:DeepSeek 思考模型在**没有 tools 的请求**里仍会
+ * 按内部协议生成工具调用,而服务端不再解析,DSML 标记会原样落进正文(2026-10-25 实锤:
+ * 5 步工具用完 → 第 6 步无 tools → content 只剩 `<｜｜DSML｜｜ calls>` 块)。
+ * 保留 tools 声明 + 明确禁止调用:上游若仍生成调用会被正常解析成 tool_call,
+ * 而正常情况模型会直接给完整回答。
+ */
+const FINAL_STEP_TOOLS_NOTE = [
+  "## 工具预算(本轮最后一步)",
+  "本轮的工具调用预算已经用尽,这是最后一步,禁止再调用任何工具(搜索、计算、题库、课本、文件等一律不可)。",
+  "直接基于上面已经拿到的工具结果和你的分析,给出完整、可直接使用的最终回答。",
+  "不要输出任何工具调用标记或伪代码(例如 DSML、function_calls、invoke/parameter 标签),也不要描述你「接下来要调用某个工具」。",
+].join("\n")
+
+/** 泄漏补答提示:正文被上游工具协议吃掉时,再要一次纯文本回答 */
+const LEAK_RECOVERY_NOTE = [
+  "上一轮你的输出被上游解析成了无效的工具调用,用户没有看到任何正文。",
+  "现在没有任何工具可用,也不要再尝试调用工具。",
+  "请基于对话里已经拿到的工具结果,直接给出完整、最终的文本回答;不要提及这次修复。",
+].join("\n")
+
+/**
  * 过滤流式输出中的 [IMG:...] 标记(跨 chunk 安全),替换为占位提示。
  * 最终正文在 onFinish 中统一替换为真实图片后入库,
  * 客户端收到 finish 事件时会拉取库中最终内容覆盖显示。
@@ -326,6 +368,129 @@ function createImgMarkerFilterStream(): TransformStream<UIMessageChunk, UIMessag
   })
 }
 
+/** 通道结束帧 → 该通道的 delta 类型:收尾帧之前必须先把挂起的尾巴放完 */
+const FILTER_CHANNEL_END = {
+  "text-end": "text-delta",
+  "reasoning-end": "reasoning-delta",
+} as const
+
+/**
+ * 工具调用标记流式清洗(DeepSeek DSML 等):上游把工具协议当正文吐出来时,
+ * 原始标记绝不能进到 UI。正文与思考两路各用一个独立的过滤器(块状态互不串扰)。
+ */
+function createToolMarkupFilterStream(): TransformStream<UIMessageChunk, UIMessageChunk> {
+  const filters = {
+    "text-delta": new ToolMarkupStreamFilter(),
+    "reasoning-delta": new ToolMarkupStreamFilter(),
+  }
+  const lastIds: Record<string, string | undefined> = {}
+  const drain = (
+    controller: TransformStreamDefaultController<UIMessageChunk>
+  ): void => {
+    for (const type of ["text-delta", "reasoning-delta"] as const) {
+      const rest = filters[type].flush()
+      if (!rest) continue
+      controller.enqueue(
+        { type, id: lastIds[type] ?? type, delta: rest } as UIMessageChunk
+      )
+    }
+  }
+  return new TransformStream<UIMessageChunk, UIMessageChunk>({
+    transform(chunk, controller) {
+      // finish 之后不能再补 text-delta:先把尾巴放完,再放 finish
+      if (chunk.type === "finish") {
+        drain(controller)
+        controller.enqueue(chunk)
+        return
+      }
+      // 通道收尾帧(text-end / reasoning-end)之前先放尾巴。
+      // 放到 finish 才补的话,这截 delta 会落在 *-end 之后,客户端 processUIMessageStream
+      // 直接抛 "Received reasoning-delta for missing reasoning part"(该 part 已出栈),
+      // 表现是整轮回答流完、末尾却弹错误气泡。
+      if (chunk.type === "text-end" || chunk.type === "reasoning-end") {
+        const type = FILTER_CHANNEL_END[chunk.type]
+        const rest = filters[type].flush()
+        if (rest) {
+          const partId = (chunk as { id?: string }).id
+          controller.enqueue(
+            { type, id: lastIds[type] ?? partId ?? type, delta: rest } as UIMessageChunk
+          )
+        }
+        controller.enqueue(chunk)
+        return
+      }
+      if (chunk.type !== "text-delta" && chunk.type !== "reasoning-delta") {
+        controller.enqueue(chunk)
+        return
+      }
+      lastIds[chunk.type] = chunk.id
+      const cleaned = filters[chunk.type].push(chunk.delta)
+      if (cleaned) {
+        controller.enqueue({ ...chunk, delta: cleaned })
+      }
+    },
+    flush(controller) {
+      drain(controller)
+    },
+  })
+}
+
+/** UI 流的 lane 归属:正文与思考各有 start → delta* → end 三段 */
+const PART_LANE: Record<string, { lane: "text" | "reasoning"; role: "start" | "delta" | "end" }> = {
+  "text-start": { lane: "text", role: "start" },
+  "text-delta": { lane: "text", role: "delta" },
+  "text-end": { lane: "text", role: "end" },
+  "reasoning-start": { lane: "reasoning", role: "start" },
+  "reasoning-delta": { lane: "reasoning", role: "delta" },
+  "reasoning-end": { lane: "reasoning", role: "end" },
+}
+
+/**
+ * 出口顺序兜底:保证每个 part 的 start 一定先于它的 delta / end。
+ *
+ * 客户端 processUIMessageStream 对「没 start 的 delta」零容忍,收到即抛
+ * UIMessageStreamError("Received reasoning-delta for missing reasoning part ..."),
+ * 整轮回答就从「已流完」变成一条错误气泡。上游有几处会产生这种越序:
+ * - 多步续跑重排 id:provider 复用同一个 reasoning id 时 SDK 会换成新 id,
+ *   一旦某一步的 start 丢失/middleware 在块切换处补帧,delta 就找不到 start;
+ * - 清洗流对尾巴的延迟下发(见 createToolMarkupFilterStream)。
+ * 这里兜一层:缺 start 就补一个同 id 的 start;重复的 start 丢弃(否则同 id 渲染两段思考)。
+ */
+function createPartSequenceGuardStream(): TransformStream<UIMessageChunk, UIMessageChunk> {
+  const active: Record<"text" | "reasoning", Set<string>> = {
+    text: new Set<string>(),
+    reasoning: new Set<string>(),
+  }
+  return new TransformStream<UIMessageChunk, UIMessageChunk>({
+    transform(chunk, controller) {
+      const meta = PART_LANE[chunk.type]
+      if (!meta) {
+        controller.enqueue(chunk)
+        return
+      }
+      const id = (chunk as { id?: string }).id ?? ""
+      const lane = active[meta.lane]
+      if (meta.role === "start") {
+        // 同一 id 的第二个 start 会让客户端多插一段空 part,直接吞掉
+        if (lane.has(id)) return
+        lane.add(id)
+        controller.enqueue(chunk)
+        return
+      }
+      if (!lane.has(id)) {
+        lane.add(id)
+        console.warn(`[chat] ${chunk.type} 缺少对应的 start(id=${id}),已在出口补齐`)
+        controller.enqueue({
+          type: meta.lane === "text" ? "text-start" : "reasoning-start",
+          id,
+        } as UIMessageChunk)
+      }
+      if (meta.role === "end") lane.delete(id)
+      controller.enqueue(chunk)
+    },
+  })
+}
+
 /** Extract plain text from a message (UIMessage or CoreMessage) */
 function extractTextContent(msg: IncomingMessage): string {
   if (typeof msg.content === "string" && msg.content) return msg.content
@@ -346,8 +511,12 @@ function extractTextContent(msg: IncomingMessage): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await auth()
-    if (!session?.user?.id) {
+    // 双通道:Bearer 令牌优先(浏览器扩展等外部客户端),否则走 cookie session。
+    // 带 Bearer 时不再读 cookie,避免「令牌无效却借到登录态」的歧义。
+    const hasBearer = /^Bearer\s+/i.test(req.headers.get("authorization") ?? "")
+    const session = hasBearer ? null : await auth()
+    const userId = session?.user?.id ?? (await getUserId(req))
+    if (!userId) {
       return new Response(
         JSON.stringify({
           error: encodeUpstreamError(
@@ -361,10 +530,10 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const userId = session.user.id
     // 临时聊天模式(访客密码登录):对话打隔离标记进隔离区。
     // 记忆写入/设置类工具全部物理级关闭,长期记忆注入由用户开关控制。
-    const isEphemeral = isEphemeralSession(session)
+    // Bearer 令牌属于正式账号,按非临时模式处理。
+    const isEphemeral = session ? isEphemeralSession(session) : false
 
     // 提前声明:长上下文摘要注入分支及多个 system 提示都需要读取 systemParts,
     // 在函数顶部集中声明一次,避免下游块式作用域里的 TDZ / use-before-define。
@@ -746,11 +915,14 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
               }`
             })
           } else if (rec?.parseStatus === "done") {
-            // done 但提取不到有效文本(扫描件/图片型 PDF)。视觉模型也读不了(服务端不渲染 PDF 页为图),
+            // done 但提取不到有效文本(PDF 扫描件 / 纯图片型 PPT)。视觉模型也读不了(服务端不渲染页面为图),
             // 故不误导用户切模型,直接给出可行动建议
+            const isPdf = att.type === "application/pdf"
             contentParts.push({
               type: "text",
-              text: `（用户上传的 PDF「${att.name}」是扫描件/图片型，未能提取到文本。请告诉用户：可以将 PDF 中的文字内容复制后直接发送给你；图片型扫描件暂无法自动识别。）`,
+              text: isPdf
+                ? `（用户上传的 PDF「${att.name}」是扫描件/图片型，未能提取到文本。请告诉用户：可以将 PDF 中的文字内容复制后直接发送给你；图片型扫描件暂无法自动识别。）`
+                : `（用户上传的文件「${att.name}」中没有可提取的文字（可能是图片、图表或纯图形页面）。请直接告知用户该附件无法用于内容分析。）`,
             })
           } else if (rec) {
             // failed 等异常状态
@@ -1053,6 +1225,12 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   const replyLengthPrompt = getReplyLengthPrompt(effectiveReplyLength)
   if (replyLengthPrompt && !isGameMask) systemParts.push(replyLengthPrompt)
 
+  // 当前时间锚点：模型自己不知道"今天"是哪天，而 todo 的 dueAt 要 ISO 绝对时间，
+  // "周五/明天"的换算也必须有基准。缺这段时模型会额外调 web_search 查日期，
+  // 把普通对话 5 步工具预算白烧一步（线上实例：删待办→重建→搜日期→再删再建→撞上限）。
+  // 游戏回合自管世界时间，注入真实日期会与设定冲突，故跳过。
+  if (!isGameMask) systemParts.push(buildTimeAnchorPrompt())
+
   // 公式书写规范: 全局生效——模型(尤其中文系)常用 Unicode 拼凑数学式(a^m·a^n、√2、≠),
   // KaTeX 只认 LaTeX 定界符,这些写法被原样当字符显示,用户侧表现就是"公式全是乱码"。
   // 约束源头优于前端兜底: 启发式转换会误伤 2^10 / C++ / 版本号等正文片段,且本渲染管线
@@ -1090,6 +1268,20 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     '- 思维导图/知识结构/概念关系梳理输出一个 ```mindmap 代码块，块内为 Markdown 大纲（用 #/##/### 标题或 - 缩进列表表达层级），界面会渲染成可交互导图。不要用 html 画思维导图。',
     '- 复杂交互可视化（地图、大屏、多图联动、动画）才输出一个 ```html 代码块（可用 CDN 引入 ECharts），用户可在代码块上点「预览」查看效果。',
     '- 图表数据要完整（逐年/逐项都给出），不要省略中间数据。',
+  ].join('\n'))
+
+  // 几何图示规范:界面能直接渲染 ```triangle 三角形卡(纯 SVG,静态配图)。
+  // 这条放通用段而不是只挂数学面具 —— 学生不会每次记得先切面具,问几何题却不出图
+  // 就是"功能没生效";默认人格同样需要。与数据可视化规范同一套围栏块协议。
+  systemParts.push([
+    '## 几何图示规范',
+    '讲解解三角形或平面几何题时，如果题目的已知量能唯一确定一个三角形（三边、两边夹一角、两角夹一边），在回复的最开头（任何文字之前）输出一张三角形图（界面会把它固定在回复最上方，图形在上、题干与推导在下），让读者对照图看推导，不要把图插在解题步骤中间。',
+    '- 输出一个 ```triangle 代码块，块内为纯 JSON：{"A":60,"b":3,"c":5,"highlight":["b","c"]}',
+    '- 大写字母是角（单位度），小写字母是边；只给三个能唯一确定三角形的量，数值必须来自题目或你算出的结果',
+    '- 要在图上作高、中线或角平分线时用 extra 字段指定，不要为辅助线另画一图：{"A":60,"b":3,"c":5,"extra":[{"type":"altitude","from":"A"}]}。type 取 altitude（高）|median（中线）|bisector（角平分线），from 是要引线的顶点 A/B/C，最多三条；界面会画虚线、垂足的直角标记和落点字母 D/E/F',
+    '- highlight 是这一步要强调的边或角（图上会标注它们的数值），可省略；caption 可写一句图注，也可省略',
+    '- 图上只画这一个三角形，不要在一个块里塞多组数据；一道题最多两张',
+    '- 数值不确定就不要画，宁可只写公式。块内不能写注释或多余字段，解析失败时界面会原样显示 JSON',
   ].join('\n'))
 
   // 联网搜索能力(仅在用户配置了联网搜索 Key 且本次请求主动开启了 webSearch 时才挂上工具)
@@ -1135,6 +1327,22 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     systemParts.push(URL_READER_TOOL_PROMPT)
   } else if (!groupId && !isGameMask) {
     systemParts.push(URL_READER_DISABLED_PROMPT)
+  }
+
+  // 验算工具(calculate):纯计算、无副作用、不碰用户数据,临时/对比模式一律常驻;
+  // 游戏回合不注入(沉浸叙事里弹计算卡片突兀)。模型口算易错,能力段里是硬规则:
+  // 具体数字运算/代入检验必须先算再写。
+  const calcTool = !isGameMask ? createCalcTool() : null
+  if (calcTool) {
+    systemParts.push(CALC_TOOL_PROMPT)
+  }
+
+  // 实时时间工具(get_current_time):纯只读、无副作用,闸门与 calculate 一致。
+  // 时间锚点只是请求开始时的快照,长对话里要「此刻」或精确到秒时由模型自行调用;
+  // 有了它,时间类问题不再需要(也不应该)走 web_search 白烧工具预算。
+  const timeTool = !isGameMask ? createTimeTool() : null
+  if (timeTool) {
+    systemParts.push(TIME_TOOL_PROMPT)
   }
 
   // MCP 外部工具:非临时非对比模式加载用户启用的 server(配置即全局生效)。
@@ -1252,10 +1460,12 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // 面具学科倾向(如数学大师→math)仅作为能力段默认过滤建议,不锁死。
   // 只读工具,临时模式/对比模式均可安全使用。学习模式强制挂载(没课本时检索返回空,不阻塞)。
   let knowledgeTool: ReturnType<typeof createKnowledgeTool> | null = null
+  let knowledgeOutlineTool: ReturnType<typeof createKnowledgeOutlineTool> | null = null
   let knowledgeSubjectHint = ""
   try {
     if (!isGameMask && (studyModeOn || (await hasKnowledgeChunks(userId)))) {
       knowledgeTool = createKnowledgeTool(userId, effectiveMask?.subject)
+      knowledgeOutlineTool = createKnowledgeOutlineTool(userId)
       const prefSubject = effectiveMask?.subject
       const prefLabel = prefSubject ? (KNOWLEDGE_SUBJECT_LABELS[prefSubject] ?? prefSubject) : ""
       knowledgeSubjectHint = prefSubject
@@ -1292,7 +1502,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     const platformGuidance =
       searchPlatform === "auto"
         ? [
-            "平台定向(提高体感的关键):用户点名要在某个站内查资料时(B站评论区/UP主、小红书笔记、知乎回答、微博话题、贴吧帖子、豆瓣评分、抖音视频)，给 web_search 多传一个 platform 参数，结果会只含该站内容。",
+            `平台定向(提高体感的关键):用户点名要在某个站内查资料时(可定向：${UGC_PLATFORMS.map((p) => p.label).join("、")})，给 web_search 多传一个 platform 参数，结果会只含该站内容。各站能拿到什么形态的内容，见工具参数里逐档的场景说明。`,
             "拿不准用户是不是要站内结果时就不传 platform(全网检索)。站内索引可能比全网稀薄，零结果时工具会自动回退全网并在结果里说明——回退发生时，必须向用户交代「这些是全网来源，不是该站内内容」。",
           ].join("\n")
         : searchPlatform === "all"
@@ -1302,6 +1512,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       '## 联网搜索能力',
       `你拥有 web_search 工具(基于 ${engineDisplayName} 搜索 API)。当用户问题涉及以下场景时,**主动调用 web_search** 一次或多次获取实时信息再作答。`,
       '- 询问新闻、事件、近期发生的事("今天/最近/最新"+时间)',
+      `- 当前日期/时间/星期几**不属于本工具范围**:system 的「当前时间」段已给出基准,需要精确到此刻时调用 ${TIME_TOOL_NAME},禁止用 web_search 查时间`,
       '- 需要事实性数据(股价、天气、比赛结果、排行榜、版本号)',
       '- 引用具体来源、查证知识、用户要求查一查',
       '- 你对某个事实没有把握、训练数据可能已过时',
@@ -1328,6 +1539,23 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       '- query 只传 2-4 个学科关键词,**禁止把用户的问题整句直接当 query**(整句匹配不到任何课文);先从题目里提取考点词再检索,如「矛盾 普遍性 特殊性」「相反数 定义」;材料题给的数字/地名是表象,提它背后的考点词,如题干给德国铁路/煤/钢增长数据问「主要原因」,检索「德国 统一 经济」或「第二次工业革命 德国」,而不是「铁路 煤产量」。',
       '- kind 分流:概念/定义/公式/翻书/讲评/出题 → kind="textbook"(查课本原文);答题思路/大题怎么答/答题模板 → kind="material"(查资料);拿不准就先用 textbook 查一次,再用 material 查一次,两边结果按来源标注使用。',
       `闲聊、翻译、写代码、通用常识不需要调用。画图表/数据可视化也不需要调用——用户要图表时按「数据可视化规范」直接用你掌握的数据输出 \`\`\`chart 块,检索无果绝不构成改写成纯文字分析的理由。${knowledgeSubjectHint}回答时优先引用检索到的原文并标注来源:课本标注「书名+章节」,资料标注「资料名」;课本原文与你的知识冲突时,以课本为准。`,
+    ].join('\n'))
+  }
+
+  // 用户这句话是不是在要“课本目录/提纲”。命中时第 0 步强制调 list_knowledge_outline，
+  // 避免模型凭记忆写通用提纲，或拿 web_search 的结果冒充课本。
+  const wantsTextbookOutline =
+    /(?:拟|列|写|整理|做).{0,6}(?:提纲|框架|知识结构|知识树)|课本(?:目录|结构)|翻.{0,4}课本/.test(userContent)
+  const wantsTextbookLookup =
+    wantsTextbookOutline || /(?:课本|教材|必修\s*[一二三四五六1-6]|选择性必修)/.test(userContent)
+  if (knowledgeOutlineTool) {
+    systemParts.push([
+      '## 课本目录/提纲能力',
+      '你拥有 list_knowledge_outline 工具，用于列出用户知识库中课本的「单元—课—框题」结构。',
+      '- 用户说「拟提纲 / 列知识框架 / 翻课本目录 / 看课本结构 / 按必修X整理」时，第一步必须调用 list_knowledge_outline，title 传册别或书名关键词（如「必修四」「哲学与文化」「数学 必修 第一册」），不要先联网搜索。',
+      '- 拿到目录后严格按返回的单元、课、框题逐条展开；课名和框题名照抄，不得跳课、合并或改名。',
+      '- 需要具体目题、定义、公式、原文时，再调用 search_knowledge（kind="textbook"）查细节；目录工具只给结构，不替代正文。',
+      '- 知识库没有该册时如实说明并建议上传，不得编造目录，也不得用 web_search 的结果冒充用户课本。',
     ].join('\n'))
   }
 
@@ -1385,19 +1613,40 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       console.log(`[chat] practice pending re-injected (${pending.length} items)`)
     }
   }
-  // 学习模式能力段:/study 导师对话流。业界验证范式(ChatGPT Study Mode/Khanmigo):
-  // 答案守卫+苏格拉底引导做在系统层,配逃生舱防"伪引导";结课小结+学情回灌让错题参与对话。
+  // 学习模式能力段:已选起点用差异化策略,旧调用保留答案守卫+苏格拉底引导。
+  // 客户端枚举只做严格白名单分流,不把客户端任意字符串插入 system。
   if (studyModeOn && !isGameMask) {
+    const studyApproach = body.studyApproach === 'beginner'
+      || body.studyApproach === 'partial'
+      || body.studyApproach === 'review'
+      ? body.studyApproach
+      : undefined
     systemParts.push([
       '## 学习模式(导师)',
-      '本会话处于学习模式:你是导师,目标是让用户真正学会,而不是替他给出答案。',
-      '答案守卫(硬规则):用户问题目时,首次回复禁止直接输出最终答案——先反问定位卡点(如「你卡在哪一步」),给一层不点破计算的提示,再依据用户回应逐步推进。',
-      '- 防伪引导:每轮最多一个反问;连续两轮引导用户仍卡住或明显急躁时,主动转为分步讲解(讲思路、留最后一步让用户亲手完成)。',
-      '- 逃生舱:用户明确要求「直接给我讲解/给我答案」时立即服从,给完整分步讲解,不再反问;讲完仍补一道同考点变式确认是否真会。',
-      '- 讲完一道题后主动给一道同考点变式小练巩固(按试卷块协议 :::choice/:::question + 紧跟 :::answer;有课本时先 search_knowledge 找课本例题改编,防超纲)。',
+      ...(studyApproach ? [
+        '本会话处于学习模式:你是导师,按用户已选的起点帮助他理解当前题,尊重用户的推进节奏。',
+        studyApproach === 'beginner'
+          ? '- 学习起点「完全不会」:用户已经说明完全不会,直接给出第一个可理解的步骤,不重复问卡在哪;默认每次一小步,不强迫用户作答才能继续。不要以「现在轮到你」「写出…发我」「你来算一下」这类任务或提问结尾——讲完当前一小步就停,用户可用界面按钮继续。'
+          : studyApproach === 'partial'
+            ? '- 学习起点「有一点思路」:认真分析用户实际提供的思路,指出其中正确的部分和真实卡点,再从卡点继续;如果用户尚未提供思路,直接给第一层提示,不伪称已经分析过他的思路,不编造他的错误。'
+            : '- 学习起点「复习巩固」:先给一个关键回忆点或自检,不自动剧透完整答案,不强迫作答;用户点击或要求「展开精简解法」时,直接给精简解法,不再设提问门槛。',
+        '- 推进规则:用户明确说「继续/下一步」就从当前进度推进到尚未讲解的下一步,不是重讲已有步骤,不反复确认、不要求先答题;用户要求完整解法或直接给答案时,立即完整给出解法和答案,不隐藏最后一步,并按下方完成规则输出结束标记。',
+        '- 随时答疑:用户追问时解释当前步骤,沿用已有题目、思路和进度;每轮携带的学习起点不是重启信号,不要重复起点开场或从头教学。',
+        `- 完成规则:只有同时满足三条才算本题讲完——①最终答案已经给出 ②没有尚未讲解的后续步骤 ③本回合不是「等你回一句继续」的中间态。满足时给出简短总结,在回复最后单独一行原样输出 ${STUDY_COMPLETE_MARKER},不要放进代码块;随即结束,不再邀请继续、不重复步骤、不追加变式题。完整解法(包括精简解法)必须含此标记。结束标记只能原样输出,禁止输出任何其他 HTML 注释或自创变体(如 study-complete-check)。`,
+        '- 未完成规则:只讲了一小步、把「要不要继续」抛回用户、发生错误或仅给出回忆点/自检时,一律不输出结束标记,也不写「小结」「本题讲完」「先到这里」这类收尾语;不能把一次回复结束当成本题完成。',
+        '- 中间步骤收尾:讲解停在中间时自然停在当前位置即可,不要要求用户打字说「下一步/继续」——界面已有「继续,往下讲」按钮,也不要复述或替用户点这个按钮。',
+      ] : [
+        '本会话处于学习模式:你是导师,目标是让用户真正学会,而不是替他给出答案。',
+        '答案守卫(硬规则):用户问题目时,首次回复禁止直接输出最终答案——先反问定位卡点(如「你卡在哪一步」),给一层不点破计算的提示,再依据用户回应逐步推进。',
+        '- 防伪引导:每轮最多一个反问;连续两轮引导用户仍卡住或明显急躁时,主动转为分步讲解(讲思路、留最后一步让用户亲手完成)。',
+        '- 逃生舱:用户明确要求「直接给我讲解/给我答案」时立即服从,给完整分步讲解,不再反问;讲完仍补一道同考点变式确认是否真会。',
+        '- 讲完一道题后主动给一道同考点变式小练巩固(按试卷块协议 :::choice/:::question + 紧跟 :::answer;有课本时先 search_knowledge 找课本例题改编,防超纲)。',
+      ]),
       '- 从题库抽题练习时严格按题库练题能力段执行:判分后必须 record_practice 上报,答错的题自动进错题本。',
       '- 用户示意结课(如「今天到这」「下课」)时给一句结课小结:本次掌握了什么、哪个考点待复习。',
-      '- 开场按下方「当前学情」自然带一句最相关的复习点(如「上次『十字相乘』错了两道,今天先练这个」),不要罗列清单,不要提"系统给我看了你的数据"。',
+      studyApproach
+        ? '- 当前题优先:有当前题目、已有思路或步骤追问时直接处理,不要让「当前学情」复习开场抢占;仅在没有当前任务时可自然邀请复习,不罗列学情清单,不提"系统给我看了你的数据"。'
+        : '- 开场按下方「当前学情」自然带一句最相关的复习点(如「上次『十字相乘』错了两道,今天先练这个」),不要罗列清单,不要提"系统给我看了你的数据"。',
     ].join('\n'))
 
     // 学情回灌:今日到期队列 + 近期薄弱点 → system 段(Khanmigo"近期解题史"机制;
@@ -1421,7 +1670,9 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       systemParts.push([
         '## 当前学情(仅供开场参考,禁止照单罗列)',
         studyDueCount > 0
-          ? `- 今日复习队列:${studyDueCount} 张到期卡,可主动提议先复习再学新内容`
+          ? studyApproach
+            ? `- 今日复习队列:${studyDueCount} 张到期卡,仅在没有当前任务时可邀请复习,不得打断当前题或步骤追问`
+            : `- 今日复习队列:${studyDueCount} 张到期卡,可主动提议先复习再学新内容`
           : '- 今日复习队列已清空',
         ...(weakLines.length ? ['- 近期薄弱考点:', ...weakLines] : []),
       ].join('\n'))
@@ -1487,15 +1738,31 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       .then(async () => {
         if (!draftMessageId || snapStopped) return
         try {
+          // 快照同样清洗:流式中间态也可能先吐出工具调用标记,重载/换端不能看见原始标记
+          const cleanText = stripToolCallMarkup(snapText).text
+          const cleanReasoning = snapReasoning ? stripToolCallMarkup(snapReasoning).text : ""
           await prisma.message.update({
             where: { id: draftMessageId },
-            data: { content: snapText, reasoning: snapReasoning || null },
+            data: { content: cleanText, reasoning: cleanReasoning || null },
           })
           lastSnapAt = Date.now()
         } catch {
           // 快照失败不影响流式主流程
         }
       })
+      .catch(() => {})
+  }
+  // 工具明细即时落库(每个含工具调用的 step 完成后一次)。流半路断开时 onFinish 不执行,
+  // 仅靠 abort 兜底只定格 streaming=false —— 图文混排的白名单图全在 toolCalls 里,
+  // 丢了之后重载正文的 [图N] 就会裸奔成文字(2026-10-24 生产实锤:点图切后台断流)。
+  // 步数本来就少,每步一次 update 的代价可忽略;与 onFinish 同口径保留 32KB 上限。
+  const persistToolCallsMetadata = (): void => {
+    const draftId = draftMessageId
+    if (!draftId || collectedToolCalls.length === 0) return
+    const json = JSON.stringify({ kind: 'tool_calls', version: 1, toolCalls: collectedToolCalls })
+    if (json.length > 32768) return
+    void prisma.message
+      .update({ where: { id: draftId }, data: { metadata: json } })
       .catch(() => {})
   }
   // 长上下文压缩:后台补一次摘要,只对下一次请求的注入生效,绝不干扰本次流式。
@@ -1530,6 +1797,8 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
         stylePreset: effectiveStylePreset,
         ...(effectiveMaskId ? { maskId: effectiveMaskId } : {}),
         ...(groupId ? { mode: "compare" } : {}),
+        // 学习模式落标记:历史列表据此把会话跳回 /study,而不是普通聊天
+        ...(studyModeOn ? { studyMode: true } : {}),
       },
     })
     convId = conv.id
@@ -1565,10 +1834,15 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       })
     } else {
       // C 分支轻量标记: 编辑产生的新 user 消息带 editedFrom 指向被编辑消息,
-      // 供前端"查看历史版本"回看入口使用(仅写入该字段,不透传任意 metadata)
+      // 供前端"查看历史版本"回看入口使用;学习动作只接受白名单,不透传任意 metadata。
       const editedFrom = (
         lastRawUserMsg?.metadata as { editedFrom?: unknown } | undefined
       )?.editedFrom
+      const studyAction = studyModeOn ? getStudyAction(lastRawUserMsg?.metadata) : undefined
+      const userMetadata = {
+        ...(typeof editedFrom === "string" && editedFrom ? { editedFrom } : {}),
+        ...(studyAction ? { studyAction } : {}),
+      }
       // 「只重答这条」: 就地改写被编辑的 user 行,不再新建 user 行(旧回答与后续消息原样保留)。
       // editedUserCreatedAt(外层声明)供草稿行做时间插槽,把新回答插回该消息与下一条之间。
       if (reanswerEdit) {
@@ -1620,8 +1894,8 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
             ...(attachments.length > 0
               ? { attachments: JSON.stringify(attachments) }
               : {}),
-            ...(typeof editedFrom === "string" && editedFrom
-              ? { metadata: JSON.stringify({ editedFrom }) }
+            ...(Object.keys(userMetadata).length > 0
+              ? { metadata: JSON.stringify(userMetadata) }
               : {}),
           },
         })
@@ -1762,9 +2036,31 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // stopWhen 记一笔，onFinish 只在真正撞上步数上限时才补"继续"提示，
   // 否则每张本地文件/代码卡片后面都会多挂一句无意义的提示。
   let pausedForHostTool = false
+  let studyCompleted = false
+
+  // 生成生命周期与 HTTP 连接解耦(安卓壳切后台断流):
+  // req.signal 只代表「还有人接收吗」,不再作为中止上游的信号。客户端断开后
+  // 服务端继续把这一轮跑完并落库,人回到前台由 A 流式恢复补拉完整内容。
+  // 真正的中止只有两条:用户点停止(finalize-draft 调 abortActiveChatRuns)
+  // 或后台兜底超时,避免无人接收的生成无限占资源。
+  const runAbort = new AbortController()
+  // 服务端支收到的 chunk 数;只用于断流取证(客户端断开时能看出后台是否还在拉数据)
+  let serverDrainChunks = 0
+  const runConversationId = convId
+  if (runConversationId) registerActiveChatRun(runConversationId, runAbort)
+  const runBackstopTimer = setTimeout(() => {
+    if (!runAbort.signal.aborted) runAbort.abort("background-timeout")
+  }, 10 * 60 * 1000)
+  // Node 环境下别让兜底定时器拖住进程退出(浏览器类型上没有 unref)
+  ;(runBackstopTimer as unknown as { unref?: () => void }).unref?.()
+  const finishActiveRun = () => {
+    clearTimeout(runBackstopTimer)
+    if (runConversationId) releaseActiveChatRun(runConversationId, runAbort)
+  }
 
 const result = streamText({
     model,
+    abortSignal: runAbort.signal,
     messages: outboundMessages,
     ...(finalSystem ? { system: finalSystem } : {}),
     // DeepSeek V4.1 起“思考”由请求参数控制(默认 enabled):deepThink 开 → enabled,
@@ -1797,13 +2093,16 @@ const result = streamText({
     (cmSupportsReasoning || /dashscope\.aliyuncs\.com/i.test(cmBaseURL))
       ? { providerOptions: { openai: { reasoningEffort: "medium" } } }
       : {}),
-    ...((searchTool || urlReaderTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
+    ...((searchTool || urlReaderTool || calcTool || timeTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
       ? {
           tools: {
             ...(searchTool ? { web_search: searchTool } : {}),
             ...(mcpToolCount > 0 && mcp ? mcp.tools : {}),
             ...(urlReaderTool ? { [URL_READER_TOOL_NAME]: urlReaderTool } : {}),
+            ...(calcTool ? { [CALC_TOOL_NAME]: calcTool } : {}),
+            ...(timeTool ? { [TIME_TOOL_NAME]: timeTool } : {}),
             ...(knowledgeTool ? { [KNOWLEDGE_TOOL_NAME]: knowledgeTool } : {}),
+            ...(knowledgeOutlineTool ? { [KNOWLEDGE_OUTLINE_TOOL_NAME]: knowledgeOutlineTool } : {}),
             ...(practiceTool ? { [PRACTICE_TOOL_NAME]: practiceTool } : {}),
             ...(recordPracticeTool ? { [RECORD_TOOL_NAME]: recordPracticeTool } : {}),
             ...(clarifyTool ? { [CLARIFY_TOOL_NAME]: clarifyTool } : {}),
@@ -1846,8 +2145,20 @@ const result = streamText({
     //    若 400 则把 effort 挪到第 1 步起的 per-step 注入)。自定义/中转站模型思考开关不受控,
     //    维持原 auto 行为(靠能力段软规则),避免 400。
     prepareStep: ({ stepNumber }: { stepNumber: number }) => {
-      if (stepNumber >= stepBudget - 1) return { activeTools: [] }
-      if (!knowledgeTool || !effectiveMask?.subject || stepNumber !== 0) return undefined
+      // 最后一步:保留 tools 声明(见 FINAL_STEP_TOOLS_NOTE 注释),用系统提示逼出最终回答。
+      // instructions 是整段覆盖,必须带上原 finalSystem,否则面具/风格/课本等约束全丢。
+      if (stepNumber >= stepBudget - 1) {
+        return {
+          instructions: [finalSystem, FINAL_STEP_TOOLS_NOTE].filter(Boolean).join("\n\n"),
+        }
+      }
+      if (stepNumber !== 0) return undefined
+      // 提纲/翻目录优先强制目录工具；普通课本问题强制 search_knowledge。
+      // 两者都不命中且面具无学科倾向时，维持 auto。
+      const forceOutline = wantsTextbookOutline && !!knowledgeOutlineTool
+      const forceKnowledge =
+        !forceOutline && !!knowledgeTool && (wantsTextbookLookup || !!effectiveMask?.subject)
+      if (!forceOutline && !forceKnowledge) return undefined
       // 关思考覆盖只对思考参数受控的内置供应商构造;显式标注目标类型——
       // 否则两个三元分支会被 TS 归一化成联合(注入 openai?: undefined 之类),
       // 撞上 SharedV4ProviderOptions 的索引签名(JSONObject 拒绝 undefined)。
@@ -1867,6 +2178,12 @@ const result = streamText({
       // 归一化(给成员注入 openai?: undefined 之类),撞上 SharedV4ProviderOptions
       // 的索引签名(JSONObject)报错;providerOptions 传 undefined 时 AI SDK
       // mergeObjects 跳过该键,等价于不覆盖。
+      if (forceOutline) {
+        return {
+          toolChoice: { type: 'tool', toolName: KNOWLEDGE_OUTLINE_TOOL_NAME },
+          providerOptions: thinkingOff,
+        } as const
+      }
       return {
         toolChoice: { type: 'tool', toolName: KNOWLEDGE_TOOL_NAME },
         providerOptions: thinkingOff,
@@ -1927,9 +2244,13 @@ const result = streamText({
           output: r ? (r.output ?? r.result ?? null) : null,
         })
       }
+      // 工具明细即时落库:断流时 onFinish 不会执行,不能等到最后一刻才写(见 helper 注释)
+      if (Array.isArray(toolCalls) && toolCalls.length > 0) persistToolCallsMetadata()
     },
-    onFinish: async ({ text, reasoningText, finishReason, usage }) => {
+    onFinish: async ({ text, reasoningText, finishReason, usage, responseMessages }) => {
       streamSettled = true
+      // 后台续跑的正常收尾:注销在途登记并撤掉兜底超时(客户端可能早已断开)
+      finishActiveRun()
       // MCP 连接收尾:提前到最前,后续任何 early return 都不会泄漏连接。
       if (mcp && mcp.clients.length > 0) {
         await closeMcpClients(mcp.clients)
@@ -1974,6 +2295,29 @@ const result = streamText({
       let content = text ?? ""
       let savedReasoning = reasoningText ?? null
 
+      // 上游工具协议泄漏(DeepSeek DSML 等):原始标记绝不入库,正文/思考两路都清洗。
+      // 检出后:①打点 ②正文若被整段吃掉,走下面的无工具补答,别让用户只拿到空回复。
+      const contentMarkup = stripToolCallMarkup(content)
+      const reasoningMarkup = savedReasoning
+        ? stripToolCallMarkup(savedReasoning)
+        : { text: savedReasoning, stripped: false }
+      const markupLeaked = contentMarkup.stripped || reasoningMarkup.stripped
+      if (markupLeaked) {
+        const strippedLen = (text?.length ?? 0) - contentMarkup.text.length
+        console.warn(
+          `[chat] TOOL_MARKUP_LEAK: model=${modelId}, contentStripped=${contentMarkup.stripped}, reasoningStripped=${reasoningMarkup.stripped}, strippedChars=${strippedLen}, textLen=${text?.length ?? 0}`
+        )
+        monitor("chat_tool_markup_leak", {
+          model: modelId,
+          contentStripped: contentMarkup.stripped,
+          reasoningStripped: reasoningMarkup.stripped,
+          rawTextLen: text?.length ?? 0,
+        })
+        content = contentMarkup.text
+        const cleanedReasoning = reasoningMarkup.text ?? ""
+        savedReasoning = cleanedReasoning.trim() ? cleanedReasoning : null
+      }
+
       // 截断提示:输出被 token 上限截断时,告知用户可换模型或缩短上下文
       if (finishReason === 'length' && content) {
         content = content + '\n\n（提示：输出已达 token 上限被截断，可考虑换模型或缩短上下文）'
@@ -1987,6 +2331,50 @@ const result = streamText({
         console.log(`[chat] DEEP_THINK_OK: model=${modelId}, reasoningLen=${savedReasoning.length}, contentLen=${content.length}`)
       }
 
+      // 正文被工具协议整段吃掉(只剩标记)时,用已经拿到的工具结果做一次无工具补答。
+      // responseMessages 里那条泄漏的 assistant 文本丢弃(它就是标记本身),其余
+      // tool_calls / tool 结果原样带上,模型不必重跑搜索即可作答。
+      // 客户端工具轮不算(那一轮的"内容"是前端卡片,不是回答)。
+      let recoveryUsage: { input: number; output: number } | null = null
+      if (markupLeaked && !content.trim() && !pausedForHostTool && !req.signal.aborted) {
+        try {
+          const keepForRecovery = (responseMessages ?? []).filter((m) => {
+            if (m.role !== "assistant") return true
+            if (typeof m.content === "string") return !containsToolCallMarkup(m.content)
+            const hasToolCall = m.content.some((p) => p.type === "tool-call")
+            if (hasToolCall) return true
+            return !m.content.some(
+              (p) => p.type === "text" && containsToolCallMarkup(p.text)
+            )
+          })
+          const recovered = await generateText({
+            model,
+            system: [finalSystem, LEAK_RECOVERY_NOTE].filter(Boolean).join("\n\n"),
+            messages: [...outboundMessages, ...keepForRecovery],
+            maxRetries: 1,
+            // 跟主生成同一条中止链路:客户端断开不停,用户停止/后台超时才停
+            abortSignal: runAbort.signal,
+          })
+          const recoveredText = stripToolCallMarkup(recovered.text ?? "").text
+          if (recoveredText.trim()) {
+            content = recoveredText
+            recoveryUsage = {
+              input: recovered.usage?.inputTokens ?? 0,
+              output: recovered.usage?.outputTokens ?? 0,
+            }
+            console.warn(
+              `[chat] TOOL_MARKUP_RECOVERED: model=${modelId}, recoveredLen=${content.length}`
+            )
+          }
+        } catch (err) {
+          // 补答失败不阻塞入库:下面还有推理尾部兜底;再不行给可操作提示
+          console.error(
+            "[chat] TOOL_MARKUP_RECOVERY_FAILED:",
+            err instanceof Error ? err.message : String(err)
+          )
+        }
+      }
+
       // 兜底:模型把全部内容(含最终答案)都放进了 <think> 标签,导致正文为空。
       // 此时从推理尾部拆出答案部分作为正文,避免用户只看到思考过程而没有任何回答。
       if (!content.trim() && savedReasoning?.trim()) {
@@ -1997,6 +2385,10 @@ const result = streamText({
           console.log(`[chat] FALLBACK_SPLIT: model=${modelId}, extracted answer from reasoning tail (reasoningLen=${savedReasoning?.length ?? 0}, contentLen=${content.length})`)
         }
       }
+
+      // 只有正常结束且正文含明确完成标记才结课;先判定,再移除标记后持久化。
+      studyCompleted = studyModeOn && isStudyComplete(content, finishReason)
+      if (studyModeOn) content = stripStudyMarker(content)
 
       // 步数到顶收尾:流结束时模型仍在要工具(finishReason='tool-calls'),说明预算用尽前
       // 它没来得及把结果写成回答——典型形态是只剩一句过渡语("再搜一次。")。补一句可操作
@@ -2061,18 +2453,40 @@ const result = streamText({
         await settleQuota({
           userId,
           modelId,
-          inputTokens: usage?.inputTokens,
-          outputTokens: usage?.outputTokens,
-          fallbackText: (text ?? "") + (reasoningText ?? ""),
+          // 补答那次调用的 token 也是真实成本,一并计入(上游没报数时仍走 fallbackText)
+          inputTokens:
+            usage?.inputTokens != null || recoveryUsage
+              ? (usage?.inputTokens ?? 0) + (recoveryUsage?.input ?? 0)
+              : undefined,
+          outputTokens:
+            usage?.outputTokens != null || recoveryUsage
+              ? (usage?.outputTokens ?? 0) + (recoveryUsage?.output ?? 0)
+              : undefined,
+          fallbackText: content + (savedReasoning ?? ""),
           baseLimit: quotaBaseLimit,
         })
       }
 
+      // prompt caching 命中打点(观测用):命中才记,含多步工具循环的累计 usage。
+      // 数字与 settleQuota/Message 落库同源,后续核对省量直接 grep 本事件。
+      const cacheRead = usage?.inputTokenDetails?.cacheReadTokens ?? 0
+      if (cacheRead > 0) {
+        monitor("chat_cache_hit", {
+          model: modelId,
+          cacheReadTokens: cacheRead,
+          cacheWriteTokens: usage?.inputTokenDetails?.cacheWriteTokens ?? 0,
+          inputTokens: usage?.inputTokens ?? 0,
+        })
+      }
+
       try {
-        // 工具调用明细随消息入库(前端历史回显工具卡片);极端大结果(>32KB)放弃入库防膨胀
-        let toolCallsMetadata: string | undefined
+        // 工具调用明细随消息入库(前端历史回显工具卡片);极端大结果(>32KB)放弃工具明细,仍保留结课状态。
+        const completionMetadata = studyCompleted ? { studyCompleted: true } : {}
+        let toolCallsMetadata: string | undefined = studyCompleted
+          ? JSON.stringify(completionMetadata)
+          : undefined
         if (collectedToolCalls.length > 0) {
-          const json = JSON.stringify({ kind: 'tool_calls', version: 1, toolCalls: collectedToolCalls })
+          const json = JSON.stringify({ kind: 'tool_calls', version: 1, toolCalls: collectedToolCalls, ...completionMetadata })
           if (json.length <= 32768) toolCallsMetadata = json
           else console.warn(`[chat] toolCalls metadata too large (${json.length}B), skipped`)
         }
@@ -2095,18 +2509,37 @@ const result = streamText({
           // token 消耗统计(某些提供商可能不返回 usage)
           promptTokens: usage?.inputTokens,
           completionTokens: usage?.outputTokens,
+          // prompt caching 命中观测:上游报了才算,0 与未上报都存 null(与 promptTokens 同哲学)
+          ...(usage?.inputTokenDetails?.cacheReadTokens
+            ? { cacheReadTokens: usage.inputTokenDetails.cacheReadTokens }
+            : {}),
+          ...(usage?.inputTokenDetails?.cacheWriteTokens
+            ? { cacheWriteTokens: usage.inputTokenDetails.cacheWriteTokens }
+            : {}),
           ...(toolCallsMetadata ? { metadata: toolCallsMetadata } : {}),
           ...(groupId ? { groupId } : {}),
           streaming: false,
         }
+        let assistantMessageId: string | null = draftMessageId ?? null
         if (draftMessageId) {
           try {
             await prisma.message.update({ where: { id: draftMessageId }, data: persistData })
           } catch {
-            await prisma.message.create({ data: persistData })
+            const created = await prisma.message.create({ data: persistData, select: { id: true } })
+            assistantMessageId = created.id
           }
         } else {
-          await prisma.message.create({ data: persistData })
+          const created = await prisma.message.create({ data: persistData, select: { id: true } })
+          assistantMessageId = created.id
+        }
+        // 学习模式结课即自动归档(异步,不阻塞落库/响应);幂等键=会话首条用户消息,
+        // 与手动「存入错题本」共用一张卡。
+        if (studyCompleted && assistantMessageId && convId) {
+          const archivedConvId = convId
+          const archivedMessageId = assistantMessageId
+          void archiveStudyLesson(userId, archivedConvId, archivedMessageId).catch((err) => {
+            console.error('[chat] study auto-archive failed:', err)
+          })
         }
         // Update conversation: timestamp + auto-generate title on first message
         const titleUpdate = isNewConversation
@@ -2151,39 +2584,114 @@ const result = streamText({
   })
 
   const responseHeaders: Record<string, string> = { "X-Conversation-Id": convId }
+  // 本次回答的库行 id(草稿行,onFinish 原地定格)。客户端本地流消息的 id 是 AI SDK
+  // 临时生成的,与库中 cuid 永不相等;带上这个头,跨端回流才能把本地消息与库行认亲,
+  // 否则「人回到前台拉一次」会把本页刚生成的回答当成别处新增再追加一遍。
+  if (draftMessageId) responseHeaders["X-Assistant-Message-Id"] = draftMessageId
   if (isNewConversation) {
     const title = userContent.slice(0, 30) || "新对话"
     responseHeaders["X-Conversation-Title"] = encodeURIComponent(title)
   }
 
-  // 半路断流取证:abort 时 streamSettled 仍为 false,说明 onFinish/onError 都没走到,
-  // 流是在生成途中断的 —— 这条路径原本零日志、零收尾。打出已生成量与草稿 id,
-  // 并把草稿行定格,不再留 streaming=true 的僵尸行(那会让流式恢复轮询盯住一条不会再动的消息)。
+  // 客户端断开(安卓壳切后台/关页面)只记录,不再中止生成。
+  // 这是与旧行为的核心差异:旧逻辑把 req.signal.abort 直接当作「流已死」并定格半截,
+  // 人切走一次这一轮就废了;现在生成由 runAbort 管,连接断开后服务端继续跑完并落库。
   req.signal.addEventListener("abort", () => {
-    if (streamSettled) return
+    monitor("chat_stream_client_disconnected", {
+      stage: "midway",
+      textLen: snapText.length,
+      reasoningLen: snapReasoning.length,
+      hasDraft: Boolean(draftMessageId),
+      settled: streamSettled,
+      serverDrainChunks,
+    })
+    if (!streamSettled) {
+      console.warn(
+        `[chat] CLIENT_DISCONNECTED_CONTINUE: conv=${convId ?? "-"} draft=${draftMessageId ?? "-"} textLen=${snapText.length} reasoningLen=${snapReasoning.length}`
+      )
+    }
+  })
+
+  // 显式中止只有两条来源:用户点停止(finalize-draft)或后台兜底超时。
+  // 定格草稿行,不留 streaming=true 的僵尸行(那会让流式恢复轮询盯住一条不会再动的消息)。
+  runAbort.signal.addEventListener("abort", () => {
+    const reason = String(runAbort.signal.reason ?? "aborted")
+    finishActiveRun()
+    // 不因 streamSettled 提前返回:中止时 toUIMessageStream 的 onError 可能先把
+    // streamSettled 置 true,但草稿行仍必须定格,否则会留下永远 streaming 的僵尸行。
     const draftId = draftMessageId
     console.warn(
-      `[chat] STREAM_DIED_MIDWAY: conv=${convId ?? "-"} draft=${draftId ?? "-"} textLen=${snapText.length} reasoningLen=${snapReasoning.length}`
+      `[chat] STREAM_ABORTED: reason=${reason} conv=${convId ?? "-"} draft=${draftId ?? "-"} textLen=${snapText.length} reasoningLen=${snapReasoning.length}`
     )
     monitor("chat_stream_aborted", {
-      stage: "midway",
+      stage: reason === "user-stop" ? "user_stop" : "timeout",
       textLen: snapText.length,
       reasoningLen: snapReasoning.length,
       hasDraft: Boolean(draftId),
     })
     if (!draftId) return
     snapStopped = true
+    // 兜底再写一次工具明细:onStepFinish 已写过,这里覆盖「那笔写入还没落地就中止」的窗口。
+    // 不写的话重载后工具卡消失、图文混排的 [图N] 变裸文。
+    const metaJson =
+      collectedToolCalls.length > 0
+        ? JSON.stringify({ kind: "tool_calls", version: 1, toolCalls: collectedToolCalls })
+        : undefined
     snapChain
-      .then(() => prisma.message.update({ where: { id: draftId }, data: { streaming: false } }))
+      .then(() =>
+        prisma.message.update({
+          where: { id: draftId },
+          data: {
+            streaming: false,
+            ...(metaJson && metaJson.length <= 32768 ? { metadata: metaJson } : {}),
+          },
+        })
+      )
       .catch(() => {})
   })
 
+  // 生成源与 HTTP 响应解耦:tee 出一支服务端支持续消费。
+  // 客户端断开时只会 cancel 自己那一支;若没有服务端支,底层 ReadableStream 的
+  // cancel 会一路传播并取消上游请求 —— 后台续跑就无从谈起。
+  // 服务端支不写任何东西,只负责把源流拉到完成(触发 onFinish / 完整落库)。
+  const [serverDrain, clientStream] = result.stream.tee()
+  void serverDrain
+    .pipeTo(
+      new WritableStream({
+        write() {
+          serverDrainChunks++
+        },
+      })
+    )
+    .catch(() => {
+      // 中止/网络错误由 runAbort 监听统一收尾,这里不重复处理
+    })
+
+  // SDK 先转发 finish,再在 eventProcessor.flush 中 await onFinish。
+  // 学习模式暂存 finish 到下游 flush,确保 metadata 读取已判定状态,不阻塞其他增量。
+  const responseStream = clientStream
+  type ResponsePart = typeof responseStream extends ReadableStream<infer Part> ? Part : never
+  let pendingFinish: Extract<ResponsePart, { type: 'finish' }> | undefined
+  const studyStream = studyModeOn
+    ? responseStream.pipeThrough(new TransformStream<ResponsePart, ResponsePart>({
+        transform(part, controller) {
+          if (part.type === 'finish') pendingFinish = part
+          else controller.enqueue(part)
+        },
+        flush(controller) {
+          if (pendingFinish) controller.enqueue(pendingFinish)
+        },
+      }))
+    : responseStream
+
   // 手动构建 UI 消息流：过滤掉 [IMG:...] 标记再发给客户端
   const uiStream = toUIMessageStream({
-    stream: result.stream,
+    stream: studyStream,
     sendReasoning: true,
     sendStart: true,
     sendFinish: true,
+    messageMetadata: ({ part }) =>
+      studyModeOn && part.type === 'finish' ? { studyCompleted } : undefined,
     // 默认只给客户端 "An error occurred.",这里把上游真实错误转成可读消息。
     onError: (error) => {
       streamSettled = true
@@ -2204,7 +2712,12 @@ const result = streamText({
 
   return createUIMessageStreamResponse({
     headers: responseHeaders,
-    stream: uiStream.pipeThrough(createImgMarkerFilterStream()),
+    // 先剥工具调用标记(DSML),再走 [IMG:] 标记过滤 —— 两者都只改 delta,互不影响。
+    // 中间的顺序兜底保证 start 一定先于 delta/end(见 createPartSequenceGuardStream)。
+    stream: uiStream
+      .pipeThrough(createToolMarkupFilterStream())
+      .pipeThrough(createPartSequenceGuardStream())
+      .pipeThrough(createImgMarkerFilterStream()),
   })
   } catch (error) {
     console.error("[chat] Error processing chat request:", error)

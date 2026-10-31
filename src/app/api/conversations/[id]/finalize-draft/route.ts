@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { ephemeralScope } from '@/lib/ephemeral'
+import { abortActiveChatRuns } from '@/lib/ai/active-chat-runs.server'
 
 /**
  * POST /api/conversations/[id]/finalize-draft
  *
- * A 流式恢复: 把该会话残留的 streaming 草稿行定格为普通消息。
- * 用于客户端在"轮询续显"期间主动停止生成——此时没有活动流可 abort,
- * 改为请求服务端置 streaming=false,让前端轮询立即定格。
- * 内容保留最新快照;服务端 onFinish 稍后仍会以最终内容覆盖(不依赖此标志)。
+ * 客户端主动停止生成:
+ *   1. 中止该会话在途的 /api/chat 生成(生成与 HTTP 连接已解耦,断开连接不再等于停止,
+ *      所以停止按钮必须显式打到服务端,否则后台会继续跑完并覆盖用户已停止的半截);
+ *   2. 把残留的 streaming 草稿行定格为普通消息,让前端轮询立即收口。
+ * 内容保留最新快照。没有在途流(例如流已经自然结束/进程重启)时只做第 2 步。
  */
 export async function POST(
   _req: NextRequest,
@@ -31,10 +33,13 @@ export async function POST(
     return NextResponse.json({ error: '内容不存在或已被删除' }, { status: 404 })
   }
 
+  // 先中止在途生成,再定格草稿。顺序反过来的话,后台流可能在定格之后又写一次快照。
+  const aborted = abortActiveChatRuns(id, 'user-stop')
+
   const result = await prisma.message.updateMany({
     where: { conversationId: id, streaming: true },
     data: { streaming: false },
   })
 
-  return NextResponse.json({ ok: true, finalized: result.count })
+  return NextResponse.json({ ok: true, finalized: result.count, aborted })
 }

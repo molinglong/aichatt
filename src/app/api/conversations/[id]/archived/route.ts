@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { ephemeralScope } from '@/lib/ephemeral'
+import { sanitizeStoredContent } from '@/lib/conversation-message-format'
 
 /**
  * GET /api/conversations/[id]/archived?rootId=<messageId>
@@ -57,7 +58,7 @@ export async function GET(
         // 损坏 JSON 返回空数组
       }
     }
-    return { ...m, attachments }
+    return { ...m, content: sanitizeStoredContent(m.content), attachments }
   })
 
   return NextResponse.json({ messages })
