@@ -99,6 +99,13 @@ export default defineConfig({
       dependencies: ["setup"],
       use: { storageState: ".auth/admin.json" },
     },
+    {
+      // 前台恢复去重用例:mock /api/chat 与消息补拉,不打真实上游
+      name: "dup-smoke",
+      testMatch: /dup-resume\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { storageState: ".auth/admin.json" },
+    },
   ],
   webServer: {
     command: "npm run dev",

@@ -28,7 +28,7 @@ Write-Host "=== [1/6] dev server 自动暂停（部署结束后自动恢复）==
 # dev/build 共用 .next 会互相写坏产物必须错峰; 之前检测到就直接报错退出让用户手动停,
 # 部署完还得手动想起重启 —— 改为自动 Stop, 结尾 finally 自动拉起, 用户全程无感
 $needDevRestart = $false
-$nextProcs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'next' -and $_.CommandLine -notmatch 'deploy-fast' }
+$nextProcs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'next' -and $_.CommandLine -match [regex]::Escape("$ProjectRoot\") -and $_.CommandLine -notmatch 'deploy-fast' }
 if ($nextProcs) {
     $needDevRestart = $true
     $nextProcs | ForEach-Object {
@@ -75,11 +75,21 @@ Copy-Item -Recurse "$ProjectRoot\$LocalDist\standalone\*" $stage
 # 注意: 目标目录名必须与 distDir 同名(server.js 按构建时的 distDir 找静态资源)
 Copy-Item -Recurse "$ProjectRoot\$LocalDist\static" "$stage\$LocalDist\static" -Force
 Copy-Item -Recurse "$ProjectRoot\public" "$stage\public" -Force
-# 瘦身: 字体(103MB)/uploads(16MB)不进包 —— 包从 265MB 降到 ~145MB, 上传时间减半;
-# fonts/fonts-subset 由 VPS 端切换时从旧产物原地回填(见 [6/6]);
+# 瘦身: 字体二进制(103MB)/uploads(16MB)不进包, VPS 从旧产物回填(见 [6/6]);
+# 字体 CSS 是行为代码, 必须随包更新, 否则 font-display 修复会被旧产物覆盖。
 # uploads 在容器里被 named volume 挂载遮蔽, 宿主机这份本来就不生效, 纯属白传
 foreach ($skip in @("fonts-subset", "fonts", "uploads")) {
     Remove-Item -Recurse -Force "$stage\public\$skip" -ErrorAction SilentlyContinue
+}
+foreach ($weight in @("100", "300", "400", "500", "600")) {
+    $fontCssDir = "$stage\public\fonts-subset\$weight"
+    New-Item -ItemType Directory -Path $fontCssDir -Force | Out-Null
+    Copy-Item "$ProjectRoot\public\fonts-subset\$weight\result.css" "$fontCssDir\result.css" -Force -ErrorAction Stop
+}
+# 数字等宽子集(~3.5KB, 见 fonts-subset/digits/digits.css)是行为代码, 随包直发不走红填链;
+# 缺目录时静默跳过, 不拦部署
+if (Test-Path "$ProjectRoot\public\fonts-subset\digits") {
+    Copy-Item -Recurse "$ProjectRoot\public\fonts-subset\digits" "$stage\public\fonts-subset\digits" -Force
 }
 # 临时截图目录(tmp-shots-*)不进生产包——组装是整目录并入, 不剔会白传(2026-10-08 包虚胖70MB实测)
 Remove-Item -Recurse -Force "$stage\public\tmp-*" -ErrorAction SilentlyContinue
@@ -132,11 +142,12 @@ mv `$NEW $DistDir
 # uploads 目录被瘦身剔除,但容器 named volume 需要 /app/public/uploads 作挂载点
 # (:ro 只读 rootfs 无法自动建目录,缺失会让容器起不来—— 2026-09-20 踩坑)
 mkdir -p $DistDir/public/uploads
-# 字体不在 tar 包里: 切换后立刻从旧产物原地回填;
-# 若验证失败回滚, OLD 里的字体尚未被搬走, 回滚后线上字体不受影响
+# 字体二进制不在 tar 包里: 合并旧资源, -n 保留包内的新 CSS, 不用旧 swap 策略覆盖。
+# 复制而非搬走: OLD 保持完整, 验证失败回滚时字体仍在。
 for d in fonts fonts-subset; do
-  if [ ! -d $DistDir/public/`$d ] && [ -d `$OLD/public/`$d ]; then
-    mv `$OLD/public/`$d $DistDir/public/`$d
+  if [ -d `$OLD/public/`$d ]; then
+    mkdir -p $DistDir/public/`$d
+    cp -an `$OLD/public/`$d/. $DistDir/public/`$d/
   fi
 done
 # 重启失败(如挂载点缺失)也要回滚,不能靠 set -e 直接退—— 否则线上停在起不来的新产物上
@@ -174,6 +185,37 @@ $cleanScript = ($remoteScript -replace "`r`n", "`n") -replace "`r", ""
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($cleanScript))
 & C:\Windows\System32\OpenSSH\ssh.exe -o BatchMode=yes $VpsHost "echo $b64 | base64 -d | bash"
 if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: VPS 切换失败（已自动回滚或需人工检查）" -ForegroundColor Red; exit 1 }
+
+Write-Host ""
+Write-Host "=== [7/6] 字体二进制自愈（线上缺 woff2 时补传种子包, 一次性约 77MB）===" -ForegroundColor Cyan
+# 瘦身策略: 五字重 woff2 不进主包, 靠 $OLD 回填链续命; 2026-10-21 链条断过一次后,
+# 每代 cp -an 都在拷空(字体 CSS 200 假象, 全部 woff2 404)。直问权威源:
+# 线上 fonts-subset 下 woff2 数 < 100(数字子集仅 3 个, 不能只判存在)就补传种子包
+# 并解进线上目录, 之后 $OLD 链自续; 链条再断也会被本步重新发现并自愈。
+$woff2Count = [int](& C:\Windows\System32\OpenSSH\ssh.exe -o BatchMode=yes $VpsHost "find $DistDir/public/fonts-subset -name '*.woff2' 2>/dev/null | wc -l")
+if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: woff2 检查失败(SSH)" -ForegroundColor Red; exit 1 }
+if ($woff2Count -lt 100) {
+    Write-Host "  线上仅 $woff2Count 个 woff2, 打种子包..."
+    $seedName = "aichatt-fonts-seed-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".tar.gz"
+    $seedPath = Join-Path $env:TEMP $seedName
+    Remove-Item -Force $seedPath -ErrorAction SilentlyContinue
+    & "$env:SystemRoot\System32\tar.exe" -czf $seedPath -C "$ProjectRoot\public" fonts-subset
+    if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: 种子包打包失败" -ForegroundColor Red; exit 1 }
+    $seedMB = [math]::Round((Get-Item $seedPath).Length / 1MB, 1)
+    Write-Host "  上传种子包 ($seedMB MB, 受 $UploadLimitKbps Kbps 限速)..."
+    & C:\Windows\System32\OpenSSH\scp.exe -l $UploadLimitKbps $seedPath "${VpsHost}:/tmp/$seedName"
+    if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: 种子包上传失败" -ForegroundColor Red; exit 1 }
+    & C:\Windows\System32\OpenSSH\ssh.exe -o BatchMode=yes $VpsHost "tar -xzf /tmp/$seedName -C $DistDir/public && rm -f /tmp/$seedName && find $DistDir/public/fonts-subset -name '*.woff2' | wc -l"
+    if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: 种子包解压失败" -ForegroundColor Red; exit 1 }
+    # Next standalone 的 public 文件清单在 server 启动时扫描: 种子在 [6/6] restart 之后
+    # 才解入, 不 restart 的话磁盘上有文件但 HTTP 全 404(2026-10-31 实测踩坑)。
+    # restart 后复验 /login, 防止种子步骤把服务搞挂
+    & C:\Windows\System32\OpenSSH\ssh.exe -o BatchMode=yes $VpsHost "docker restart aichatt-app >/dev/null && for i in \$(seq 1 12); do sleep 5; curl -sf http://127.0.0.1:3001/login >/dev/null && echo 'RESTART OK' && exit 0; done; echo 'RESTART VERIFY FAILED'; exit 1"
+    if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: 种子后重启验证失败" -ForegroundColor Red; exit 1 }
+    Write-Host "OK (woff2 已补齐, 容器已重启)"
+} else {
+    Write-Host "OK (线上已有 $woff2Count 个 woff2, 跳过)"
+}
 
 Write-Host ""
 Write-Host "部署完成 ✅  https://chat.yuban.icu" -ForegroundColor Green

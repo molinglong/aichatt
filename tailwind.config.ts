@@ -48,8 +48,36 @@ const config: Config = {
           bg: "rgb(var(--code-bg) / <alpha-value>)",
         },
       },
+      borderRadius: {
+        // 语义圆角（2026-10-22 第零波，预览见 public/preview-ui-tokens.html）。
+        // 只加别名，不改既有 rounded-* 的视觉：control 8 / card 12 / panel 16 / sheet 28；
+        // 胶囊仍用 rounded-full。迁移时按角色替换，不按数值全局 codemod。
+        // 2026-10-24 trial: 改为引用 CSS 变量(带原值兜底) —— html[data-style="bigsur"]
+        // 整组抬一档圆角(globals.css),组件层零改动。
+        control: "var(--radius-control, 0.5rem)",
+        card: "var(--radius-card, 0.75rem)",
+        panel: "var(--radius-panel, 1rem)",
+        sheet: "var(--radius-sheet, 1.75rem)",
+      },
+      transitionDuration: {
+        // 动效时长四档（2026-10-31 全站统一定稿，口径见 globals.css --motion-*）：
+        // micro 颜色/透明度反馈 / fast 按压与小浮层 / base 面板与折叠 / slow 抽屉位移。
+        // DEFAULT 必须是 micro：.transition-colors 等不写 duration-* 的工具类全吃 DEFAULT，
+        // 这一处等于全站 400+ 处颜色过渡的时长基准。
+        DEFAULT: "150ms",
+        micro: "150ms",
+        fast: "180ms",
+        base: "260ms",
+        slow: "420ms",
+      },
       transitionTimingFunction: {
-        // 浮层进出场统一缓动（与 --ease 同一曲线）
+        // 曲线只留两条：standard 管所有状态切换与出场，enter 只管"从无到有"的入场。
+        // DEFAULT 必须与 standard 同值 —— 未写 ease-* 的过渡类全部吃 DEFAULT，
+        // 改这一处就把 400+ 处颜色过渡从 Tailwind 原曲线一次性归位。
+        // pop 是 standard 的旧别名，保留仅为兼容存量调用点。
+        DEFAULT: "cubic-bezier(0.32, 0.72, 0.28, 1)",
+        standard: "cubic-bezier(0.32, 0.72, 0.28, 1)",
+        enter: "cubic-bezier(0.16, 1, 0.3, 1)",
         pop: "cubic-bezier(0.32, 0.72, 0.28, 1)",
       },
       fontFamily: {

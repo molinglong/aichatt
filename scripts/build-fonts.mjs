@@ -52,7 +52,9 @@ for (const job of jobs) {
     css: {
       fontFamily: 'PingFang SC Sub',
       fontWeight: job.weight,
-      fontDisplay: 'swap',
+      // 字体晚到不能替换已上屏的 fallback:字宽/基线改变会让已完成段落重新断行。
+      // optional 保留系统/缓存苹方;慢网超过短暂等待期就沿用 fallback,本页不再 swap。
+      fontDisplay: 'optional',
     },
     // 产物精简: 不生成预览图/测试页/报告
     testHtml: false,

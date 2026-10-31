@@ -1,0 +1,62 @@
+/* Noto Sans SC 数字等宽子集 —— 修"流式输出数字宽度抖动"专用
+   =========================================================================
+   实测背景(2026-10-31, fontTools hmtx 口径):
+   - 苹方数字不等宽: 1=401 / 7=547 / 其余=600 (UPM 1000, 无 tnum 特性)
+     → 打字机流式逐字上屏时,数字个数变化导致后续文本横向挪动 = 字数闪动
+   - Noto Sans SC 数字天然等宽(同字重内 0-9 advance 全等), 免任何 CSS 特性
+   候选对比:
+   - MiSans: 默认不等宽(9种,1=403神似苹方), 需 font-feature-settings:'tnum'
+     才等宽(594) —— 要额外特性管线, 且 OS/2 字重标 330/380/450 偏轻
+   - HarmonyOS Sans SC: 默认等宽(570/580) 但无 600 档(只有 400/500/700)
+   - Noto Sans SC: 等宽 + 400/500/600 全有 + OFL 授权最干净 → 选它
+   生成配方(可复现):
+   1. npm pack @fontsource-variable/noto-sans-sc (registry 稳定, 不走 GitHub)
+   2. 取覆盖 U+30-39 的 VF 分片 files/noto-sans-sc-119-wght-normal.woff2
+   3. fontTools instancer 钉死 wght=300/400/500/600/700 → subsetter 只留 0-9
+      (strip GSUB/GPOS, name 只留 1/2) → woff2, 每档约 1.2KB
+   4. 回读断言: 10 数字 cmap 齐全 + advance 全等 + 字形轮廓非空
+   用法: 'Noto Sans Digits' 排在字体栈最前, unicode-range:U+30-39 只接管数字,
+   汉字/标点全部照旧落苹方; font-display:optional 与 10-27 策略一致
+   (迟到不换字体, 防止已上屏 fallback 重新断行)。
+   五档齐全原因: 字体栈里 300/700 字重的文本(次要文本/粗体标题)也有数字,
+   只备 400/500/600 会被就近错配。 */
+@font-face {
+  font-family: 'Noto Sans Digits';
+  font-style: normal;
+  font-weight: 300;
+  font-display: optional;
+  src: url(/fonts-subset/digits/NotoSansSC-digits-300.woff2) format('woff2');
+  unicode-range: U+30-39;
+}
+@font-face {
+  font-family: 'Noto Sans Digits';
+  font-style: normal;
+  font-weight: 400;
+  font-display: optional;
+  src: url(/fonts-subset/digits/NotoSansSC-digits-400.woff2) format('woff2');
+  unicode-range: U+30-39;
+}
+@font-face {
+  font-family: 'Noto Sans Digits';
+  font-style: normal;
+  font-weight: 500;
+  font-display: optional;
+  src: url(/fonts-subset/digits/NotoSansSC-digits-500.woff2) format('woff2');
+  unicode-range: U+30-39;
+}
+@font-face {
+  font-family: 'Noto Sans Digits';
+  font-style: normal;
+  font-weight: 600;
+  font-display: optional;
+  src: url(/fonts-subset/digits/NotoSansSC-digits-600.woff2) format('woff2');
+  unicode-range: U+30-39;
+}
+@font-face {
+  font-family: 'Noto Sans Digits';
+  font-style: normal;
+  font-weight: 700;
+  font-display: optional;
+  src: url(/fonts-subset/digits/NotoSansSC-digits-700.woff2) format('woff2');
+  unicode-range: U+30-39;
+}

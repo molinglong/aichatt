@@ -152,7 +152,8 @@ function buildChunks(tokens) {
   let ctx = { chapter: null, section: null, subsection: null, heading: null, parts: [] }
 
   const flush = () => {
-    const content = ctx.parts.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+    // 用空行分隔段落，splitOversized 才能按段落边界续拆(原来用单换行,超长块无法拆)
+    const content = ctx.parts.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
     if (ctx.heading && content) chunks.push({ chapter: ctx.chapter, section: ctx.section, subsection: ctx.subsection, heading: ctx.heading, content })
     ctx = { chapter: ctx.chapter, section: ctx.section, subsection: null, heading: null, parts: [] }
   }
@@ -175,6 +176,8 @@ function buildChunks(tokens) {
       const isChapter = /chapter-title/i.test(tk.attrs || '')
       if (isChapter) {
         ctx.chapter = tk.text
+        ctx.section = null
+        ctx.subsection = null
         ctx.heading = `${tk.text}（章引言）`
       } else {
         ctx.chapter = null

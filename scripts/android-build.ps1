@@ -45,6 +45,95 @@ New-Item -ItemType Directory -Force -Path $mirrorRoot | Out-Null
 Write-Output "mirror: $src -> $dest"
 robocopy $src $dest /MIR /XD target build .gradle .kotlin /NFL /NDL /NJH /NJS | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy src-tauri failed with code $LASTEXITCODE" }
+
+# 插件安卓模块接线（2026-10-28 启动闪退根因）：
+# tauri.settings.gradle / app/tauri.build.gradle.kts 是 CLI 自动生成物，但本机
+# CLI 在 .so 符号链接处失败，永远走不到重新生成那一步；仓库里那份停在上次
+# android init。漏接一个插件 = Rust 注册了它、APK 里没有对应类，启动时
+# WryActivity.getAppClass 抛 ClassNotFoundException → SIGABRT 闪退（haptics 即此案）。
+# /MIR 之后按 Cargo.toml 依赖 + cargo registry 里的 android 目录幂等补齐。
+$androidDir = Join-Path $dest 'gen\android'
+$settingsGradle = Join-Path $androidDir 'tauri.settings.gradle'
+$pluginBuildGradle = Join-Path $androidDir 'app\tauri.build.gradle.kts'
+if ((Test-Path $settingsGradle) -and (Test-Path $pluginBuildGradle)) {
+    $cargoToml = Get-Content (Join-Path $dest 'Cargo.toml') -Raw
+    $pluginNames = [regex]::Matches($cargoToml, '(?m)^\s*(tauri-plugin-[a-z0-9-]+)\s*=') |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+    $registryRoots = Get-ChildItem (Join-Path $env:USERPROFILE '.cargo\registry\src') -Directory -ErrorAction SilentlyContinue
+    $settingsText = Get-Content $settingsGradle -Raw
+    $buildText = Get-Content $pluginBuildGradle -Raw
+    $settingsChanged = $false
+    $buildChanged = $false
+    foreach ($name in $pluginNames) {
+        $androidProject = $null
+        foreach ($root in $registryRoots) {
+            $cand = Get-ChildItem $root.FullName -Directory -Filter "$name-*" -ErrorAction SilentlyContinue |
+                Where-Object { Test-Path (Join-Path $_.FullName 'android') } |
+                Sort-Object LastWriteTime | Select-Object -Last 1
+            if ($cand) { $androidProject = Join-Path $cand.FullName 'android'; break }
+        }
+        if (-not $androidProject) { continue }
+        if ($settingsText -notmatch [regex]::Escape("include ':$name'")) {
+            $escaped = $androidProject -replace '\\', '\\\\'
+            $settingsText = $settingsText.TrimEnd() + "`r`ninclude ':$name'`r`nproject(':$name').projectDir = new File(`"$escaped`")`r`n"
+            $settingsChanged = $true
+            Write-Output "wired gradle project: $name"
+        }
+        if ($buildText -notmatch [regex]::Escape("project(`":$name`")")) {
+            $buildText = $buildText -replace '(?s)(dependencies\s*\{\r?\n)', ('$1  implementation(project(":' + $name + '"))' + "`n")
+            $buildChanged = $true
+            Write-Output "wired app dependency: $name"
+        }
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    if ($settingsChanged) { [System.IO.File]::WriteAllText($settingsGradle, $settingsText, $utf8NoBom) }
+    if ($buildChanged) { [System.IO.File]::WriteAllText($pluginBuildGradle, $buildText, $utf8NoBom) }
+}
+
+# /MIR 会删掉镜像 target；保留根镜像里已编译好的 .so，
+# 让 CLI 的符号链接失败后仍能走 Gradle 直编回退（不重编 Rust）。
+$seedSo = Join-Path $mirrorRoot 'target\aarch64-linux-android\release\libaichatt_lib.so'
+$destSo = Join-Path $dest 'target\aarch64-linux-android\release\libaichatt_lib.so'
+if ((Test-Path $seedSo) -and -not (Test-Path $destSo)) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $destSo) | Out-Null
+    Copy-Item $seedSo $destSo -Force
+    Write-Output "seeded native lib from mirror root"
+}
+
+# 生成期保活补丁：WryActivity.kt 在 .gitignore 里（tauri android init 会重置），
+# 但生成期间必须跳过 mWebView.onPause()，否则切后台 JS 冻结、完成通知发不出去。
+# 这里在镜像上幂等重放；工作区已带补丁时直接跳过。
+$wry = Join-Path $dest 'gen\android\app\src\main\java\com\aichatt\app\generated\WryActivity.kt'
+if (Test-Path $wry) {
+  $wryText = Get-Content $wry -Raw -Encoding UTF8
+  if ($wryText -notmatch 'GenerationService\.keepWebViewAlive') {
+    $wryPatched = $wryText -replace `
+      '(?s)(override fun onPause\(\) \{.*?if \(::mWebView\.isInitialized\) \{\s*)mWebView\.onPause\(\)(\s*\})', `
+      '$1if (com.aichatt.app.GenerationService.keepWebViewAlive) { android.util.Log.d("AIChattGen", "skip WebView.onPause (generation foreground)") } else { mWebView.onPause() }$2'
+    if ($wryPatched -eq $wryText) {
+      throw "WryActivity.onPause 结构与预期不符，生成期保活补丁未应用"
+    }
+    [System.IO.File]::WriteAllText($wry, $wryPatched, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Output 'patched WryActivity.onPause (generation foreground)'
+  }
+}
+
+# CLI 2.11.4 的模板仍调用 PluginManager.onCreate(this)/onResume(this)，
+# 但 Rust 侧 tauri 2.11.5 已改成 onActivityCreate(activity) 与无参生命周期。
+# 幂等修正生成文件，避免 Kotlin 编译阶段整批 unresolved。
+$tauriActivity = Join-Path $dest 'gen\android\app\src\main\java\com\aichatt\app\generated\TauriActivity.kt'
+if (Test-Path $tauriActivity) {
+  $ta = Get-Content $tauriActivity -Raw -Encoding UTF8
+  $taPatched = $ta.
+    Replace('PluginManager.onCreate(this)', 'PluginManager.onActivityCreate(this)').
+    Replace('PluginManager.onResume(this)', 'PluginManager.onResume()').
+    Replace('PluginManager.onPause(this)', 'PluginManager.onPause()').
+    Replace('PluginManager.onStop(this)', 'PluginManager.onStop()')
+  if ($taPatched -ne $ta) {
+    [System.IO.File]::WriteAllText($tauriActivity, $taPatched, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Output 'patched TauriActivity PluginManager API (tauri 2.11.5)'
+  }
+}
 # The CLI is mirrored too, so no path handed to the toolchain ever contains non-ASCII.
 robocopy (Join-Path $repo 'node_modules\@tauri-apps') `
   (Join-Path $mirrorRoot 'node_modules\@tauri-apps') /MIR /NFL /NDL /NJH /NJS | Out-Null
@@ -76,6 +165,30 @@ if (Test-Path $props) {
 }
 Write-Output "version stamp: $version (versionCode $vcode)"
 
+# CLI 实际编译的是【镜像根项目】(见 cargo 日志 "Compiling aichatt ... (D:\aichatt-android)")，
+# 而 robocopy 只同步到 src-tauri —— 根目录的 splash/、tauri.conf.json 是历史副本，
+# 只改前端资源时根项目仍用旧文件，页面改动静默不生效(2026-10-28 闪屏滚动条修复撞上)。
+# 每轮把编译期输入从 src-tauri 同步回根项目；tauri.android.conf.json 已带本轮版本戳。
+foreach ($rel in @('src', 'splash', 'capabilities', 'permissions', 'Cargo.toml', 'Cargo.lock', 'build.rs', 'tauri.conf.json', 'tauri.android.conf.json')) {
+    $from = Join-Path $dest $rel
+    if (-not (Test-Path $from)) { continue }
+    $to = Join-Path $mirrorRoot $rel
+    if (Test-Path $to) { Remove-Item $to -Recurse -Force }
+    Copy-Item $from $to -Recurse -Force
+}
+
+# frontendDist(splash/*.html)是编译期嵌进 libaichatt_lib.so 的，cargo 不跟踪这些文件；
+# touch 源文件也判 fresh(实测)。无条件删掉 crate 的 fingerprint 与产物，保证每轮都重编、
+# 资源一定重新嵌入。代价约 1-2 分钟，换来"改页面必定生效"。
+$soRoot = Join-Path $mirrorRoot ('target\{0}\{1}\libaichatt_lib.so' -f $tripleMap[$abi], $variant)
+$fingerprintDir = Join-Path $mirrorRoot ('target\{0}\{1}\.fingerprint' -f $tripleMap[$abi], $variant)
+if (Test-Path $fingerprintDir) {
+    Get-ChildItem $fingerprintDir -Directory -Filter 'aichatt-*' -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
+Remove-Item $soRoot -Force -ErrorAction SilentlyContinue
+Write-Output "crate fingerprint invalidated -> frontend assets will be re-embedded"
+
 Push-Location $mirrorRoot
 try {
   # cmd owns the redirect: PowerShell 5.1 turns a native command's stderr into an
@@ -87,7 +200,10 @@ try {
   if ($LASTEXITCODE -ne 0 -and (Get-Content $log -Raw) -match 'symbolic link') {
     Write-Output 'CLI blocked on symlink privilege -> copying .so and running Gradle directly'
     $arch = $archMap[$abi]
-    $so   = Join-Path $dest ('target\{0}\{1}\libaichatt_lib.so' -f $tripleMap[$abi], $variant)
+    # 必须优先用 CLI 刚编出来的镜像根产物：src-tauri/target 里那份是构建前 seed 的旧拷贝，
+    # 用它打包会把刚编译的 Rust/嵌入资源静默丢掉（2026-10-28 实锤）
+    $soFresh = Join-Path $mirrorRoot ('target\{0}\{1}\libaichatt_lib.so' -f $tripleMap[$abi], $variant)
+    $so = if (Test-Path $soFresh) { $soFresh } else { Join-Path $dest ('target\{0}\{1}\libaichatt_lib.so' -f $tripleMap[$abi], $variant) }
     if (-not (Test-Path $so)) { throw "cargo produced no shared library at $so" }
     $jniDir = Join-Path $dest ('gen\android\app\src\main\jniLibs\{0}' -f $jniMap[$abi])
     New-Item -ItemType Directory -Force -Path $jniDir | Out-Null

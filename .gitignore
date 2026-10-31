@@ -50,6 +50,12 @@ prisma/*.db-journal
 # Uploads(仅运行时用户内容;锚定根目录,避免误伤 src/app/uploads 路由)
 /public/uploads/
 
+# 试卷库导入时复制的图片(源文件在 data/exam-papers/,导入器可随时重建)
+/public/exam-papers/
+
+# 地理图册页图(源 PDF 在本地教材目录,由 scripts/pdf2geo-atlas-pages.py 重建)
+/public/geo-atlas/
+
 # Dev files
 *.db
 *.db-*
@@ -139,3 +145,27 @@ design/
 /.tmp-strip-fix/
 logcat-install.txt
 ui-dump.xml
+
+# plan 子项目(2026-10-28 拆为独立仓库 molinglong/plan,主仓不再跟踪)
+/plan/
+
+# ===== 2026-11-01 卫生追加: 机器吐出来的东西与凭据备份 =====
+# 环境变量的历史备份(里面有数据库密码/密钥,严禁入库)
+.env.local.bak-*
+.env.local.bak
+# 教材/试卷转换产物(PDF → html/stats/json;由 scripts/pdf2textbook-*.py 随时重建)
+/deliverables/
+# 试卷原始资料(体积大;导入时复制到 public/exam-papers/ 的那份已单独忽略)
+/data/exam-papers/
+# AI 工具的索引与会话缓存(不含任何手写代码)
+/.qoder/
+/.impeccable/
+# 移动端截图与临测脚本(tmp-* 不匹配点开头的目录)
+/.tmp-mobile-shots/
+# Python 缓存
+__pycache__/
+*.pyc
+# 临时预览与实验稿
+/qoder_bogo.html
+/qoder_bogo.txt
+/public/wallpaper/preview.html
