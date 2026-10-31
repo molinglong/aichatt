@@ -54,11 +54,15 @@ model User {
   imageSize     String   @default("1024*1024")
   imageModels   ImageModel[]
   masks         Mask[]
+  installedMasks InstalledMask[]
   uploadFiles   UploadFile[]
   studyNotes    StudyNote[]
+  favorites     Favorite[]
   knowledgeDocs KnowledgeDoc[]
   questions      Question[]
+  papers         Paper[]
   todos         Todo[]
+  planMemos     PlanMemo[]
   writeDocs     WriteDoc[]
   works         Work[]
   codeDocs      CodeDoc[]
@@ -155,6 +159,9 @@ model Conversation {
   /// 正常模式列表不可见,设置→用户中心 的临时聊天专区可找回/转正/删除。
   /// 隔离由服务端按 session 模式强制执行
   isEphemeral   Boolean  @default(false)
+  /// 学习模式会话标记:/study 学习室创建的会话为 true。
+  /// 历史列表据此跳回 /study?c=id 恢复学习室,而不是 /chat/c/[id] 降级成普通聊天。
+  studyMode     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -202,6 +209,21 @@ model Mask {
   @@index([userId, updatedAt])
 }
 
+// 面具面板下载记录: 用户从「设置→面具管理→面具面板」下载过的内置面具。
+// 只存内置 maskId,面具本体仍在代码里只读(改提示词对所有已下载用户生效);
+// 删除记录 = 卸载,不影响历史会话继续解析该面具。
+model InstalledMask {
+  id        String   @id @default(cuid())
+  userId    String
+  maskId    String   // 内置面具 id(如 physics-master / lib-ml)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, maskId])
+  @@index([userId])
+}
+
 // 会话级"远期摘要": 当对话历史接近模型上下文窗口时,
 // 把较早的若干轮消息压缩为一段摘要存到这里，后续请求把它作为,后续请求把它作为
 // 一条 system 注入,代替被压缩的原文,防止长对话撞窗口失忆。
@@ -240,6 +262,10 @@ model Message {
   groupId          String?  // 同一轮对比共享的分组 id
   promptTokens     Int?     // 本轮输入 token 数（assistant 消息）
   completionTokens Int?     // 本轮输出 token 数（assistant 消息）
+  // prompt caching 观测（assistant 消息，上游未报数则置 null）：
+  // cacheReadTokens > 0 即本轮命中了上游缓存，命中量=该值；cacheWriteTokens 为写入缓存的量。
+  cacheReadTokens  Int?
+  cacheWriteTokens Int?
   // 流式草稿标志(A 流式恢复): 生成开始即落 streaming=true 的 assistant 行,
   // 流式过程中定期快照已生成文本;onFinish 更新为最终内容并置 false。
   // 加载端点对超过 5 分钟仍 streaming 的行兜底 finalize(进程崩溃场景)。
@@ -514,6 +540,8 @@ model StudyNote {
   topic           String?   // 考点标签,如「十字相乘」(AI 打标)
   title           String    // 题干摘要
   content         String    // 完整题目 + 我的解答
+  /// 题目截图(/uploads/...):B 站截图问答存错题时把原图留在题干区
+  imageUrl        String?
   analysis        String?   // AI 解析(markdown,含 LaTeX),复习卡背面展示
   mastery         Float     @default(0) // 掌握度 0-1,复习自评与变式判卷驱动
   // —— FSRS 状态(与 ts-fsrs Card 对应) ——
@@ -531,6 +559,8 @@ model StudyNote {
 
   @@index([userId, dueAt])
   @@index([userId, subject])
+  /// 同一条消息只允许一张卡:自动归档/手动存入/重复点击共用唯一键
+  @@unique([userId, sourceMessageId])
 }
 
 // 复习/自评流水: 阶段 B 每次自评写入一行,阶段 C 掌握度曲线的数据源
@@ -545,6 +575,30 @@ model StudyNoteReviewLog {
   note StudyNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([noteId, ratedAt])
+}
+
+// ===================== 收藏(消息快照) =====================
+// 定位:内容归档层——"这条回答/提问以后还想看"。
+// 与 StudyNote(错题本)彻底分家:收藏没有掌握度/FSRS 字段,永不计入今日复习,
+// 也不参与 AI 打标;只保存消息快照,消息或会话删除后仍可查看。
+model Favorite {
+  id                String   @id @default(cuid())
+  userId            String
+  sourceMessageId   String?  // 来源消息 id(软关联;删消息不影响收藏)
+  conversationId    String?  // 原会话 id,"回到原对话"用(软关联)
+  conversationTitle String?  // 会话标题快照,避免会话删除后列表失去上下文
+  role              String   // user | assistant
+  title             String   // 正文摘要(40 字),列表展示
+  content           String   // 完整正文快照(已清洗工具标记)
+  attachments       String?  // JSON 字符串,与 Message.attachments 同形
+  imageUrl          String?  // 首图,列表缩略用
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 同一条消息幂等:重复收藏命中唯一约束,不产生副本
+  @@unique([userId, sourceMessageId])
+  @@index([userId, createdAt])
 }
 
 // ===================== 学习知识库(课本/资料) =====================
@@ -606,11 +660,62 @@ model Question {
   answer     String   // 答案+解析(含用到的课本法则)
   difficulty String   @default("medium") // basic/medium/hard
   source     String   @default("ai_generated") // ai_generated/exam_import
-  sourceRef  String?  // 出处，如「§2.2.1 例3」/未来：试卷文件 id
+  sourceRef  String?  // 出处，如「§2.2.1 例3」/试卷库中为「卷名 · 第N题」
+  /// 试卷来源。为空 = 出题 API 生成。卷面题缺答案时暂不建 Question 行
+  /// （空答案会污染抽题池），字段预留给官方答案齐备后的回填
+  paperId    String?
+  number     Int?     // 卷内题号
+  score      Int?     // 卷面分值
   createdAt  DateTime @default(now())
+
+  paper Paper? @relation(fields: [paperId], references: [id], onDelete: SetNull)
 
   @@index([userId, subject, createdAt])
   @@index([userId, topic])
+  @@index([paperId, number])
+}
+
+// ===================== 试卷库(Paper) =====================
+// 整卷资产层：一套卷 = 一条 Paper + 每页一条 PaperPage（存页面 <article> 整段标记）。
+// 源文件按页存仓库内 data/exam-papers/<slug>/page-NN.html，导入器负责合并与幂等重放；
+// 图片在导入时复制到 public/exam-papers/<slug>/，并把 src 改写为可路由的绝对路径。
+// 题目暂不写入 Question：卷面答案为手写或缺失，空答案题进入抽题池会污染练习。
+model Paper {
+  id            String   @id @default(cuid())
+  userId        String
+  slug          String   // 目录名，如 guangxi-math-mock-1；同用户内唯一
+  title         String
+  subject       String   // 与 Note 学科枚举对齐
+  year          String?  // 年份/考期，卷面未标注时为空
+  region        String?  // 地区，如「广西」
+  examType      String?  // 高考/中考/模拟/学业水平/其他
+  totalScore    Int
+  durationMin   Int
+  questionCount Int      @default(0)
+  pageCount     Int      @default(0)
+  sourceDir     String   // 原始页面目录(仓库相对路径)，如 data/exam-papers/guangxi-math-mock-1
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pages     PaperPage[]
+  questions Question[]
+
+  @@unique([userId, slug])
+  @@index([userId, subject, createdAt])
+}
+
+// 试卷页面：pageNo 升序渲染即为整卷。html 为改写图片路径后的 article 片段
+model PaperPage {
+  id        String   @id @default(cuid())
+  paperId   String
+  pageNo    Int
+  html      String
+  createdAt DateTime @default(now())
+
+  paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+
+  @@unique([paperId, pageNo])
 }
 
 // ===================== 待办(Todo) =====================
@@ -631,6 +736,24 @@ model Todo {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, done, createdAt])
+}
+
+// ===================== Plan 应用备忘录 =====================
+// plan 顶栏「备忘录」抽屉的正文存储。与 Todo 分开：备忘是长期沉淀的自由文本，
+// 不参与排程、不勾完成；标题可为空（列表回退到正文首行）。
+// 读取走 /api/plan/memos(Bearer sk- 令牌，plan 服务端代理)，查询一律带 userId。
+model PlanMemo {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String   @default("")
+  content   String   @default("")
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, pinned, updatedAt])
 }
 
 // ===================== 写作画布(WriteDoc) =====================
@@ -836,4 +959,18 @@ model PublicPoolKey {
   provider  String   @id
   apiKey    String
   updatedAt DateTime @updatedAt
+}
+
+// 手表设备码授权：手表 start 生成短码，网页登录后 approve 绑定账号并暂存一次性 Token，
+// 手表 poll 取走后置 consumed 并清空明文，避免长期落库。
+model DeviceAuthCode {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  userId     String?
+  status     String   @default("pending") // pending | approved | consumed
+  plainToken String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([expiresAt])
 }
