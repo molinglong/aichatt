@@ -30,7 +30,11 @@
     }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { height: 100%; }
+  /* html 也要 overflow:hidden + 背景色:点阵块用负 inset 铺满时不能撑出文档滚动,
+     否则 WebView 会露出右侧/底部的灰色滚动条(真机截图反馈的白线事故)。
+     背景色同时给到 html,任何过卷/边缘缝隙都跟页面同色,不露白。 */
+  html, body { height: 100%; overflow: hidden; }
+  html { background-color: var(--bg); }
   body {
     display: flex;
     align-items: center;
@@ -40,16 +44,18 @@
     font-family: -apple-system, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', sans-serif;
     -webkit-user-select: none;
     user-select: none;
-    overflow: hidden;
   }
+  /* fixed 不参与文档滚动溢出(absolute + 无定位祖先 = 按初始包含块铺开,会撑出滚动条) */
   .dots {
-    position: absolute;
+    position: fixed;
     inset: -30px;
+    pointer-events: none;
     background-image: radial-gradient(var(--dot) 1px, transparent 1px);
     background-size: 24px 24px;
   }
   .panel {
     position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -163,7 +169,10 @@
     function leave() {
       document.body.classList.remove('error')
       document.body.classList.add('leaving')
-      setTimeout(function () { location.replace(ORIGIN + '/') }, EXIT)
+      // cache-busting:WebView 的 HTTP 缓存(app_webview,系统「清除缓存」够不到)曾把
+      // 部署前的旧 HTML 锁死不 revalidate,升级 APK 也不清。URL 带时间戳参数绕开
+      // 缓存键,每次启动必拿最新 HTML;chunk/字体是 hash 长缓存,不受影响。
+      setTimeout(function () { location.replace(ORIGIN + '/?cb=' + Date.now()) }, EXIT)
     }
 
     function run() {

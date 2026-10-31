@@ -15,6 +15,12 @@ mod updater;
 #[cfg(target_os = "android")]
 use updater::*;
 
+// 生成期间的安卓前台服务桥:常驻通知 + 保持 WebView 运行,完成时才能发系统通知
+#[cfg(mobile)]
+mod reply_notification;
+#[cfg(mobile)]
+use reply_notification::*;
+
 
 // ============ AI 本地文件能力(工作区沙箱) ============
 //
@@ -1265,6 +1271,8 @@ pub fn run() {
         updater_status,
         updater_download,
         updater_install,
+        generation_notification_start,
+        generation_notification_stop,
     ]);
 
     builder

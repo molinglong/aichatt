@@ -6,8 +6,18 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 更新包后台下载:下载期间持 PARTIAL_WAKE_LOCK,息屏/切后台不停 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 回复完成通知 / 生成期间常驻通知(Android 13+ 运行时权限) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 生成期间前台服务:切后台保持 WebView JS/SSE 运行,完成时才能发系统通知 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- AndroidTV support -->
+    <!-- Android 11+ 包可见性：向 Plan 显式回传授权码 -->
+    <queries>
+        <package android:name="icu.yuban.plan" />
+    </queries>
+
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <application
@@ -28,6 +38,21 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Plan App 的同签名授权桥：无界面，仅通过 setResult 返回一次性 code -->
+        <activity
+            android:name=".PlanAuthActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- 生成期间的前台服务:常驻通知 + 保持 WebView 运行(见 GenerationService.kt) -->
+        <service
+            android:name=".GenerationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <provider
           android:name="androidx.core.content.FileProvider"
