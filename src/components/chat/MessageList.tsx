@@ -10,22 +10,28 @@ import { useChatStore } from '@/store/chat-store'
 import {
   estimateMessageHeight,
   isListFollowing,
+  isListAnchoring,
   messageHeightStore,
   registerListScrollFacade,
   type ListScrollFacade,
 } from './chat-list-bridge'
 import type { UIMessage } from 'ai'
+import type { Attachment } from '@/lib/attachment-types'
+import { getStudyAction, stripStudyMarker } from '@/lib/study/lesson-flow'
 
 /** 保活预算:已访问过的消息最多保留这么多条挂载(离当前窗口最远的先淘汰) */
 const KEEP_MAX = 80
 
 interface MessageListProps {
   messages: UIMessage[]
+  studyQuestion?: string
   isStreaming: boolean
   className?: string
   onRegenerate?: () => void
   /** 「保存并重答」:归档该消息及其后续后以新文本重发 */
   onEditMessage?: (messageId: string, newText: string) => void | Promise<void>
+  /** 收藏状态回写:把最新 favoriteId 写回父级消息数组(虚拟列表重挂载后星标不丢) */
+  onFavoriteChange?: (messageId: string, favoriteId: string | null) => void
   /** 澄清问答:提交回答文本(通常接 ChatPanel 的 handleSend,复用排队/发送全链路) */
   onClarifySubmit?: (answersText: string) => void
   /** local_file:决策(批准/拒绝),透传给 ToolCallCard 内的 LocalFileCard */
@@ -58,15 +64,19 @@ interface MessageListProps {
   /** 更早页前插后要复位的那条消息(id + 距容器顶像素 + 每次点击自增的 token) */
   restoreAnchor?: { id: string; top: number; token: number } | null
   onLoadEarlier?: () => void
+  /** 键盘导航属于主动回看,先交还滚动控制权。 */
+  onNavigate?: () => void
 }
 
 export function MessageList({
-  messages,
+  messages: sourceMessages,
+  studyQuestion,
   isStreaming,
   isPending,
   className,
   onRegenerate,
   onEditMessage,
+  onFavoriteChange,
   onClarifySubmit,
   onLocalFileDecision,
   onOpenEditor,
@@ -77,8 +87,17 @@ export function MessageList({
   earlierLoading,
   restoreAnchor,
   onLoadEarlier,
+  onNavigate,
 }: MessageListProps) {
   useRenderProbe('MessageList')
+  // 只按来源标记隐藏学习按钮指令，不用文案匹配，手输同一句话仍会显示。
+  // 在列表计算之前过滤，避免键盘导航、复制、虚拟列表命中不可见气泡。
+  const messages = useMemo(() => studyQuestion === undefined ? sourceMessages : sourceMessages
+    .filter((message) => !(message.role === 'user' && getStudyAction(message.metadata)))
+    .map((message) => message.role !== 'assistant' ? message : {
+      ...message,
+      parts: message.parts.map((part) => part.type === 'text' ? { ...part, text: stripStudyMarker(part.text) } : part),
+    }), [sourceMessages, studyQuestion])
   // 键盘导航:收集每个消息的 ref,按 id 索引
   const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map())
   const focusedMessageId = useChatStore((s) => s.focusedMessageId)
@@ -131,7 +150,8 @@ export function MessageList({
   // 补偿),回看不跳变。卸载时还原,避免单例字段泄漏。
   useEffect(() => {
     virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, v) => {
-      if (isListFollowing()) return false
+      // 单聊由段落锚点控制器补偿,不可再由 virtualizer 二次改写 scrollTop。
+      if (isListFollowing() || isListAnchoring()) return false
       return item.start < (v.scrollOffset ?? 0)
     }
     return () => {
@@ -169,7 +189,8 @@ export function MessageList({
   // 空闲预热循环:每步 3 条,直到预算满(KEEP_MAX)或用户浏览已占满预算。
   // rIC 只在空闲帧触发,打字/滚动时自动让路;timeout 300ms 保证最终进度。
   useEffect(() => {
-    if (!virtualized) return
+    // 不在流式生成期间强制 timeout 预热历史富文本,把主线程预算留给可见内容。
+    if (!virtualized || isStreaming) return
     let cancelled = false
     let idleId = 0
     let timeoutId: ReturnType<typeof setTimeout> | undefined
@@ -195,7 +216,7 @@ export function MessageList({
       if (timeoutId) clearTimeout(timeoutId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [virtualized, messages.length])
+  }, [virtualized, messages.length, isStreaming])
   useEffect(() => {
     scrollElRef.current = scrollElement ?? null
   }, [scrollElement])
@@ -285,6 +306,7 @@ export function MessageList({
   // 屏外消息无需先挂载;非虚拟化维持 DOM scrollIntoView
   const scrollToReveal = useCallback(
     (index: number, messageId: string) => {
+      onNavigate?.()
       if (virtualized) {
         virtualizerRef.current?.scrollToIndex(index, { align: 'auto' })
         return
@@ -294,7 +316,7 @@ export function MessageList({
         el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
       }
     },
-    [virtualized]
+    [virtualized, onNavigate]
   )
 
   // 收敛 lastAssistantIndex —— messages 数组变化时只有这一处需要重算
@@ -385,6 +407,19 @@ export function MessageList({
     return map
   }, [messages])
 
+  // 前一条用户消息的附件:assistant 存错题本时把题目截图一起带上
+  const prevUserAttachmentsById = useMemo(() => {
+    const map = new Map<string, Attachment[] | null>()
+    let last: Attachment[] | null = null
+    for (const msg of messages) {
+      map.set(msg.id, last)
+      if (msg.role === 'user') {
+        last = (msg as UIMessage & { attachments?: Attachment[] }).attachments ?? null
+      }
+    }
+    return map
+  }, [messages])
+
   // 澄清问答"已答"判定:该 assistant 消息之后存在任意 user 消息
   // (无论用户是点选卡片提交还是直接打字,都视为已回答)
   const answeredAssistantIds = useMemo(() => {
@@ -401,7 +436,10 @@ export function MessageList({
   // 两个分支共用的气泡 props(wrapperRef 每渲染新建是既有行为,memo 比较器明确忽略它)
   const bubbleProps = (message: UIMessage, index: number) => ({
     message,
-    prevUserContent: prevUserContentById.get(message.id),
+    prevUserContent: studyQuestion ?? prevUserContentById.get(message.id),
+    prevUserAttachments: prevUserAttachmentsById.get(message.id) ?? null,
+    favoriteId: (message as UIMessage & { favoriteId?: string | null }).favoriteId ?? null,
+    onFavoriteChange,
     isStreaming,
     isLastAssistant: index === lastAssistantIndex,
     // "正在生成"判定必须用 isLastMessage 而非 isLastAssistant:submitted 阶段
@@ -480,13 +518,17 @@ export function MessageList({
       const id = messages[i]?.id
       if (id) keptRef.current.add(id)
     }
+    // 最新 assistant 始终保活:回看历史时仍接收流和续打尾文,回来不从头播放。
+    // 只多占一个槽,停止/完成后的 drain 也不能被淘汰。
+    const tailId = messages[messages.length - 1]?.role === 'assistant' ? messages[messages.length - 1].id : null
+    if (tailId) keptRef.current.add(tailId)
     // 预算淘汰:超出 KEEP_MAX 时,离当前窗口最远的保活项先卸载
     if (keptRef.current.size > KEEP_MAX) {
       const lo = items[0]?.index ?? 0
       const hi = items[items.length - 1]?.index ?? lo
       const dist = (idx: number | undefined) =>
         idx === undefined ? Number.MAX_SAFE_INTEGER : idx < lo ? lo - idx : idx > hi ? idx - hi : 0
-      const sorted = Array.from(keptRef.current).sort(
+      const sorted = Array.from(keptRef.current).filter(id => id !== tailId).sort(
         (a, b) => dist(indexById.get(b)) - dist(indexById.get(a))
       )
       for (const id of sorted.slice(0, keptRef.current.size - KEEP_MAX)) keptRef.current.delete(id)
@@ -506,7 +548,9 @@ export function MessageList({
     return (
       <div className={cn('w-full', className)}>
         {earlierHeader}
-        <div className="max-w-2xl mx-auto overflow-x-hidden">
+        {/* hidden 会把另一轴的 visible 计算成 auto:虚拟轨道暂时低于实测内容时,
+            内层纵向滚动条会挤窄正文并触发重测。clip 只裁横向,纵向滚动统一交给 ChatPanel。 */}
+        <div className="max-w-2xl mx-auto overflow-x-clip">
           <div
             style={{ height: virtualizer.getTotalSize(), minHeight: '100%', position: 'relative' }}
           >

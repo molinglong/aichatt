@@ -28,6 +28,8 @@ interface ApiMessage {
   metadata?: unknown
   /** A 流式恢复: 服务端仍在生成(草稿行快照中)的 assistant 消息 */
   streaming?: boolean
+  /** 收藏状态:已收藏时为 Favorite.id,未收藏为 null(消息操作栏星标用) */
+  favoriteId?: string | null
   promptTokens?: number | null
   completionTokens?: number | null
   createdAt?: string | Date
@@ -48,6 +50,8 @@ interface ApiConversation {
   replyLength?: string | null
   maskId: string | null
   compareModels: string[]
+  /** 学习模式会话:普通聊天页据此改道 /study?c=id */
+  studyMode?: boolean
   /** E 对比模式投票: 最新一轮投票(对比模式回显高亮用) */
   latestVote?: { groupId: string; votedModel: string } | null
   messages: ApiMessage[]
@@ -104,6 +108,7 @@ function toUIMessage(msg: ApiMessage): UIMessage {
     ...(msg.promptTokens != null || msg.completionTokens != null
       ? { tokens: { prompt: msg.promptTokens ?? 0, completion: msg.completionTokens ?? 0 } }
       : {}),
+    favoriteId: msg.favoriteId ?? null,
   } as UIMessage
 }
 
@@ -171,6 +176,15 @@ function ConversationClientContent() {
   }, [conversationQuery.error, router])
 
   const conversation = conversationQuery.data
+
+  // 学习模式会话:普通聊天地址一律改道学习室(/study?c=id)。
+  // 侧栏/收藏/未读通知等入口只认会话 id,这里兜住所有漏改道的情况,
+  // 否则学习室会被当成普通消息流打开,讲解卡片与学习工具全部丢失。
+  const redirectToStudy = conversation?.studyMode === true
+  useEffect(() => {
+    if (!redirectToStudy || !conversation) return
+    router.replace(`/study?c=${conversation.id}`)
+  }, [redirectToStudy, conversation, router])
 
   // ── 首屏分页:更早消息续载(仅单聊;对比模式端点恒全量下发) ──
   // 已加载的更早页缓存在组件本地(不进 useQuery 详情缓存,避免缓存膨胀),
@@ -266,6 +280,7 @@ function ConversationClientContent() {
   // 2) 首次无缓存 + 还在请求中(且没报错) → loading 骨架
   // 3) 有缓存 + 后台 refetching → 直接展示旧数据,不显示骨架
   const showSkeleton =
+    redirectToStudy ||
     status === 'loading' ||
     (!conversation && conversationQuery.isPending)
 

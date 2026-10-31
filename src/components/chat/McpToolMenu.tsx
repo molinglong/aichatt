@@ -16,6 +16,7 @@ import { queryKeys } from '@/lib/query/keys'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { MiniSwitch } from '@/components/settings/MiniSwitch'
+import { usePanelPresence } from '@/hooks/usePanelPresence'
 
 interface ServerInventoryDTO {
   id: string
@@ -33,10 +34,12 @@ function errText(e: unknown): string {
 }
 
 export function McpToolMenu({
+  open,
   mcpEnabled,
   onMcpEnabledChange,
   onClose,
 }: {
+  open: boolean
   mcpEnabled: boolean
   onMcpEnabledChange: (enabled: boolean) => void
   onClose: () => void
@@ -44,6 +47,7 @@ export function McpToolMenu({
   const queryClient = useQueryClient()
   const [busyTool, setBusyTool] = useState<string | null>(null) // `${id}:${toolName}`
   const [busyServer, setBusyServer] = useState<string | null>(null)
+  const { rendered, closing } = usePanelPresence(open)
 
   // 工具清单:菜单打开即拉取(连接各 server,5s 超时,短缓存)
   const { data, isLoading } = useQuery<{ servers: ServerInventoryDTO[] }>({
@@ -51,6 +55,7 @@ export function McpToolMenu({
     queryFn: () => fetchJson('/api/mcp/tools'),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
+    enabled: open,
   })
   const servers = data?.servers ?? []
 
@@ -97,12 +102,19 @@ export function McpToolMenu({
     }
   }
 
+  if (!rendered) return null
+
   return (
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
-        className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 w-80 max-w-[calc(100vw-2rem)]
+        className={cn('fixed inset-0 z-40', closing && 'pointer-events-none')}
+        onClick={onClose}
+      />
+      <div
+        className="panel-motion absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 w-80 max-w-[calc(100vw-2rem)]
           rounded-xl border border-line bg-surface shadow-lg"
+        data-panel-state={closing ? 'closed' : 'open'}
+        data-panel-side="top"
         role="menu"
       >
         {/* 头部:会话总开关 */}

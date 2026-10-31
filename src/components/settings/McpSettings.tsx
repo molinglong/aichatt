@@ -56,6 +56,18 @@ const INPUT_CLS = cn(
 
 const LABEL_CLS = 'text-[11px] font-medium text-content-secondary'
 
+/**
+ * 一键预置：免 Key、公开可达的 MCP 服务，点一下直接入库，不走表单。
+ * 已添加（URL 命中）的预置不再展示。数学符号运算（解方程/积分）内置验算器不会，交给 Wolfram。
+ */
+const MCP_PRESETS: ReadonlyArray<{ name: string; url: string; blurb: string }> = [
+  {
+    name: 'Wolfram 数学计算',
+    url: 'https://agenttools.wolfram.com/mcp',
+    blurb: '解方程、积分、画函数图、知识查询；免费无需 Key，境外节点略慢',
+  },
+]
+
 function errText(e: unknown): string {
   if (e instanceof HttpError) return e.message
   if (e instanceof Error) return e.message
@@ -89,9 +101,26 @@ export default function McpSettings() {
   const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [saving, setSaving] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [addingPreset, setAddingPreset] = useState<string | null>(null)
 
   async function invalidate() {
     await queryClient.invalidateQueries({ queryKey: queryKeys.mcp.servers() })
+  }
+
+  async function handleAddPreset(preset: (typeof MCP_PRESETS)[number]) {
+    setAddingPreset(preset.url)
+    try {
+      await fetchJson('/api/mcp/servers', {
+        method: 'POST',
+        json: { name: preset.name, url: preset.url },
+      })
+      await invalidate()
+      toast.success(`已添加 ${preset.name}`)
+    } catch (e) {
+      toast.error(errText(e))
+    } finally {
+      setAddingPreset(null)
+    }
   }
 
   async function handleToggle(server: McpServerDTO) {
@@ -411,6 +440,51 @@ export default function McpSettings() {
           ))}
         </div>
       )}
+
+      {/* 一键预置：只列尚未添加的 */}
+      {!isLoading && !error && (() => {
+        const existing = new Set((servers?.servers ?? []).map((s) => s.url.replace(/\/+$/, '')))
+        const pending = MCP_PRESETS.filter((p) => !existing.has(p.url.replace(/\/+$/, '')))
+        if (pending.length === 0) return null
+        return (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium text-content-secondary">推荐服务</p>
+            {pending.map((p) => (
+              <div
+                key={p.url}
+                className="flex items-center gap-2.5 rounded-xl border border-dashed border-line/60 px-3 py-2.5"
+              >
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-content-secondary">
+                  <Plug className="w-3.5 h-3.5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium text-content-primary">{p.name}</span>
+                  <p className="truncate text-[10px] text-content-muted" title={p.blurb}>
+                    {p.blurb}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleAddPreset(p)}
+                  disabled={addingPreset !== null}
+                  className={cn(
+                    'flex shrink-0 items-center gap-1 rounded-lg border border-line/60 bg-surface px-2.5 py-1 text-[11px]',
+                    'text-content-secondary hover:bg-surface-subtle transition-colors',
+                    'disabled:opacity-50 disabled:cursor-not-allowed'
+                  )}
+                >
+                  {addingPreset === p.url ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Plus className="w-3 h-3" />
+                  )}
+                  一键添加
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      })()}
 
       <p className="text-[10px] leading-relaxed text-content-muted">
         MCP 服务为第三方能力，请只添加可信来源；临时聊天与对比模式下不会注入 MCP 工具。

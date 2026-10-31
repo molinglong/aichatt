@@ -9,8 +9,13 @@ import type { UIMessage } from 'ai'
 import { ChevronDown } from 'lucide-react'
 import { ChatErrorBanner } from './ChatErrorBanner'
 import { MessageList } from './MessageList'
+import { StudyRoom, type StudyApproach, type StudyTool } from '@/components/study/StudyRoom'
+import { hasStudyCompletion, type StudyAction } from '@/lib/study/lesson-flow'
+import { loadStudyLesson, patchStudyLesson } from '@/lib/study/lesson-session'
 import { HeroModelChip } from './HeroModelChip'
+import { ModelSelector } from './ModelSelector'
 import { ChatInput } from './ChatInput'
+import { GoogleMobileNav } from '@/components/mobile/GoogleMobileNav'
 import { ProfileProbe } from './ProfileProbe'
 import { ComparePanel } from './ComparePanel'
 import { WriteDocPanel } from '@/components/write/WriteDocPanel'
@@ -19,26 +24,33 @@ import { CodePanel } from '@/components/code/CodePanel'
 import { ChatPreviewPanel } from './ChatPreviewPanel'
 import { WorkSidePane } from '@/components/workspace/WorkSidePane'
 import { OutlineSidebar } from './OutlineSidebar'
-import { pinScrollToBottom, registerListFollowing } from './chat-list-bridge'
+import { useChatScroll } from './useChatScroll'
 import { INPUT_SEND_EVENT } from '@/lib/input-bridge'
 import { InfoAsidePanel, INFO_PANEL_WIDTH, INFO_TAB_WIDTH } from './InfoAsidePanel'
-import { MaskPickerMenu } from './MaskPickerMenu'
 import { ContextMeter } from './ContextMeter'
 import { NEW_CHAT_MASK_SIGNAL_KEY, useChatStore, liveCodeDoc } from '@/store/chat-store'
 import { getErrorMessage } from '@/lib/chat-errors'
 import { buildSettingsSnapshot, executeSettingsOps } from '@/lib/settings/executor'
 import { toast } from '@/lib/toast'
 import { useVisualViewport } from '@/hooks/useVisualViewport'
+import { useForegroundResume } from '@/hooks/useForegroundResume'
 import { useIsComputerMode } from '@/hooks/useIsComputerMode'
-import { useMaskMenuMaxHeight } from '@/hooks/useMaskMenuMaxHeight'
-import { useReplyReminder } from '@/hooks/useReplyReminder'
 import { queryKeys, STALE } from '@/lib/query/keys'
+import { isModelAvailable, providerKeysStatusQuery } from '@/lib/query/providers'
 import { fetchJson } from '@/lib/query/fetcher'
 import type { ModelDefinition } from '@/lib/ai/types'
 import { getBuiltinMask } from '@/lib/ai/builtin-masks'
 import type { MaskDTO } from '@/lib/ai/mask-types'
 import type { Attachment } from './FileUpload'
-import { getIsTauri, tauri, useIsTauri } from '@/lib/tauri'
+import {
+  getIsTauri,
+  getNotifyOnReply,
+  isAndroidTauriShell,
+  startGenerationNotification,
+  stopGenerationNotification,
+  tauri,
+  useIsTauri,
+} from '@/lib/tauri'
 import {
   writeFile as lfWriteFile,
   deleteFile as lfDeleteFile,
@@ -95,21 +107,66 @@ const MCP_ENABLED_STORAGE_KEY = 'chat:mcpEnabled'
 const COMPARE_MODE_STORAGE_KEY = 'chat:compareMode'
 const COMPARE_MODELS_STORAGE_KEY = 'chat:compareModels'
 
-function getGreeting(): string {
-  const hour = new Date().getHours()
-  if (hour < 5) return '夜深了，还在思考？'
-  if (hour < 9) return '早上好，新的一天开始了'
-  if (hour < 12) return '上午好'
-  if (hour < 14) return '中午好'
-  if (hour < 18) return '下午好'
-  if (hour < 21) return '晚上好'
-  return '夜深了，注意休息'
-}
-
 /** 欢迎页副标题用日期行: 「9月17日 周四」 */
 function getDateLine(): string {
   const now = new Date()
   return `${now.getMonth() + 1}月${now.getDate()}日 周${'日一二三四五六'[now.getDay()]}`
+}
+
+/** GET /api/conversations/[id]/messages?limit= 的单行形状(attachments/metadata 是库中原始 JSON 字符串) */
+interface RemoteMessageRow {
+  id: string
+  role: string
+  content: string
+  reasoning?: string | null
+  model?: string | null
+  groupId?: string | null
+  streaming?: boolean
+  attachments?: unknown
+  metadata?: unknown
+  /** 收藏状态(服务端回填):Favorite.id 或 null */
+  favoriteId?: string | null
+  createdAt?: string
+}
+
+function parseJsonLoose(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw ?? null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 跨端回流用的行 → UIMessage 适配(与 page.tsx 的 toUIMessage 同形):
+ * reasoning 单独成 part;库中 streaming=true 合入 metadata,供「流式恢复」轮询接管续显。
+ */
+function remoteRowToUIMessage(row: RemoteMessageRow): UIMessage {
+  const parts: UIMessage['parts'] = []
+  if (row.reasoning) {
+    parts.push({ type: 'reasoning' as const, text: row.reasoning, state: 'done' as const })
+  }
+  parts.push({ type: 'text' as const, text: row.content ?? '', state: 'done' as const })
+  const attachmentsRaw = parseJsonLoose(row.attachments)
+  const attachments = Array.isArray(attachmentsRaw)
+    ? (attachmentsRaw as Attachment[]).filter(
+        (a): a is Attachment => !!a && typeof a.url === 'string' && typeof a.name === 'string'
+      )
+    : []
+  const metaRaw = parseJsonLoose(row.metadata)
+  const baseMeta =
+    metaRaw && typeof metaRaw === 'object' && !Array.isArray(metaRaw) ? (metaRaw as Record<string, unknown>) : null
+  const metadata = row.streaming ? { ...(baseMeta ?? {}), streaming: true } : baseMeta
+  return {
+    id: row.id,
+    role: row.role as 'user' | 'assistant' | 'system',
+    parts,
+    createdAt: row.createdAt ? new Date(row.createdAt) : undefined,
+    ...(attachments.length > 0 ? { attachments } : {}),
+    ...(metadata ? { metadata } : {}),
+    favoriteId: row.favoriteId ?? null,
+  } as UIMessage
 }
 
 /**
@@ -176,6 +233,7 @@ interface ChatPanelProps {
   /** 学习模式(/study 导师对话流):随请求上报服务端强制挂载课本/练题工具并注入教学能力段;
    *  同时关闭首条消息后的 URL 改写(/study 无 c/[id] 子路由,进页即开课,刷新=新开课) */
   studyMode?: boolean
+  studyTools?: StudyTool[]
   /** 首屏分页:未下发的更早消息条数(0/undefined 不渲染"查看更早"入口) */
   earlierCount?: number
   /** 首屏分页:由页面发起的更早页拉取(端点/游标口径都归页面),resolve 后面板前插并锚定滚动 */
@@ -197,11 +255,23 @@ export function ChatPanel({
   initialCompareVote,
   autoSendText,
   studyMode,
+  studyTools,
   earlierCount,
   onLoadEarlier,
 }: ChatPanelProps) {
   useRenderProbe('ChatPanel')
   const [currentModel, setCurrentModel] = useState(initialModel)
+
+  // 新对话默认模型：设置里可选「标准 / 自动」，默认标准（公共池免费档）。
+  // 只在挂载时应用一次，之后不覆盖用户手动选择；已有会话保持原模型。
+  useEffect(() => {
+    if (initialMessages.length > 0) return
+    const pref = typeof window !== 'undefined' ? localStorage.getItem('chat:defaultModel') : null
+    if (pref === 'auto') return
+    const standard = allModels.find((m) => m.id === 'deepseek-standard' || m.name === '标准')
+    if (standard) setCurrentModel(standard.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // 写作画布/预览面板/文件编辑器打开时桌面端压缩聊天区让位(与面板同宽并排,豆包式)
   const writePanelOpen = useChatStore((s) => s.writePanelDocId !== null)
   const editorOpen = useChatStore((s) => s.editorFile !== null)
@@ -281,10 +351,6 @@ export function ChatPanel({
     setConversationMaskId(signal && (getBuiltinMask(signal) || signal.startsWith('user:')) ? signal : null)
   }, [initialConversationId, initialMaskId, setConversationMaskId])
 
-  // 面具选择面板开关
-  const [maskPickerOpen, setMaskPickerOpen] = useState(false)
-  // 面具面板盒高: chip 在页首,向下弹,按 chip 下方可用空间夹取
-  const headerMaskMenu = useMaskMenuMaxHeight(maskPickerOpen, 'down')
   // 自定义面具列表（badge 解析 + picker「我的面具」分组）
   const { data: userMasks } = useQuery({
     queryKey: queryKeys.masks.list(),
@@ -467,6 +533,18 @@ export function ChatPanel({
     return merged
   }, [allModels, customModelsQuery.data, providerUserModelsQuery.data])
 
+  // 讲题模型下拉只列「开箱能用」的模型(已配置 Key 的 provider / 自定义 / 公共池)。
+  // 名单未回来前先按全量渲染,避免首帧下拉空白与选中项丢失;非学习模式不发这个请求。
+  const providerKeysQuery = useQuery<Set<string>>({
+    ...providerKeysStatusQuery,
+    enabled: Boolean(studyMode),
+  })
+  const studyModels = useMemo(() => {
+    const configured = providerKeysQuery.data
+    if (!studyMode || !configured) return mergedModels
+    return mergedModels.filter((m) => isModelAvailable(m, configured))
+  }, [studyMode, mergedModels, providerKeysQuery.data])
+
   // 对比模式状态: 仅从 props 初始化(已有 compare 会话),新聊天的 localStorage 预设
   // 在挂载后加载,避免 SSR 水合不一致
   const [compareMode, setCompareMode] = useState(mode === 'compare')
@@ -521,7 +599,7 @@ export function ChatPanel({
     if (!initialConversationId) {
       // 恢复对比模式预设 (移动端不实现对比，跳过)
       if (
-        window.matchMedia('(min-width: 768px)').matches &&
+        !studyMode && window.matchMedia('(min-width: 768px)').matches &&
         localStorage.getItem(COMPARE_MODE_STORAGE_KEY) === 'true'
       ) {
         setCompareMode(true)
@@ -541,8 +619,22 @@ export function ChatPanel({
   }, [])
   const conversationIdRef = useRef(initialConversationId)
   const attachmentsRef = useRef<Attachment[] | undefined>(undefined)
+  // 续课后接着追问时,服务端仍要知道这道题的学习起点(快照里存着上次选的)
+  const studyApproachRef = useRef<StudyApproach>(loadStudyLesson().approach ?? 'beginner')
+  // 学习模式续课:历史里带结课标记的回复也要恢复,否则刷新后「查看本题小结」入口消失
+  // (结课后又追问过几轮时,从后往前找最近一条结课回复,而不是只看最后一条)
+  const [studyCompletedReply, setStudyCompletedReply] = useState<UIMessage | null>(() => {
+    if (!studyMode) return null
+    for (let i = initialMessages.length - 1; i >= 0; i--) {
+      const m = initialMessages[i]
+      if (m.role === 'assistant' && hasStudyCompletion(m)) return m
+    }
+    return null
+  })
   // 消息区滚动容器(供 OutlineSidebar 做 scroll-spy / 平滑滚动)
   const [messagesScrollEl, setMessagesScrollEl] = useState<HTMLDivElement | null>(null)
+  // 用户意图和段落锚点共用一个滚动控制器,不依赖生成状态。
+  const { showScrollToBottom, handleScrollToBottom, detachScroll } = useChatScroll(messagesScrollEl)
   const setCurrentConversationId = useChatStore((s) => s.setCurrentConversationId)
   const setConversationTitle = useChatStore((s) => s.setConversationTitle)
   const bumpConversationVersion = useChatStore((s) => s.bumpConversationVersion)
@@ -582,6 +674,9 @@ export function ChatPanel({
   // 也能拿到最新的 model / deepThink / webSearch 等。
   // useRef() 声明和 .current 赋值严格分开:声明在 render 体,赋值在 useEffect
   const currentModelRef = useRef(currentModel)
+  // 本页发起、已在库中落行的回复 id(按会话分组)。本地流消息用 AI SDK 临时 id,
+  // 与库行 cuid 永不相等,前台恢复补拉需要靠这份名单认亲,否则会重复追加。
+  const serverAssistantIdsRef = useRef<Map<string, Set<string>>>(new Map())
   const deepThinkRef = useRef(deepThink)
   const webSearchRef = useRef(webSearch)
   const searchEngineRef = useRef(searchEngine)
@@ -618,9 +713,12 @@ export function ChatPanel({
           get mcpEnabled() { return mcpEnabledRef.current },
           get stylePreset() { return conversationStylePresetRef.current },
           get replyLength() { return conversationReplyLengthRef.current },
-          get maskId() { return conversationMaskIdRef.current },
+          get maskId() { return studyMode ? null : conversationMaskIdRef.current },
           // 学习模式:页面级常量(prop),服务端据此强挂教学工具+能力段
           ...(studyMode ? { studyMode: true } : {}),
+          get studyApproach() {
+            return studyMode ? studyApproachRef.current : undefined
+          },
           // AI 设置控制: 每次请求前读取最新客户端设置快照,服务端注入 system prompt(读写对称)
           get settingsSnapshot() {
             return buildSettingsSnapshot()
@@ -652,6 +750,20 @@ export function ChatPanel({
           const response = await fetch(url, options)
           const newConvId = response.headers.get('X-Conversation-Id')
           const newConvTitle = response.headers.get('X-Conversation-Title')
+          // 库行 id 认亲:本地流消息 id 是 AI SDK 临时 id,与库行 cuid 永不相等。
+          // 不记下这个头,前台恢复补拉会把本页刚生成的回复当成别处新增再追加一遍。
+          const assistantRowId = response.headers.get('X-Assistant-Message-Id')
+          if (assistantRowId && newConvId) {
+            const key = newConvId.trim()
+            if (key) {
+              let ids = serverAssistantIdsRef.current.get(key)
+              if (!ids) {
+                ids = new Set()
+                serverAssistantIdsRef.current.set(key, ids)
+              }
+              ids.add(assistantRowId)
+            }
+          }
           if (newConvId && newConvId !== conversationIdRef.current) {
             conversationIdRef.current = newConvId
             setConversationId(newConvId)
@@ -661,9 +773,13 @@ export function ChatPanel({
               setConversationTitle(decodeURIComponent(newConvTitle))
             }
             // Update URL without full navigation
-            // 学习模式不改写:/study 没有 c/[id] 子路由,改写会 404/劫持到 /chat;
-            // 会话由 conversationId state 维持,刷新 /study = 开新课,语义自洽
-            if (!studyMode) {
+            // 学习模式没有 c/[id] 子路由,会话 id 记到查询参数上:/study?c=xxx。
+            // 刷新时页面据此回拉讲解消息并恢复学习室阶段(见 lib/study/lesson-session),
+            // 否则一次刷新就等于把整堂课丢掉、退回「从一道题开始」。
+            if (studyMode) {
+              patchStudyLesson({ conversationId: newConvId })
+              window.history.replaceState(null, '', `/study?c=${newConvId}`)
+            } else {
               window.history.replaceState(null, '', `/chat/c/${newConvId}`)
             }
           }
@@ -1060,6 +1176,7 @@ export function ChatPanel({
         bumpConversationVersion()
         return
       }
+      if (studyMode && hasStudyCompletion(message)) setStudyCompletedReply(message)
       const convId = conversationIdRef.current
       if (!convId) return
       // 客户端工具轮(local_file / code_edit / preview_check):tool part 生命周期由前端管理
@@ -1142,6 +1259,7 @@ export function ChatPanel({
   // (setMessages 来自 useChat,在其后才可引用,故实现落在这里)
   const handleLoadEarlier = useCallback(async () => {
     if (!onLoadEarlier || earlierLoading) return
+    detachScroll()
     setEarlierLoading(true)
     try {
       const msgs = await onLoadEarlier()
@@ -1161,7 +1279,7 @@ export function ChatPanel({
     } finally {
       setEarlierLoading(false)
     }
-  }, [onLoadEarlier, earlierLoading, messagesScrollEl, setMessages])
+  }, [onLoadEarlier, earlierLoading, messagesScrollEl, setMessages, detachScroll])
 
   // 取证面包屑:#185 这类崩溃的生产堆栈只剩 react-dom 帧,能定元凶的是"崩前那一刻
   // 流式状态怎么跳、每秒渲染了多少次"。状态变化与上游报错都进环形缓冲随证据一起上报。
@@ -1230,9 +1348,24 @@ export function ChatPanel({
   // 新消息按 F 方案入队,待定格后自动发出
   const isLoading = status === 'submitted' || status === 'streaming' || remoteStreamingId != null
 
-  // 安卓壳:生成开始即向系统预约一条「回来看」定时通知,结束/回到前台撤掉。
-  // 切后台会冻住 JS(WebView.onPause),完成那一刻在前端根本等不到,只能提前挂号。
-  useReplyReminder(isLoading)
+  // 安卓壳:生成期间启动前台服务(通知栏常驻「正在生成」)。
+  // 服务运行期间 WryActivity 不暂停 WebView,切后台 JS/SSE 继续跑,
+  // 完成那一刻 onFinish 才能调系统通知;结束后停服务、撤常驻通知。
+  // 通知开关关闭时不启动:回退到「切后台冻结 + 服务端续跑 + 回前台补拉」。
+  const localGenerating = status === 'submitted' || status === 'streaming'
+  useEffect(() => {
+    if (!localGenerating) return
+    if (!isAndroidTauriShell() || !getNotifyOnReply()) return
+    let alive = true
+    void startGenerationNotification().then((started) => {
+      // 启动期间本轮已经结束(极短回复):补一次停止,别留下常驻通知
+      if (!alive && started) void stopGenerationNotification()
+    })
+    return () => {
+      alive = false
+      void stopGenerationNotification()
+    }
+  }, [localGenerating])
 
   // 生成开始时(stop → send 或 regenerate)清掉"接着说"横幅
   const prevStatusRef = useRef(status)
@@ -1267,146 +1400,6 @@ export function ChatPanel({
       }
     }
   }, [initialConversationId, registerBackgroundStreaming, unregisterBackgroundStreaming])
-
-  // 流式跟随滚动: 默认贴底跟随最新内容;用户向上滚动立即脱离跟随(生成中也能自由回看历史),
-  // 滚回底部或点"回到底部"按钮恢复跟随。
-  // 脱离判定用滚动方向而非旧的"距底<=24"阈值:旧的纯阈值判定会被 scrollIntoView(smooth)
-  // 动画自身的 scroll 事件反复重置回 true,加上流式期间每个 chunk 都发起一次新动画,
-  // 用户上滑的每一小步都被拉回,表现为"生成时往上滑不动"。程序化滚动恒向下,不会误触发方向检测。
-  const shouldAutoScrollRef = useRef(true)
-  const prevScrollTopRef = useRef(0)
-  const prevScrollHeightRef = useRef(0)
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
-
-  // 虚拟化尺寸校正的补偿决策要读跟随状态(MessageList 经 bridge 消费):注册 getter,
-  // getter 引用恒定,卸载时还原为恒真,避免单例信号指向已卸载面板的状态。
-  useEffect(() => {
-    registerListFollowing(() => shouldAutoScrollRef.current)
-    return () => registerListFollowing(() => true)
-  }, [])
-
-  // 滚动容器监听:向上滚=脱离跟随;滚回底部(距底<=8px)=恢复跟随。
-  // 此前阈值 40px 会在底部形成拉锯区(用户小幅上滑被跟随定时器拉回),收紧为 8px:
-  // 几乎贴底才算"主动滚回",其余位置保留自由回看。
-  // 脱离另加意图门槛:程序性位移(TanStack 补偿残留/上方 item 收缩同步下调 top)也满足
-  // scrolledUp+距底拉开,但那不是用户在滑 —— 旧判据让一次 -859px 的校正位移永久杀掉
-  // 跟随,生成内容在视口下方堆积 2000+px 无人接管。触屏设备只在触摸/滚轮后 400ms
-  // 内的 scroll 才算用户上滑;桌面细指针(拖滚动条无 wheel 事件)保留原判定。
-  const lastUserIntentRef = useRef(0)
-  const coarsePointerRef = useRef(false)
-  useEffect(() => {
-    const el = messagesScrollEl
-    if (!el) return
-    coarsePointerRef.current = window.matchMedia('(pointer: coarse)').matches
-    const mark = () => { lastUserIntentRef.current = performance.now() }
-    el.addEventListener('touchstart', mark, { passive: true, capture: true })
-    el.addEventListener('touchmove', mark, { passive: true, capture: true })
-    el.addEventListener('wheel', mark, { passive: true, capture: true })
-    return () => {
-      el.removeEventListener('touchstart', mark, { capture: true })
-      el.removeEventListener('touchmove', mark, { capture: true })
-      el.removeEventListener('wheel', mark, { capture: true })
-    }
-  }, [messagesScrollEl])
-
-  useEffect(() => {
-    const el = messagesScrollEl
-    if (!el) return
-    prevScrollTopRef.current = el.scrollTop
-    prevScrollHeightRef.current = el.scrollHeight
-    const update = () => {
-      const scrollHeight = el.scrollHeight
-      // 布局收缩(虚拟化把估算高度换成实测值)会连 scrollTop 一起被浏览器夹小,
-      // 那不是用户上滑。这一帧不关跟随,真上滑会在下一个 scroll 事件补判。
-      const shrank = scrollHeight < prevScrollHeightRef.current - 1
-      prevScrollHeightRef.current = scrollHeight
-      const distanceFromBottom = scrollHeight - el.scrollTop - el.clientHeight
-      const scrolledUp = el.scrollTop < prevScrollTopRef.current - 2
-      prevScrollTopRef.current = el.scrollTop
-      const intentRecent = performance.now() - lastUserIntentRef.current < 400
-      if (
-        scrolledUp &&
-        !shrank &&
-        shouldAutoScrollRef.current &&
-        distanceFromBottom > 24 &&
-        (!coarsePointerRef.current || intentRecent)
-      ) {
-        shouldAutoScrollRef.current = false
-        setShowScrollToBottom(true)
-      } else if (!shouldAutoScrollRef.current && distanceFromBottom <= 8) {
-        shouldAutoScrollRef.current = true
-        setShowScrollToBottom(false)
-      }
-    }
-    update()
-    el.addEventListener('scroll', update, { passive: true })
-    return () => el.removeEventListener('scroll', update)
-  }, [messagesScrollEl])
-
-  // 生成期间贴底跟随:scrollTop 直接赋值(瞬时)而非 smooth 动画,
-  // 避免动画与用户滚动形成拉锯;仅在跟随状态下执行。
-  // ResizeObserver 驱动:内容把滚动容器撑高即顺势贴底,替代旧的 150ms 轮询
-  // (轮询既会在内容静止时空转,又最快滞后 150ms)。
-  // 每轮生成开始:强制恢复跟随并立即回底(上一轮的脱离状态不延续)。
-  useEffect(() => {
-    if (!isLoading) return
-    shouldAutoScrollRef.current = true
-    setShowScrollToBottom(false)
-    const el = messagesScrollEl
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [isLoading, messagesScrollEl])
-
-  // 贴底跟随:只要仍在跟随状态就常驻观察高度变化,不再只限生成中 ——
-  // 打开历史会话的虚拟化估算→实测、生成结束后的打字机追平/富文本/公式渲染,
-  // 都可能在 isLoading 变 false 之后才把内容撑高;提前断开会让页面停在半空。
-  useEffect(() => {
-    const el = messagesScrollEl
-    if (!el) return
-    let raf = 0
-    const ro = new ResizeObserver(() => {
-      if (raf) return
-      raf = requestAnimationFrame(() => {
-        raf = 0
-        if (shouldAutoScrollRef.current) el.scrollTop = el.scrollHeight
-      })
-    })
-    // 观察滚动容器本身:overflow-y-auto 的内容增高会改变其 scrollHeight,
-    // 但 clientHeight 不变 —— 需观察子树撑高,改观察列表外层包裹
-    const contentWrap = el.firstElementChild
-    ro.observe(el, { box: 'border-box' })
-    if (contentWrap instanceof HTMLElement) ro.observe(contentWrap, { box: 'border-box' })
-    return () => {
-      ro.disconnect()
-      if (raf) cancelAnimationFrame(raf)
-    }
-  }, [messagesScrollEl])
-
-  // 进入历史会话定位到最新一条:滚动容器挂载时 scrollTop 恒为 0,而消息是 createdAt
-  // 升序渲染,顶部即最早的消息 —— 不主动置底就会停在第一条。
-  // 只做一次(按 conversationId 重挂载,切会话自然重来);生成中交给上面的贴底跟随,
-  // 避免两条路径抢滚动。校正循环在 bridge 里逐帧跟随,用户一旦上滑立即让路。
-  const initialScrollDoneRef = useRef(false)
-  useEffect(() => {
-    if (initialScrollDoneRef.current) return
-    const el = messagesScrollEl
-    if (!el || isLoading || messages.length === 0) return
-    initialScrollDoneRef.current = true
-    // 循环自持,不交给 effect cleanup 取消:内联 ref 回调会让 messagesScrollEl 在
-    // 重渲染中 null→el 翻转并触发本 effect 重跑,若跟着取消就永远校不完。
-    // intentDriven: 让路交给上面的意图状态机(触摸/滚轮门槛),校正期的程序性
-    // top 下调不再误触发 scrollTop<assigned 让路。
-    pinScrollToBottom(el, () => shouldAutoScrollRef.current, { intentDriven: true })
-  }, [messagesScrollEl, isLoading, messages.length])
-
-  // 回到底部按钮:恢复跟随并瞬时滚到最新内容
-  const handleScrollToBottom = useCallback(() => {
-    const el = messagesScrollEl
-    if (!el) return
-    shouldAutoScrollRef.current = true
-    setShowScrollToBottom(false)
-    el.scrollTop = el.scrollHeight
-  }, [messagesScrollEl])
 
   const pendingSendQueueRef = useRef<{ text: string; attachments?: Attachment[] }[]>([])
   const [pendingSendQueue, setPendingSendQueue] = useState<{ count: number; preview: string } | null>(null)
@@ -1483,17 +1476,10 @@ export function ChatPanel({
     armedUserIdsRef.current = null
   }, [messages, setMessages])
 
-  // 欢迎页壁纸激活态同步给 shell(WelcomeWallpaperLayer 据此显隐,侧栏/内容列随之变玻璃):
-  // 欢迎态 = messages 为空(与下方欢迎分支同判据);卸载(切 tab/进会话)时复位
-  const chatWelcomeActive = messages.length === 0
-  const setChatWelcomeActive = useChatStore((s) => s.setChatWelcomeActive)
-  useEffect(() => {
-    setChatWelcomeActive(chatWelcomeActive)
-    return () => setChatWelcomeActive(false)
-  }, [chatWelcomeActive, setChatWelcomeActive])
-
   const handleSend = useCallback(
-    (text: string, attachments?: Attachment[]) => {
+    (text: string, attachments?: Attachment[], studyAction?: StudyAction, automatic = false) => {
+      // 仅显式发送恢复跟随;排队自动出队、后台续显不能夺走阅读位置。
+      if (!automatic) handleScrollToBottom()
       // 生成中不丢弃输入:入队,本轮结束后由下方 effect 自动发出
       if (isLoadingRef.current) {
         pendingSendQueueRef.current.push({ text, attachments })
@@ -1507,7 +1493,7 @@ export function ChatPanel({
       // 工作区快照:桌面端发送前确保新鲜(TTL 内复用缓存,过期/失效才重建,fire-and-forget
       // 不阻塞发送;本次 getter 读到的可能是上一次快照,注入段已向模型声明"可能滞后")
       if (inTauri) void ensureWorkspaceSnapshot()
-      sendMessage({ text })
+      sendMessage({ text, ...(studyMode && studyAction ? { metadata: { studyAction } } : {}) })
       // 新会话可见性兜底:服务端把会话行建在流开始前,但 X-Conversation-Id 头要等
       // 上游首字节才 flush(上游慢时 20s+ 甚至挂起),期间侧栏看不到新会话。
       // 会话行在请求后 ~1s 落库,1.2s/3.5s 两次补 bump 让列表尽快捕获;
@@ -1525,7 +1511,7 @@ export function ChatPanel({
       // 保留本次值: 下一次发送由上方赋值覆盖(无附件时为 undefined);
       // regenerate 时 getter 仍返回本次附件,服务端注入到最后一条 user 消息,行为正确。
     },
-    [sendMessage, inTauri, bumpConversationVersion, armPendingAttachments]
+    [sendMessage, inTauri, bumpConversationVersion, armPendingAttachments, studyMode, handleScrollToBottom]
   )
 
   // 游戏面板「行动」按钮的直发桥: 深层 MarkdownRenderer 点击 → 事件 → handleSend,
@@ -1592,6 +1578,7 @@ export function ChatPanel({
   const gotoPendingApproval = useCallback((toolCallId: string) => {
     const el = document.querySelector(`[data-tcid="${toolCallId}"]`)
     if (!el) return
+    detachScroll()
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     ;(el as HTMLElement).animate?.(
       [
@@ -1600,7 +1587,7 @@ export function ChatPanel({
       ],
       { duration: 1600 }
     )
-  }, [])
+  }, [detachScroll])
 
   const handleOpenEditor = useCallback(
     (path: string) => {
@@ -1736,7 +1723,7 @@ export function ChatPanel({
     setPendingSendQueue(
       queue.length > 0 ? { count: queue.length, preview: queue[0].text.slice(0, 40) } : null
     )
-    if (next) handleSend(next.text, next.attachments)
+    if (next) handleSend(next.text, next.attachments, undefined, true)
   }, [isLoading, status, handleSend])
 
   // 跳转桥: /chat?q= 自动发送一次(外部入口,如 bento AI 卡片「继续对话」)。
@@ -1813,6 +1800,144 @@ export function ChatPanel({
     }
   }, [remoteStreamingId, conversationId, setMessages, bumpConversationVersion])
 
+  // 用户主动点停止的时刻:停止同样会让 useChat 报 AbortError,
+  // 断流恢复逻辑不能把用户刚停下的回复又接回来。
+  const userStoppedAtRef = useRef(0)
+  // 断流恢复的并发锁 + status 镜像:回到前台时即使 useChat 早已停在 error,
+  // 也要再试一次 —— 断连后的第一次恢复请求可能正好落在还没网的那几秒。
+  const statusRef = useRef(status)
+  useEffect(() => {
+    statusRef.current = status
+  }, [status])
+  const recoveryInflightRef = useRef(false)
+
+  // 断流恢复(安卓切后台回来):生成已与客户端连接解耦,服务端会在后台把这一轮跑完,
+  // 但本地 SSE 早断了 —— useChat 停在 error / 半截状态。
+  // 这里切回「A 流式恢复」:用库中的草稿行替换本地半截临时消息;
+  // 仍在生成就轮询续显,已定格就直接显示完整内容。
+  const recoverInterruptedStream = useCallback(async () => {
+    const convId = conversationIdRef.current
+    if (!convId || recoveryInflightRef.current) return
+    // 用户主动点停止同样会产生 AbortError:这不是断流,别把停下的回复接回来
+    if (Date.now() - userStoppedAtRef.current < 5000) return
+    // 只接管本页发起的这一轮(响应头已把库行 id 记进名单),
+    // 别处/上一轮的消息替换进来会张冠李戴
+    const ownServerIds = serverAssistantIdsRef.current.get(convId)
+    recoveryInflightRef.current = true
+    try {
+      // 第一次恢复请求可能落在「页面刚解冻、网络还没恢复」的窗口里,退避重试几次
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const res = await fetch(`/api/conversations/${convId}/messages?limit=1`)
+          if (!res.ok) return
+          const data = await res.json()
+          const latest: RemoteMessageRow | undefined = data.messages?.[0]
+          if (!latest || latest.role !== 'assistant') return
+          if (!ownServerIds?.has(latest.id)) return
+          // 草稿被清掉且没有任何内容:保留本地半截,避免整条变空
+          if (!latest.streaming && !latest.content?.trim() && !latest.reasoning?.trim()) return
+          const restored = remoteRowToUIMessage(latest)
+          setMessages((prev) => {
+            const lastAssistant = [...prev].reverse().findIndex((m) => m.role === 'assistant')
+            if (lastAssistant < 0) return [...prev, restored]
+            const at = prev.length - 1 - lastAssistant
+            const next = [...prev]
+            next[at] = restored
+            return next
+          })
+          clearError()
+          if (latest.streaming === true) {
+            // 服务端仍在后台生成:切到 1.2s 轮询续显
+            setRemoteStreamingId(latest.id)
+          } else {
+            bumpConversationVersion()
+          }
+          return
+        } catch {
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 2000))
+        }
+      }
+    } finally {
+      recoveryInflightRef.current = false
+    }
+  }, [setMessages, clearError, bumpConversationVersion])
+
+  // status 落入 error(本地 SSE 已断)即尝试接管;回前台时还会再试一次
+  useEffect(() => {
+    if (status !== 'error') return
+    void recoverInterruptedStream()
+  }, [status, recoverInterruptedStream])
+
+  // 跨端回流:电脑上聊过的内容,手机切回前台时自动补进来,不用手动刷新。
+  // 拉最近一页(新→旧),从最新一条往回走到本地已知的那条为止,前面那段就是别的设备新增的。
+  // 本地 user 消息的 id 是 AI SDK 临时 id(与库中 cuid 不同),所以 user 行额外按文本认亲;
+  // 自己正在生成 / 远端续显中不动(流本身就是最新数据),对比模式走 ComparePanel 不在此处理。
+  // 若补进来的最后一条是电脑那边还在生成的草稿行,交给上方「流式恢复」轮询续显。
+  const resumeSyncInflightRef = useRef(false)
+  useForegroundResume(() => {
+    if (!conversationId || compareMode) return
+    // 流已断、停在 error:这次回前台优先把本轮草稿接管回来。
+    // 跨端对账那条路径只追加消息,不会替换本地半截临时消息,处理不了这个场景。
+    if (statusRef.current === 'error') {
+      void recoverInterruptedStream()
+      return
+    }
+    if (isLoadingRef.current || resumeSyncInflightRef.current) return
+    resumeSyncInflightRef.current = true
+    void (async () => {
+      try {
+        const res = await fetch(`/api/conversations/${conversationId}/messages?limit=30`)
+        if (!res.ok) return
+        const data = await res.json()
+        const rows: RemoteMessageRow[] = Array.isArray(data.messages) ? data.messages : []
+        const local = messagesRef.current
+        const knownIds = new Set(local.map((m) => m.id))
+        // 本页发起、库行已落地的回复:气泡上挂的是临时 id,只能按库行 id 认亲
+        const ownServerIds = serverAssistantIdsRef.current.get(conversationId) ?? new Set<string>()
+        const knownUserTexts = new Set(
+          local
+            .filter((m) => m.role === 'user')
+            .map((m) =>
+              m.parts
+                .filter((p) => p.type === 'text')
+                .map((p) => (p as { text?: string }).text ?? '')
+                .join('')
+                .trim()
+            )
+        )
+        const fresh: RemoteMessageRow[] = []
+        for (const row of rows) {
+          if (knownIds.has(row.id) || ownServerIds.has(row.id)) break
+          if (row.role === 'user' && knownUserTexts.has((row.content ?? '').trim())) break
+          fresh.push(row)
+        }
+        if (fresh.length === 0) return
+        fresh.reverse()
+        // 与首屏同一口径:单聊不显示非当前模型的对比回复
+        const model = currentModelRef.current
+        const visible = fresh.filter((r) => r.role === 'user' || r.groupId == null || r.model === model)
+        const ui = visible.map(remoteRowToUIMessage)
+        if (ui.length === 0) return
+        setMessages((prev) => {
+          const ids = new Set([...prev.map((m) => m.id), ...Array.from(ownServerIds)])
+          const add = ui.filter((m) => !ids.has(m.id))
+          return add.length > 0 ? [...prev, ...add] : prev
+        })
+        const last = ui[ui.length - 1]
+        const lastMeta = last.metadata as { streaming?: unknown } | undefined
+        if (last.role === 'assistant' && lastMeta?.streaming === true) {
+          setRemoteStreamingId(last.id)
+        }
+        // 另一端推进了 updatedAt,左侧列表也跟着刷
+        bumpConversationVersion()
+      } catch {
+        // 网络抖动:下次切回来再试
+      } finally {
+        resumeSyncInflightRef.current = false
+      }
+    })()
+  })
+
   const handleStop = useCallback(() => {
     // 在真正停止前,记录最后一条 assistant 文本到 store,
     // 让 ChatInput 顶部能展示"接着说"横幅。
@@ -1836,13 +1961,16 @@ export function ChatPanel({
     } else {
       setPendingContinuation(null)
     }
+    // 生成已与客户端连接解耦:断连不再等于停止,必须显式通知服务端中止,
+    // 否则这一轮会在后台继续跑完并覆盖用户已经停下的半截内容。
+    // 不 await:停止要立刻反馈,让请求在后台送达即可。
+    userStoppedAtRef.current = Date.now()
+    const convId = conversationIdRef.current
+    if (convId) {
+      fetch(`/api/conversations/${convId}/finalize-draft`, { method: 'POST' }).catch(() => {})
+    }
     if (remoteStreamingId) {
-      // A 流式恢复: 轮询续显期间没有活动流可 abort,
-      // 改为请求服务端定格草稿行,并立即停止本地轮询
-      const convId = conversationIdRef.current
-      if (convId) {
-        fetch(`/api/conversations/${convId}/finalize-draft`, { method: 'POST' }).catch(() => {})
-      }
+      // A 流式恢复: 轮询续显期间没有本地流可 abort,通知服务端后立即收口轮询
       setRemoteStreamingId(null)
       return
     }
@@ -1862,9 +1990,10 @@ export function ChatPanel({
     const tail = pending.text.slice(-200).replace(/\s+/g, ' ').trim()
     const prompt = `接着你刚才未完成的内容继续输出，从"${tail.slice(-50)}"之后开始。不要重复之前已经写过的部分。`
     attachmentsRef.current = undefined
+    handleScrollToBottom()
     sendMessage({ text: prompt })
     setPendingContinuation(null)
-  }, [pendingContinuation, sendMessage, setPendingContinuation])
+  }, [pendingContinuation, sendMessage, setPendingContinuation, handleScrollToBottom])
 
   const dismissContinuation = useCallback(() => {
     setPendingContinuation(null)
@@ -1895,6 +2024,15 @@ export function ChatPanel({
     localStorage.setItem(DEEP_THINK_STORAGE_KEY, String(enabled))
   }, [])
 
+  // 学习模式下若当前模型已不在下拉里(没配 Key / 公共池下线 / 本地存的上一个模型),
+  // 切到第一个可用模型——否则 select 显示的和请求实际用的会对不上,发消息直接报配置缺失
+  useEffect(() => {
+    if (!studyMode || !providerKeysQuery.data) return
+    if (studyModels.some((m) => m.id === currentModel)) return
+    const fallback = studyModels[0]?.id
+    if (fallback) handleModelChange(fallback)
+  }, [studyMode, providerKeysQuery.data, studyModels, currentModel, handleModelChange])
+
   const handleWebSearchChange = useCallback((enabled: boolean) => {
     setWebSearch(enabled)
     localStorage.setItem(WEB_SEARCH_STORAGE_KEY, String(enabled))
@@ -1907,15 +2045,15 @@ export function ChatPanel({
 
   const handleRetry = useCallback(() => {
     clearError()
+    handleScrollToBottom()
     regenerate()
-  }, [clearError, regenerate])
+  }, [clearError, regenerate, handleScrollToBottom])
 
   // 切换/清除面具:同步 store;已有会话时持久化到 DB。
   // 不写 localStorage —— 新对话默认不带面具,避免上次的面具被"记忆"延续
   const handleMaskChange = useCallback(
     (maskId: string | null) => {
       setConversationMaskId(maskId)
-      setMaskPickerOpen(false)
       const convId = conversationIdRef.current
       if (convId) {
         fetch(`/api/conversations/${convId}`, {
@@ -1938,8 +2076,21 @@ export function ChatPanel({
 
   const handleRegenerate = useCallback(() => {
     clearError()
+    handleScrollToBottom()
     regenerate()
-  }, [clearError, regenerate])
+  }, [clearError, regenerate, handleScrollToBottom])
+
+  /** 收藏状态回写消息数组:虚拟列表淘汰重挂载后星标仍保持已收藏 */
+  const handleFavoriteChange = useCallback(
+    (messageId: string, favoriteId: string | null) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId ? ({ ...m, favoriteId } as UIMessage) : m
+        )
+      )
+    },
+    [setMessages]
+  )
 
   const handleEditMessage = useCallback(
     async (messageId: string, newText: string) => {
@@ -2008,9 +2159,10 @@ export function ChatPanel({
 
       // C 分支轻量版: 新消息带 editedFrom 指向被编辑消息(真实数据库 id),服务端落库后
       // MessageBubble 据此显示"查看历史版本"回看入口
+      handleScrollToBottom()
       sendMessage({ text: newText, metadata: { editedFrom: editedFromId } })
     },
-    [setMessages, sendMessage, armPendingAttachments]
+    [setMessages, sendMessage, armPendingAttachments, handleScrollToBottom]
   )
 
   const errorInfo = useMemo(
@@ -2054,6 +2206,51 @@ export function ChatPanel({
   const profileProbeWelcome = <ProfileProbe lastUserText={lastUserText} disabled={studyMode} />
   const profileProbe = <ProfileProbe lastUserText={lastUserText} disabled={studyMode} allowPromo={false} />
 
+  if (studyMode) {
+    return (
+      <StudyRoom
+        messages={messages}
+        conversationId={conversationId ?? null}
+        isLoading={isLoading}
+        isPending={status === 'submitted'}
+        completedReply={studyCompletedReply}
+        onSend={(text, attachments, approach, action) => {
+          studyApproachRef.current = approach
+          handleSend(text, attachments, action)
+        }}
+        onStop={handleStop}
+        messageActions={{
+          onRegenerate: handleRegenerate,
+          onFavoriteChange: handleFavoriteChange,
+          onClarifySubmit: handleSend,
+          onLocalFileDecision: handleLocalFileDecision,
+          onOpenEditor: handleOpenEditor,
+        }}
+        error={errorBanner()}
+        tools={studyTools}
+        settings={(
+          <>
+            <ModelSelector
+              models={studyModels}
+              selectedModel={currentModel}
+              onModelChange={handleModelChange}
+              triggerClassName="min-h-11 max-w-full rounded-lg border border-line bg-surface px-3 text-sm"
+            />
+            <button type="button" aria-pressed={deepThink} disabled={isLoading} onClick={() => handleDeepThinkChange(!deepThink)} className="rounded-lg border border-line px-3 text-sm text-content-secondary">
+              深度思考{deepThink ? ' · 开' : ' · 关'}
+            </button>
+          </>
+        )}
+        continuation={pendingContinuation ? (
+          <div className="flex items-center gap-3 py-3 text-sm">
+            <button type="button" disabled={isLoading} onClick={handleContinue} className="min-h-11 rounded-lg border border-line px-4">接着未完成的讲解</button>
+            <button type="button" onClick={dismissContinuation} className="min-h-11 px-3 text-content-secondary">忽略</button>
+          </div>
+        ) : null}
+      />
+    )
+  }
+
   // 对比模式: 渲染并排泳道视图(key 确保模型列表变化时重建泳道)
   if (compareMode) {
     return (
@@ -2084,58 +2281,18 @@ export function ChatPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0">
+    /* data-chat-state: 壁纸主题据此区分两张脸 —— 欢迎页(照片尽兴)与对话页(加厚纸),
+       规则在 globals.css「主题: 壁纸」段。空消息 = 欢迎页;首条消息落地即转 thread */
+    <div className="flex h-full min-h-0" data-chat-state={messages.length === 0 ? 'welcome' : 'thread'}>
       <div className="flex flex-col h-full min-w-0 flex-1 relative overflow-hidden">
 
       {/* Error banner —— 仅欢迎态按列顶常规排布(此时没有消息流可推挤);
           会话态改浮在消息区下缘，见下方 relative wrapper */}
       {messages.length === 0 && errorBanner()}
 
-      {/* Mask bar - 当前生效的面具 chip(仅对话态;欢迎态由输入框下方胶囊行承担入口),点击弹出切换面板 */}
-      {activeMask && messages.length > 0 && (
-        // data-tauri-drag-region:客户端下这一行本身就是空白带(chip 只占左侧一小块),
-        // 整行挂拖动区 → 除 chip 与其弹层外的区域都能抓窗(chat 顶部好抓手 +1)。
-        // 注意只挂属性不写 -webkit-app-region,避免子元素继承拖拽区把弹层点击吃掉。
-        // max-md:hidden:trial 原型定稿——手机端此 chip 与悬浮圆钮(← ☰/⚙)位置重叠,
-        // 面具入口已收进输入框 ⋯「面具」行(带当前面具名),此处整行下线
-        <div className="px-4 pt-2 max-md:hidden" data-tauri-drag-region="">
-          <div className="relative inline-block">
-            <button
-              ref={headerMaskMenu.triggerRef}
-              onClick={() => setMaskPickerOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs
-                bg-surface-subtle text-content-secondary border border-line
-                hover:bg-surface-muted transition-colors"
-              title="当前面具,点击切换"
-            >
-              <span aria-hidden>{activeMask.avatar}</span>
-              <span>{activeMask.name}</span>
-            </button>
-            {maskPickerOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setMaskPickerOpen(false)} />
-                <div
-                  className="absolute left-0 top-full mt-1.5 z-50 w-64 flex flex-col overflow-hidden
-                    rounded-xl border border-line bg-surface shadow-lg"
-                  style={{ maxHeight: headerMaskMenu.maxHeight }}
-                  role="menu"
-                >
-                  <MaskPickerMenu
-                    activeMaskId={activeMask.id}
-                    userMasks={userMasks}
-                    onSelect={handleMaskChange}
-                    onManage={() => { setSettingsSection('masks'); setSettingsOpen(true); setMaskPickerOpen(false) }}
-                    onClear={() => handleMaskChange(null)}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Messages area 或 欢迎态输入区(messages.length === 0 时由 ChatInput 自己居中渲染) */}
       {messages.length === 0 ? (
+        <>
         <ChatInput
           variant="welcome"
           welcomeBanner={profileProbeWelcome}
@@ -2167,28 +2324,22 @@ export function ChatPanel({
                下边距被钉死 → 自由空间全给上边距,整块沉到底。
                分隔由 auto 边距负责;variant 类在 Tailwind 里排在无修饰类之后,所以能压住 mb-8(桌面仍走 mb-8) */
             <div className="text-center mb-8 max-md:mt-auto max-md:mb-auto">
-              <h2
-                className="m-hero-title text-content-primary text-[24px] md:text-[32px] max-md:text-[28px] font-thin leading-[1.2] tracking-[0.02em]"
-                style={{
-                  fontFamily: "'PingFang SC', 'PingFang SC Sub', 'Microsoft YaHei UI', -apple-system, BlinkMacSystemFont, sans-serif",
-                }}
-              >
-                {/* 主题问候: 六选一,由 配色 + 明暗 走 CSS 门控,不做日期/时段检测 ——
-                    换回黑白基线即恢复原问候语。常规版挂 .base-only(格子下另有专属
-                    文案),不用 .no-fest —— 后者在格子下仍然可见,会给登录页标语复用。
-                    注意 .grid-night 是**暮色**的历史错名,晚上那版叫 .grid-nightfall */}
-                <span className="base-only">{getGreeting()}，今天能为你做些什么？</span>
-                <span className="fest-night">中秋快乐，今夜月色正圆</span>
-                <span className="grid-dawn">天亮了，今天想做点什么？</span>
-                <span className="grid-day">日头正好，今天想做点什么？</span>
-                <span className="grid-night">暮色四合，今天想做点什么？</span>
-                <span className="grid-nightfall">夜深了，今天想做点什么？</span>
-              </h2>
+              {/* 品牌 logo 取代问候语: 深浅色两张,与认证页 mark.png / mark-invert.png 同套路 */}
+              <img
+                src="/brand/signature.png"
+                alt="aichatt"
+                className="mx-auto h-12 w-auto md:h-14 dark:hidden"
+              />
+              <img
+                src="/brand/signature-invert.png"
+                alt=""
+                aria-hidden
+                className="mx-auto hidden h-12 w-auto md:h-14 dark:block"
+              />
               {/* 副标题: 日期 + 当前模型,给问候语增加层次
                   方案 C 手机端:模型名升级为玻璃胶囊(点击弹半屏快切),普通文本仅桌面显示 */}
               <p className="m-hero-sub mt-3 text-xs text-content-muted tracking-wide">
                 {getDateLine()}
-                <span className="fest-only fest-tag"> · 中秋</span>
                 <span className="grid-dawn fest-tag"> · 日出</span>
                 <span className="grid-day fest-tag"> · 正午</span>
                 <span className="grid-night fest-tag"> · 暮色</span>
@@ -2201,6 +2352,10 @@ export function ChatPanel({
             </div>
           )}
         />
+        {/* Google 2020 移动端底部导航(M2):只挂欢迎页,与预览稿 data-scene 门控一致;
+            组件内部自带 uiStyle/ephemeral 判断,bigsur/classic 渲染 null */}
+        <GoogleMobileNav />
+        </>
       ) : (
         <>
           {/* relative wrapper: "回到底部"按钮需要相对消息区(而非滚动内容)定位,
@@ -2228,6 +2383,7 @@ export function ChatPanel({
                   scrollElement={messagesScrollEl}
                   onRegenerate={handleRegenerate}
                   onEditMessage={handleEditMessage}
+                  onFavoriteChange={handleFavoriteChange}
                   onClarifySubmit={handleSend}
                   onLocalFileDecision={handleLocalFileDecision}
                   onOpenEditor={handleOpenEditor}
@@ -2236,6 +2392,7 @@ export function ChatPanel({
                   earlierLoading={earlierLoading}
                   restoreAnchor={restoreAnchor}
                   onLoadEarlier={onLoadEarlier ? () => void handleLoadEarlier() : undefined}
+                  onNavigate={detachScroll}
                 />
                 {/* 资料面板占住右墙时,刻度列不隐藏,只按面板实际宽度整体左移;
                     drawer 打开时右墙由 fixed 抽屉接管,刻度列才撤下 */}
@@ -2243,6 +2400,7 @@ export function ChatPanel({
                   <OutlineSidebar
                     messages={messages}
                     scrollContainer={messagesScrollEl}
+                    onNavigate={detachScroll}
                     rightOffset={
                       infoSlotOccupied ? (infoPanelOpen ? INFO_PANEL_WIDTH : INFO_TAB_WIDTH) : 0
                     }
@@ -2256,7 +2414,7 @@ export function ChatPanel({
                 onClick={handleScrollToBottom}
                 aria-label="回到底部"
                 title="回到底部"
-                className="absolute bottom-4 right-5 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-line bg-surface text-content-secondary shadow-sm transition-colors hover:bg-surface-subtle hover:text-content-primary"
+                className="absolute bottom-4 right-5 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-surface text-content-secondary shadow-[0_1px_2px_rgb(0_0_0/0.05),0_6px_14px_-8px_rgb(0_0_0/0.18)] dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_8px_18px_-10px_rgb(0_0_0/0.65)] transition-colors hover:bg-surface-subtle hover:text-content-primary"
               >
                 <ChevronDown className="h-4 w-4" />
               </button>

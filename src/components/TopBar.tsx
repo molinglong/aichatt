@@ -1,6 +1,6 @@
 'use client'
 
-import { Menu, FileCode2, Keyboard, MessageSquarePlus, MessagesSquare, FolderTree, Settings as SettingsIcon } from 'lucide-react'
+import { Menu, ArrowLeft, FileCode2, Keyboard, MessageSquarePlus, MessagesSquare, FolderTree, Search, Settings as SettingsIcon } from 'lucide-react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useChatStore } from '@/store/chat-store'
 import { useEffect, useState, useCallback } from 'react'
@@ -12,6 +12,82 @@ import { prefetchTabData as prefetchTabDataShared } from '@/lib/query/prefetchTa
 // 「对话资料」面板占位宽:让位量与 ChatPanel/OutlineSidebar 共用同一组常量(单一事实源)
 import { INFO_PANEL_WIDTH, INFO_TAB_WIDTH } from './chat/InfoAsidePanel'
 import { useIsComputerMode } from '@/hooks/useIsComputerMode'
+import { useUiStyle } from '@/hooks/useUiStyle'
+import type { UiStyle } from '@/lib/theme'
+
+/**
+ * ≥md 顶栏外壳(模块级:函数身份稳定,不会每次渲染重挂按钮组/快捷键弹层)。
+ * 2026-10-25 用户定案:Big Sur 与经典两套外观**互相独立**,不合并 ——
+ *   bigsur = 停靠式通铺条: 左标题 + 右裸按钮组,无底板,让位走 paddingRight
+ *   classic = 原版悬浮胶囊簇: 右上角圆角玻璃胶囊,让位走 right
+ * 按钮组(children)两边共用同一份 JSX;Tauri 拖拽区:bigsur 跟按钮组,classic 跟胶囊。
+ */
+function TopbarShell(props: {
+  uiStyle: UiStyle
+  title: string
+  offset: string | undefined
+  dragProps: Record<string, unknown>
+  onSearch: () => void
+  children: React.ReactNode
+}) {
+  if (props.uiStyle === 'google') {
+    return (
+      <div className="topbar-google hidden h-14 flex-none relative z-40 items-center gap-5 px-5 md:flex">
+        <span className="w-[200px] shrink-0 truncate text-[19px] font-normal tracking-[-0.01em] text-content-primary select-none">
+          {props.title}
+        </span>
+        <button
+          type="button"
+          onClick={props.onSearch}
+          className="flex h-10 min-w-0 max-w-[460px] flex-1 items-center gap-2.5 rounded-lg bg-surface-subtle px-3 text-content-secondary transition-[background-color,box-shadow] duration-200 hover:bg-surface-muted focus-visible:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          aria-label="搜索聊天记录"
+          title="搜索聊天记录 (Ctrl+K)"
+        >
+          <Search className="h-4 w-4 shrink-0" />
+          <span className="flex-1 truncate text-left text-[13px]">搜索聊天记录</span>
+          <kbd className="hidden shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-content-muted lg:inline">
+            Ctrl K
+          </kbd>
+        </button>
+        <div className="topbar-actions ml-auto flex items-center gap-1" {...props.dragProps}>
+          {props.children}
+        </div>
+      </div>
+    )
+  }
+  if (props.uiStyle === 'bigsur') {
+    return (
+      <div
+        className={cn(
+          'topbar-strip hidden absolute top-0 inset-x-0 z-40 h-11 items-center justify-end gap-0.5 px-3 transition-[padding] duration-300 ease-out pointer-events-none md:flex'
+        )}
+        style={{ paddingRight: props.offset } as React.CSSProperties}
+      >
+        {/* 左:标题(纯展示,吃容器的 pointer-events-none,不挡消息区点击) */}
+        <span className="absolute left-4 top-0 h-full flex items-center text-sm font-medium text-content-secondary truncate max-w-[38%] select-none">
+          {props.title}
+        </span>
+        <div
+          className="topbar-actions flex items-center gap-0.5 pointer-events-auto"
+          {...props.dragProps}
+        >
+          {props.children}
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div
+      className={cn(
+        'topbar-float-pill hidden absolute top-3 z-40 items-center gap-0.5 p-[5px] border border-line rounded-full bg-surface-glass glass-blur shadow-sm transition-[right] duration-300 ease-out right-3 md:flex',
+      )}
+      style={{ right: props.offset } as React.CSSProperties}
+      {...props.dragProps}
+    >
+      {props.children}
+    </div>
+  )
+}
 
 // 快捷键提示表:与已实现行为一一对应(j/k 与 Enter 复制见 MessageList,搜索见 Sidebar)
 const HOTKEY_HINTS: ReadonlyArray<{ keys: string; desc: string }> = [
@@ -42,6 +118,7 @@ export function TopBar() {
   const currentConversationId = useChatStore((s) => s.currentConversationId)
   const bumpConversationVersion = useChatStore((s) => s.bumpConversationVersion)
   const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
+  const setSearchDialogOpen = useChatStore((s) => s.setSearchDialogOpen)
   // 写作画布面板打开时浮动工具簇同步让位(与 ChatPanel/WriteDocPanel 同宽同动画)
   const writePanelOpen = useChatStore((s) => s.writePanelDocId !== null)
   // 代码编辑器已是 Side Pane 的代码 tab([P1 改版]):不再各自占屏
@@ -93,7 +170,7 @@ export function TopBar() {
   const isExplorePage = pathname?.startsWith('/explore')
   const isStudyPage = pathname?.startsWith('/study')
   const isWritePage = pathname?.startsWith('/write')
-  const displayTitle = isImagesPage ? '生图工作台' : isExplorePage ? '观点探索' : isStudyPage ? '错题本' : isWritePage ? '写作画布' : (title || '新对话')
+  const displayTitle = isImagesPage ? '生图工作台' : isExplorePage ? '观点探索' : isStudyPage ? '学习模式' : isWritePage ? '写作画布' : (title || '新对话')
 
   /**
    * 「在新对话继续」:把当前对话(含所有上下文消息)用 LLM 压缩成结构化摘要,
@@ -161,6 +238,16 @@ export function TopBar() {
       }
     : {}
 
+  // 样式维度:两套顶栏 DOM 独立(见 TopbarShell),按钮组共用
+  const uiStyle = useUiStyle()
+  const actionOffset = inTauri && workMode && !writePanelOpen && !previewOpen
+    ? `${sidePaneWidth + 12}px`
+    : writePanelOpen || previewOpen
+      ? 'calc(min(46vw, 720px) + 12px)'
+      : infoSlotOccupied
+        ? `${infoRightOffset}px`
+        : undefined
+
   return (
     <>
       {/* ── ≥md 窗口拖动带(仅客户端):顶栏带下沉后内容区顶部没有抓手,
@@ -178,6 +265,45 @@ export function TopBar() {
           data-tauri-drag-region=""
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
+      )}
+
+      {/* ── Google 2020 移动顶栏: 固定 56px 白底 + 分割线(替代浮动圆钮) */}
+      {uiStyle === 'google' && !isStudyPage && (
+        <header
+          className="flex shrink-0 items-center gap-1 border-b border-line bg-surface px-2 md:hidden"
+          style={{ paddingTop: 'var(--sat)' }}
+        >
+          <button
+            onClick={() => {
+              if (pathname?.startsWith('/chat/c/')) router.push('/chat')
+              else toggleSidebar()
+            }}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-content-secondary transition-colors hover:bg-surface-muted"
+            aria-label={pathname?.startsWith('/chat/c/') ? '返回' : '打开侧边栏'}
+            title={pathname?.startsWith('/chat/c/') ? '返回' : '打开侧边栏'}
+          >
+            {pathname?.startsWith('/chat/c/') ? <ArrowLeft className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          </button>
+          <span className="min-w-0 flex-1 truncate px-1 text-[20px] font-normal tracking-[-0.01em] text-content-primary">
+            {displayTitle}
+          </span>
+          <button
+            onClick={() => setSearchDialogOpen(true)}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-content-secondary transition-colors hover:bg-surface-muted"
+            aria-label="搜索聊天记录"
+            title="搜索聊天记录"
+          >
+            <Search className="h-5 w-5" />
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-content-secondary transition-colors hover:bg-surface-muted"
+            aria-label="设置"
+            title="设置"
+          >
+            <SettingsIcon className="h-5 w-5" />
+          </button>
+        </header>
       )}
 
       {/* ── <md 移动端顶栏带(方案 C 起停用):汉堡+标题+设置已由悬浮圆钮
@@ -222,7 +348,7 @@ export function TopBar() {
                 aria-selected={!workMode}
                 onClick={() => setWorkMode(false)}
                 className={cn(
-                  'flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 touch-manipulation',
+                  'flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition duration-150 touch-manipulation',
                   !workMode
                     ? 'bg-surface text-content-primary shadow-sm'
                     : 'text-content-secondary hover:text-content-primary active:scale-95'
@@ -237,7 +363,7 @@ export function TopBar() {
                 aria-selected={workMode}
                 onClick={() => setWorkMode(true)}
                 className={cn(
-                  'flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 touch-manipulation',
+                  'flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition duration-150 touch-manipulation',
                   workMode
                     ? 'bg-surface text-content-primary shadow-sm'
                     : 'text-content-secondary hover:text-content-primary active:scale-95'
@@ -257,7 +383,7 @@ export function TopBar() {
           {/* 设置入口:正常模式打开完整设置;临时模式打开精简版(仅通用/帮助/关于) */}
           <button
             onClick={() => setSettingsOpen(true)}
-            className="shrink-0 inline-flex items-center justify-center p-2 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-all duration-150 active:scale-95 touch-manipulation"
+            className="shrink-0 inline-flex items-center justify-center p-2 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition duration-150 active:scale-95 touch-manipulation"
             aria-label="设置"
             title="设置"
             style={{ WebkitTapHighlightColor: 'transparent' }}
@@ -267,27 +393,18 @@ export function TopBar() {
         </div>
       </header>
 
-      {/* ── ≥md 浮动工具簇(T-C):顶栏带下线后,工具浮在内容区右上 ──
-          CAP 胶囊化(2026-09-29 拍板):给既有包围盒显形 —— 1px 描边 + 5px 内边距 = 原 6px,
-          外框仍是 94×38、三键坐标零位移;边距 12/12,让位量上再叠加常量
-          [P1]right 跟随 Side Pane 实际宽度(可拖拽);「对话资料」面板在场时按面板占位宽让位
-          (292 / 40 —— 面板占多大就退多远,外加自己那份 12px);覆盖层打开时退回各自让位宽度 */}
-      <div
-        className={cn(
-          'hidden md:flex absolute top-3 z-40 items-center gap-0.5 p-[5px] border border-line rounded-full bg-surface-glass glass-blur shadow-sm transition-[right] duration-300 ease-out right-3'
-        )}
-        style={
-          {
-            right: inTauri && workMode && !writePanelOpen && !previewOpen
-              ? `${sidePaneWidth + 12}px`
-              : writePanelOpen || previewOpen
-                ? 'calc(min(46vw, 720px) + 12px)'
-                : infoSlotOccupied
-                  ? `${infoRightOffset}px`
-                  : undefined,
-          } as React.CSSProperties
-        }
-        {...dragProps}
+      {/* ── ≥md 顶栏(2026-10-25 定案:两套样式各自独立的 DOM,见 TopbarShell)──
+          bigsur = 停靠式通铺条(左标题+右裸按钮组,内容纸左上圆角从灰带缺口露出);
+          classic = 原版右上角悬浮胶囊簇。让位量:面板/资料卡在场时左移,语义同旧版。
+          错题本(/study)有自己的 StudyRoom 头部,整块不渲染 —— 顶栏 DOM 若在,
+          :has(.topbar-strip) 会照常命中,给错题本强加灰带/让位/圆角纸(2026-10-26 踩坑) */}
+      {!isStudyPage && (
+      <TopbarShell
+        uiStyle={uiStyle}
+        title={displayTitle}
+        offset={actionOffset}
+        dragProps={dragProps}
+        onSearch={() => setSearchDialogOpen(true)}
       >
         {/* 聊天 / 工作 模式开关(仅桌面客户端)已下沉到侧边栏「聊天」导航之上;
             这里只剩移动端顶栏那一份(见上方 md:hidden 分支) */}
@@ -297,7 +414,7 @@ export function TopBar() {
             onClick={handleBranchConversation}
             disabled={isBranching}
             className={cn(
-              'inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-all duration-150 touch-manipulation shrink-0',
+              'inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition duration-150 touch-manipulation shrink-0',
               'text-content-secondary hover:text-content-primary hover:bg-surface-subtle active:scale-95',
               isBranching && 'opacity-60 cursor-wait'
             )}
@@ -313,7 +430,7 @@ export function TopBar() {
         {!writePanelOpen && (
           <button
             onClick={handleOpenCodePanel}
-            className="shrink-0 inline-flex items-center justify-center p-1.5 rounded-full text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-all duration-150 active:scale-95 touch-manipulation disabled:opacity-50"
+            className="shrink-0 inline-flex items-center justify-center p-1.5 rounded-full text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition duration-150 active:scale-95 touch-manipulation disabled:opacity-50"
             aria-label="代码编辑器"
             title="打开代码编辑器(写代码 / 让 AI 改代码)"
             style={{ WebkitTapHighlightColor: 'transparent', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -325,7 +442,7 @@ export function TopBar() {
         <div className={panelOpen ? 'hidden' : 'relative shrink-0'}>
           <button
             onClick={() => setHotkeysOpen((v) => !v)}
-            className="shrink-0 inline-flex items-center justify-center p-1.5 rounded-full text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-all duration-150 active:scale-95 touch-manipulation"
+            className="shrink-0 inline-flex items-center justify-center p-1.5 rounded-full text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition duration-150 active:scale-95 touch-manipulation"
             aria-label="键盘快捷键"
             title="键盘快捷键"
             aria-haspopup="dialog"
@@ -360,14 +477,15 @@ export function TopBar() {
         {/* 设置入口(与侧栏用户行齿轮同一个弹窗;临时模式下为精简版) */}
         <button
           onClick={() => setSettingsOpen(true)}
-          className="shrink-0 inline-flex items-center justify-center p-1.5 rounded-full text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-all duration-150 active:scale-95 touch-manipulation"
+          className="shrink-0 inline-flex items-center justify-center p-1.5 rounded-full text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition duration-150 active:scale-95 touch-manipulation"
           aria-label="设置"
           title="设置"
           style={{ WebkitTapHighlightColor: 'transparent' }}
         >
           <SettingsIcon className="w-3.5 h-3.5" />
         </button>
-      </div>
+      </TopbarShell>
+      )}
     </>
   )
 }

@@ -49,14 +49,6 @@ export function useBackgroundStreamWatcher() {
             if (latest?.role === 'assistant' && typeof latest.content === 'string' && latest.content.trim()) {
               void tauri.notifyReplyDone('AI 回复完成', latest.content)
             }
-            // 预约提醒的收口(安卓壳):这条是「切走的会话」完成路径,ChatPanel 早已
-            // 卸载、它那条下降沿撤不到这里,所以由本处代撤。还剩别的会话在生成时
-            // 不撤只重排 —— 同一个通知 id,重排是覆盖而非叠加,不会攒出一串闹钟。
-            if (Object.keys(useChatStore.getState().backgroundStreaming).length > 0) {
-              void tauri.armReplyReminder()
-            } else {
-              void tauri.cancelReplyReminder()
-            }
           }
         } catch {
           // 网络抖动:下个周期重试

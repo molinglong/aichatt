@@ -77,7 +77,7 @@ export function BuddySettingsPanel() {
       />
 
       {/* 面板内容 */}
-      <div className="relative w-full max-w-md max-h-[80vh] bg-surface border border-line rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative w-full max-w-md max-h-[80vh] bg-surface border border-line rounded-2xl shadow-2xl overflow-hidden enter-pop">
         {/* 头部 */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-line">
           <h2 className="text-lg font-semibold text-content-primary">搭子设置</h2>

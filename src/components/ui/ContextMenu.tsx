@@ -51,7 +51,10 @@ export function ContextMenuHost() {
   const y = useContextMenuStore((s) => s.y)
   const items = useContextMenuStore((s) => s.items)
   const header = useContextMenuStore((s) => s.header)
+  const menuSize = useContextMenuStore((s) => s.size)
   const closeContextMenu = useContextMenuStore((s) => s.closeContextMenu)
+  /** 手机端手指尺寸档:行更高、字更大、危险项常驻红色(触屏没有 hover) */
+  const comfortable = menuSize === 'comfortable'
 
   const menuRef = useRef<HTMLDivElement>(null)
   /** 长按模式:轮盘跟随准星,松手即结算(交互在 WheelMenu 内实现) */
@@ -337,9 +340,13 @@ export function ContextMenuHost() {
               runItem(item)
             }}
             className={cn(
-              'w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors',
+              'w-full flex items-center text-left transition-colors',
+              comfortable ? 'gap-3 px-3.5 py-2.5 text-[14px]' : 'gap-2 px-2.5 py-1.5 text-xs',
               'text-content-secondary hover:bg-surface-subtle hover:text-content-primary',
-              item.danger && 'hover:text-red-500 dark:hover:text-red-400',
+              item.danger &&
+                (comfortable
+                  ? 'text-red-500 dark:text-red-400'
+                  : 'hover:text-red-500 dark:hover:text-red-400'),
               item.disabled && 'opacity-40 cursor-not-allowed hover:bg-transparent'
             )}
           >
@@ -370,14 +377,15 @@ export function ContextMenuHost() {
       ref={menuRef}
       role="menu"
       data-context-menu
+      data-context-menu-size={menuSize}
       aria-label={header ?? '上下文菜单'}
       onKeyDown={handleMenuKeyDown}
       onMouseLeave={scheduleSubmenuClose}
       style={{ left: pos?.left ?? x, top: pos?.top ?? y }}
       className={cn(
         'context-menu-enter fixed z-[80] min-w-[160px] max-h-[70vh] overflow-y-auto',
-        'rounded-lg border border-line/60 bg-surface shadow-xl py-1 text-xs',
-        'origin-top-left'
+        'border border-line/60 bg-surface shadow-xl origin-top-left',
+        comfortable ? 'min-w-[204px] rounded-2xl py-1.5 text-[14px]' : 'rounded-lg py-1 text-xs'
       )}
     >
       {header && (

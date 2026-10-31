@@ -10,9 +10,11 @@ import { useInfiniteQuery, useQueryClient, useQuery, type InfiniteData } from '@
 import { NEW_CHAT_MASK_SIGNAL_KEY, useChatStore } from '@/store/chat-store'
 import { BUILTIN_MASKS } from '@/lib/ai/builtin-masks'
 import { resolveMaskBadge, type MaskDTO } from '@/lib/ai/mask-types'
+import { useInstalledMasks } from '@/hooks/useInstalledMasks'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
 import { useStartNewChat } from '@/hooks/useStartNewChat'
 import { useBackgroundStreamWatcher } from '@/hooks/useBackgroundStreamWatcher'
+import { useForegroundResume } from '@/hooks/useForegroundResume'
 // 暂时下线新消息提醒(如需恢复,连同下方调用一起取消注释)
 // import { useUnreadToastNotifier } from '@/hooks/useUnreadToastNotifier'
 import { useIsTauri } from '@/lib/tauri'
@@ -31,6 +33,8 @@ interface ConversationData {
   id: string
   title: string
   mode?: string
+  /** 学习模式会话:列表行据此跳 /study?c=id */
+  studyMode?: boolean
   maskId?: string | null
   updatedAt: string
 }
@@ -125,6 +129,11 @@ export function Sidebar() {
     queryFn: () => fetchJson<MaskDTO[]>('/api/masks'),
     staleTime: STALE.masks,
   })
+  // 面具面板已下载的内置面具，与自定义面具一起进「我的面具」
+  const { installedMasks } = useInstalledMasks()
+  // 已下载面具若已升入精选（策展调整），不再重复出现在「我的面具」
+  const curatedMaskIds = new Set(BUILTIN_MASKS.map((m) => m.id))
+  const myMasks = [...(userMasks ?? []), ...installedMasks.filter((m) => !curatedMaskIds.has(m.id))]
 
   // ── Infinite Query: conversation list ─────────────────────────
   // bumpConversationVersion() is called when a new conversation is
@@ -162,9 +171,17 @@ export function Sidebar() {
     queryClient.invalidateQueries({ queryKey: queryKeys.conversations.list(PAGE_SIZE, 0) })
   }, [conversationVersion, queryClient])
 
+  // 跨端回流:从后台切回来时刷一次列表,电脑上新开/聊过的会话排序与蓝点才跟得上
+  // (全局 refetchOnWindowFocus 是关的,这里只对会话列表这一项开口子)
+  useForegroundResume(() => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.conversations.list(PAGE_SIZE, 0) })
+  })
+
   const conversations: ConversationData[] = (data?.pages ?? []).flatMap((p) => p.items)
   const total = data?.pages?.[0]?.total ?? 0
-  const [searchOpen, setSearchOpen] = useState(false)
+  // 搜索弹层走全局开关：顶栏搜索框（Google 样式）与侧栏搜索钮共用
+  const searchOpen = useChatStore((s) => s.searchDialogOpen)
+  const setSearchOpen = useChatStore((s) => s.setSearchDialogOpen)
   // 面具选择菜单(仅在展开态渲染,折叠态点击先展开侧边栏)
   const [maskMenuOpen, setMaskMenuOpen] = useState(false)
   // 用户菜单(底部头像/用户行点击弹出:账号设置入口 + 退出登录)
@@ -487,7 +504,10 @@ export function Sidebar() {
           aside 本体在 <md 由 max-md:hidden 整体隐藏,桌面端(≥md)侧栏行为不变 */}
 
       {/* Sidebar */}
+      {/* data-collapsed: 样式维度用(Google 侧栏展开 256px / 折叠 48px),
+          只有展开态才允许 CSS 抬宽度,否则会压掉 md:w-12 的折叠轨道 */}
       <aside
+        data-collapsed={!sidebarEffectiveOpen ? '' : undefined}
         className={cn(
           // app-shell-sidebar: shell 层壁纸激活时由 globals.css :has 规则改半透明(毛玻璃透壁纸)
           // max-md:hidden: 方案 C 手机端侧栏改走全屏 V2 抽屉(MobileDrawer),旧 w-56 浮层整体下线
@@ -504,11 +524,11 @@ export function Sidebar() {
           // 铺在整个面板上而不是只铺会话列表容器 —— 否则列表顶边会多一条断层
           'bg-surface-muted glass-blur text-content-primary sidebar-panel',
           'rounded-xl border border-line/50 overflow-hidden',
-          'transition-transform duration-300 ease-in-out',
+          'transition-transform duration-slow ease-standard',
           'm-1.5',
           sidebarEffectiveOpen ? 'translate-x-0' : '-translate-x-full',
           // Tablets and above: always static (taking layout space)
-          'md:static md:z-auto md:inset-auto md:translate-x-0 md:m-1.5 md:transition-all',
+          'md:static md:z-auto md:inset-auto md:translate-x-0 md:m-1.5 md:transition-[width,transform,margin]',
           // Collapsed on desktop: shrink to a narrow icon bar
           !sidebarEffectiveOpen && 'md:w-12'
         )}
@@ -520,7 +540,7 @@ export function Sidebar() {
 
         <div
           className={cn(
-            'flex items-center pt-3 pb-1.5',
+            'sidebar-head flex items-center pt-3 pb-1.5',
             sidebarEffectiveOpen ? 'justify-between gap-2 px-3' : 'justify-center px-0'
           )}
           // 拖拽区两种状态都挂:折叠后顶栏带下线,侧栏头是窗口左上仅剩的拖拽点
@@ -538,19 +558,15 @@ export function Sidebar() {
           {inTauri && sidebarEffectiveOpen && <TrafficLights />}
           {sidebarEffectiveOpen ? (
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              {/* 品牌月相(F-4): 只在配色=月白·桂花金时显示 —— 该配色是月夜版,
-                  月符号与"格子/基线"的语境无关,由 .fest-night 整体隐藏,不占位、不留 gap */}
-              <span className="fest-night brand-moon" aria-hidden="true" />
-              {/* 品牌标记: 仅非月白·桂花金显示(该主题由月相承担品牌符号,故用 .no-fest 门控);
-                  深色模式换反白版图,不用 CSS filter 反相(会连红点一起翻色) */}
-              <img src="/brand/mark.png" alt="" aria-hidden className="no-fest w-4 shrink-0 dark:hidden" />
-              <img src="/brand/mark-invert.png" alt="" aria-hidden className="no-fest hidden w-4 shrink-0 dark:block" />
+              {/* 品牌标记: 深色模式换反白版图,不用 CSS filter 反相(会连红点一起翻色) */}
+              <img src="/brand/mark.png" alt="" aria-hidden className="w-4 shrink-0 dark:hidden" />
+              <img src="/brand/mark-invert.png" alt="" aria-hidden className="hidden w-4 shrink-0 dark:block" />
               <h1 className="text-base font-semibold tracking-tight truncate">aichatt</h1>
             </div>
           ) : (
             <button
               onClick={toggleSidebar}
-              className="p-1 rounded-md hover:bg-surface-subtle transition-all active:scale-95 touch-manipulation"
+              className="p-1 rounded-md hover:bg-surface-subtle transition active:scale-95 touch-manipulation"
               aria-label="展开侧边栏"
               title="展开侧边栏"
               style={{ WebkitTapHighlightColor: 'transparent', WebkitAppRegion: 'no-drag' } as CSSProperties}
@@ -561,7 +577,7 @@ export function Sidebar() {
           {sidebarEffectiveOpen && (
             <button
               onClick={toggleSidebar}
-              className="p-1 rounded-md hover:bg-surface-subtle transition-all active:scale-95 touch-manipulation"
+              className="p-1 rounded-md hover:bg-surface-subtle transition active:scale-95 touch-manipulation"
               aria-label="收起侧边栏"
               title="收起侧边栏"
               style={{ WebkitTapHighlightColor: 'transparent', WebkitAppRegion: 'no-drag' } as CSSProperties}
@@ -605,7 +621,7 @@ export function Sidebar() {
           <div className="flex flex-col items-center gap-1 pt-2">
             <button
               onClick={handleNewConversation}
-              className="p-2 rounded-lg text-content-secondary hover:text-content-primary hover:bg-surface-subtle/60 transition-all active:scale-95 touch-manipulation"
+              className="p-2 rounded-lg text-content-secondary hover:text-content-primary hover:bg-surface-subtle/60 transition active:scale-95 touch-manipulation"
               aria-label="新对话"
               title="新对话"
               style={{ WebkitTapHighlightColor: 'transparent' }}
@@ -614,7 +630,7 @@ export function Sidebar() {
             </button>
             <button
               onClick={handleMaskButtonInCollapsed}
-              className="p-2 rounded-lg text-content-secondary hover:text-content-primary hover:bg-surface-subtle/60 transition-all active:scale-95 touch-manipulation"
+              className="p-2 rounded-lg text-content-secondary hover:text-content-primary hover:bg-surface-subtle/60 transition active:scale-95 touch-manipulation"
               aria-label="用面具开新对话"
               title="用面具开新对话"
               style={{ WebkitTapHighlightColor: 'transparent' }}
@@ -623,7 +639,7 @@ export function Sidebar() {
             </button>
             <button
               onClick={() => setSearchOpen(true)}
-              className="p-2 rounded-lg text-content-secondary hover:text-content-primary hover:bg-surface-subtle/60 transition-all active:scale-95 touch-manipulation"
+              className="p-2 rounded-lg text-content-secondary hover:text-content-primary hover:bg-surface-subtle/60 transition active:scale-95 touch-manipulation"
               aria-label="搜索聊天记录"
               title="搜索 (⌘K / Ctrl+K)"
               style={{ WebkitTapHighlightColor: 'transparent' }}
@@ -642,26 +658,13 @@ export function Sidebar() {
                   h-8 与原 py-1.5 算出来的 32px 等高,加边框不会撑高这一行 */}
               <button
                 onClick={handleNewConversation}
-                className="flex-1 flex h-8 items-center justify-start gap-1.5 px-3 rounded-lg text-sm font-medium
+                className="sidebar-new-chat flex-1 flex h-8 items-center justify-start gap-1.5 px-3 rounded-lg text-sm font-medium
                   border border-line/40 bg-surface-muted/60 text-content-primary
-                  hover:bg-surface-subtle transition-all active:scale-[0.98] touch-manipulation"
+                  hover:bg-surface-subtle transition active:scale-[0.98] touch-manipulation"
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <Plus className="w-3.5 h-3.5" />
                 新对话
-              </button>
-              <button
-                onClick={() => setMaskMenuOpen((v) => !v)}
-                className={`flex h-8 items-center justify-center px-2 rounded-lg border border-line/40 transition-all active:scale-[0.98] touch-manipulation
-                  ${maskMenuOpen || conversationMaskId
-                    ? 'bg-surface-subtle text-content-primary'
-                    : 'bg-surface-muted/60 text-content-secondary hover:bg-surface-subtle hover:text-content-primary'}`}
-                aria-label="用面具开新对话"
-                title="用面具开新对话"
-                aria-expanded={maskMenuOpen}
-                style={{ WebkitTapHighlightColor: 'transparent' }}
-              >
-                <VenetianMask className="w-3.5 h-3.5" />
               </button>
             </div>
 
@@ -692,12 +695,12 @@ export function Sidebar() {
                       </span>
                     </button>
                   ))}
-                  {(userMasks?.length ?? 0) > 0 && (
+                  {myMasks.length > 0 && (
                     <>
                       <div className="px-3 pt-2 pb-1 text-[10px] font-medium text-content-muted/70 uppercase tracking-wide">
                         我的面具
                       </div>
-                      {(userMasks ?? []).map((m) => (
+                      {myMasks.map((m) => (
                         <button
                           key={m.id}
                           onClick={() => handleSelectMask(m.id)}
@@ -760,7 +763,7 @@ export function Sidebar() {
               {total > 0 && !manageMode && (
                 <button
                   onClick={() => setManageMode(true)}
-                  className="p-0.5 rounded-md text-content-muted/70 hover:text-content-primary hover:bg-surface-subtle transition-all active:scale-95 touch-manipulation"
+                  className="p-0.5 rounded-md text-content-muted/70 hover:text-content-primary hover:bg-surface-subtle transition active:scale-95 touch-manipulation"
                   aria-label="批量管理对话"
                   title="批量管理"
                   style={{ WebkitTapHighlightColor: 'transparent' }}
@@ -770,7 +773,7 @@ export function Sidebar() {
               )}
               <button
                 onClick={() => setSearchOpen(true)}
-                className="p-0.5 -mr-1 rounded-md text-content-muted/70 hover:text-content-primary hover:bg-surface-subtle transition-all active:scale-95"
+                className="p-0.5 -mr-1 rounded-md text-content-muted/70 hover:text-content-primary hover:bg-surface-subtle transition active:scale-95"
                 aria-label="搜索聊天记录"
                 title="搜索 (⌘K / Ctrl+K)"
               >
@@ -801,6 +804,7 @@ export function Sidebar() {
                         id={conv.id}
                         title={conv.title}
                         mode={conv.mode}
+                        studyMode={conv.studyMode}
                         maskAvatar={badge?.avatar}
                         maskName={badge?.name}
                         index={index}
@@ -909,7 +913,7 @@ export function Sidebar() {
             {!isEphemeral && (
               <button
                 onClick={() => { setUserMenuOpen(false); setSettingsOpen(true) }}
-                className="shrink-0 p-1.5 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-all active:scale-95 touch-manipulation"
+                className="shrink-0 p-1.5 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition active:scale-95 touch-manipulation"
                 aria-label="设置"
                 title="设置"
                 style={{ WebkitTapHighlightColor: 'transparent' }}
@@ -982,7 +986,7 @@ export function Sidebar() {
           <div className="mt-auto pt-1 pb-2 px-0 border-t border-line/40 flex flex-col items-center">
             <button
               onClick={handleAvatarInCollapsed}
-              className="rounded-full transition-all active:scale-95 touch-manipulation"
+              className="rounded-full transition active:scale-95 touch-manipulation"
               aria-label="展开侧边栏并打开账号菜单"
               title="账号"
               style={{ WebkitTapHighlightColor: 'transparent' }}

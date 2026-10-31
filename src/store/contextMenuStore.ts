@@ -28,6 +28,14 @@ export interface ContextMenuItem {
   onSelect?: () => void
 }
 
+/**
+ * 菜单尺寸档:
+ * - compact(默认):桌面右键/代码块等,12px 紧凑行
+ * - comfortable:手机端手指操作(抽屉历史行长按),14px 文本、40px 行高、圆角 2xl,
+ *   危险项常驻红色(触屏没有 hover,不能靠 hover 才变红)
+ */
+export type ContextMenuSize = 'compact' | 'comfortable'
+
 interface ContextMenuState {
   open: boolean
   x: number
@@ -35,7 +43,13 @@ interface ContextMenuState {
   items: ContextMenuItem[]
   /** 菜单顶部说明行(如代码块的语言名),可选 */
   header?: string
-  openContextMenu: (pos: { x: number; y: number }, items: ContextMenuItem[], header?: string) => void
+  size: ContextMenuSize
+  openContextMenu: (
+    pos: { x: number; y: number },
+    items: ContextMenuItem[],
+    header?: string,
+    opts?: { size?: ContextMenuSize }
+  ) => void
   closeContextMenu: () => void
 }
 
@@ -47,11 +61,12 @@ const storeInitializer: StateCreator<ContextMenuState> = (set) => ({
   y: 0,
   items: [],
   header: undefined,
-  openContextMenu: (pos, items, header) => {
+  size: 'compact',
+  openContextMenu: (pos, items, header, opts) => {
     // 触感:菜单弹出瞬间一次轻震。这里仍在手势调用栈内(click/touchend),
     // 满足 Web Vibration API 的用户激活要求;桌面指针下 haptic 内部直接跳过
     haptic('light')
-    set({ open: true, x: pos.x, y: pos.y, items, header })
+    set({ open: true, x: pos.x, y: pos.y, items, header, size: opts?.size ?? 'compact' })
   },
   closeContextMenu: () => set({ open: false, items: [], header: undefined }),
 })

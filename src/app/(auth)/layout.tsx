@@ -3,12 +3,6 @@
    右栏：白底表单区，由 login/register 页面填充 children ── */
 import { AuthTrafficBar } from '@/components/AuthTrafficBar'
 
-/** 月夜版星点坐标(百分比,定稿自 preview-midautumn-themes F-5) */
-const NIGHT_STARS: [number, number][] = [
-  [8, 18], [14, 66], [22, 34], [31, 82], [38, 12], [47, 58],
-  [56, 26], [63, 74], [71, 44], [78, 16], [85, 60], [92, 30],
-]
-
 export default function AuthLayout({
   children,
 }: {
@@ -18,22 +12,10 @@ export default function AuthLayout({
     <div className="relative flex min-h-screen">
       {/* Tauri 桌面：红绿灯 + 窗口拖动区（Web 端由 .tauri-only 门控隐藏，零渲染） */}
       <AuthTrafficBar />
-      {/* ── 左栏：品牌区（移动端隐藏）──
-          .auth-brand 是中秋月夜版(F-5)的挂载点: 配色=月白·桂花金时由
-          globals.css 覆盖本栏 token 与渐变(固定深色),栏内 token 类自动跟随 */}
+      {/* ── 左栏：品牌区（移动端隐藏）── */}
       <div className="auth-brand relative hidden w-[55%] flex-col justify-between overflow-hidden bg-gradient-to-br from-[#f0f0f3] to-[#e2e2e7] px-[52px] py-11 dark:from-[#1a1a1d] dark:to-[#232327] lg:flex">
         {/* 点阵背景（纯装饰，整面均匀铺满） */}
         <div aria-hidden className="auth-dot-grid" />
-
-        {/* 中秋 · 月夜层：月盘 + 星点（仅配色=月白·桂花金时可见,由 .fest-only 门控） */}
-        <div aria-hidden className="fest-only auth-night-layer">
-          <div className="auth-night-stars">
-            {NIGHT_STARS.map(([x, y]) => (
-              <i key={`${x}-${y}`} style={{ left: `${x}%`, top: `${y}%` }} />
-            ))}
-          </div>
-          <div className="auth-night-moon" />
-        </div>
 
         {/* 顶部 Logo：品牌标记嵌圆徽标；深色模式换反白版图（红点保持原色） */}
         <div className="auth-reveal auth-delay-1 relative z-10 flex items-center gap-[11px]">
@@ -46,31 +28,17 @@ export default function AuthLayout({
           </span>
         </div>
 
-        {/* 中部标语 + 药丸（中秋月夜版换一套文案，二选一由配色决定） */}
+        {/* 中部标语 + 药丸 */}
         <div className="relative z-10">
           <h1 className="font-ultra auth-reveal auth-delay-2 text-[clamp(34px,4.6vw,52px)] leading-[1.28] tracking-[0.1em] text-content-primary">
-            <span className="no-fest">
-              让每一次对话
-              <br />
-              都恰到好处
-            </span>
-            <span className="fest-only">
-              月色所至
-              <br />
-              思路所及
-            </span>
+            让每一次对话
+            <br />
+            都恰到好处
           </h1>
           <p className="auth-reveal auth-delay-3 mt-[22px] text-[14.5px] leading-[1.9] tracking-[0.04em] text-content-secondary">
-            <span className="no-fest">
-              多模型自由切换，知识随对话沉淀。
-              <br />
-              一间安静的产房，孕育每一个想法。
-            </span>
-            <span className="fest-only">
-              今夜月满，宜思考，宜对话。
-              <br />
-              把未竟的问题交给这间安静的产房。
-            </span>
+            多模型自由切换，知识随对话沉淀。
+            <br />
+            一间安静的产房，孕育每一个想法。
           </p>
           <div className="auth-reveal auth-delay-4 mt-[30px] flex flex-wrap gap-2">
             {["多模型接入", "知识沉淀", "极简体验"].map((tag) => (

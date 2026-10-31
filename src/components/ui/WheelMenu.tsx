@@ -248,7 +248,7 @@ const WHEEL_CSS = `
 .wheel-svg .seg { cursor: pointer; transition: opacity .15s; animation: wheelIn .28s cubic-bezier(.2,.9,.3,1.2) backwards; }
 @keyframes wheelIn { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: scale(1); } }
 .wheel-svg .seg path { fill: rgb(255 255 255 / .34); stroke: rgb(15 23 42 / .1); stroke-width: 1.5; transition: fill .12s, stroke .12s; }
-.dark .wheel-svg .seg path { fill: rgb(255 255 255 / .06); stroke: rgb(255 255 255 / .14); }
+.dark .wheel-svg .seg path { fill: rgb(255 255 255 / .12); stroke: rgb(255 255 255 / .2); }
 .wheel-base { fill: rgb(100 116 139 / .1); }
 .dark .wheel-base { fill: rgb(var(--surface-muted) / .2); }
 .wheel-ring { fill: none; stroke: rgb(var(--line-strong) / .6); stroke-width: 1; }
@@ -257,7 +257,7 @@ const WHEEL_CSS = `
 .wheel-svg .seg:hover path, .wheel-svg .seg.kb-focus path { fill: rgb(var(--accent-soft) / .55); stroke: rgb(var(--line-strong) / .8); }
 .dark .wheel-svg .seg:hover path, .dark .wheel-svg .seg.kb-focus path { fill: rgb(var(--accent-soft) / .4); }
 .wheel-svg .seg.danger:hover path, .wheel-svg .seg.danger.kb-focus path { fill: rgb(var(--wheel-danger) / .16); stroke: rgb(var(--wheel-danger) / .55); }
-.wheel-svg .seg .icon { color: rgb(var(--content-primary)); opacity: .8; transition: opacity .12s; pointer-events: none; }
+.wheel-svg .seg .icon { color: rgb(var(--content-primary)); opacity: 1; transition: opacity .12s; pointer-events: none; }
 .wheel-svg .seg:hover .icon, .wheel-svg .seg.kb-focus .icon { opacity: 1; }
 .wheel-svg .seg.danger .icon { color: rgb(var(--wheel-danger)); opacity: .9; }
 .wheel-svg .seg.danger:hover .icon, .wheel-svg .seg.danger.kb-focus .icon { opacity: 1; }
@@ -269,6 +269,9 @@ const WHEEL_CSS = `
   text-anchor: middle; dominant-baseline: central; pointer-events: none;
 }
 body.wheel-holding, body.wheel-holding * { cursor: none !important; }
-.wheel-wrap.cancel .wheel-svg .seg { opacity: .35; }
+/* cancel(指针停在 hub)=「松手即取消」的提示态: 只把 hub 文字标红,
+   不再整圈压 35% 透明度 —— 轮盘刚出现时指针必然在 hub 上,
+   全圈压暗会让它第一眼看起来像整盘禁用(2026-10-26 用户反馈"图标都是灰色的") */
+.wheel-wrap.cancel .wheel-svg .seg { opacity: .75; }
 .wheel-wrap.cancel .wheel-hub-text { fill: rgb(var(--wheel-danger)); }
 `

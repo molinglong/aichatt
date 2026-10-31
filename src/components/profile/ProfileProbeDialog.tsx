@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, Loader2, Sparkles, X } from 'lucide-react'
+import { ArrowUp, Loader2, Sparkles, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
+import { MobileSheet } from '@/components/ui/MobileSheet'
+import { useIsMobileViewport } from '@/hooks/useIsMobileViewport'
 import {
   PROBE_MAX_QUESTIONS,
   applicableProbeFields,
@@ -95,6 +97,7 @@ export function ProfileProbeDialog({
   const [live, setLive] = useState<GeneralFields>(initial.fields)
   const bubbleId = useRef(0)
   const streamRef = useRef<HTMLDivElement | null>(null)
+  const isMobileViewport = useIsMobileViewport()
 
   const push = useCallback((from: Bubble['from'], text: string, hits?: ProbeHit[]) => {
     bubbleId.current += 1
@@ -278,7 +281,130 @@ export function ProfileProbeDialog({
   if (!mounted) return null
 
   const current: ProbeQuestion | null = currentId ? buildProbeQuestion(currentId) : null
+  const stepText = `${Math.min(turns, PROBE_MAX_QUESTIONS)} / ${PROBE_MAX_QUESTIONS}`
 
+  // 采集对话：气泡 14 圆角 / 13px / 行高 1.6；选项是灰实底胶囊（40 高）而不是白底细边，
+  // 这样「AI 说的话」与「可点的选项」一眼可分（早前两者几乎同形，用户直接提过）。
+  const stream = (
+    <div
+      ref={streamRef}
+      className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto overscroll-contain px-4 pb-1 pt-1
+        [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
+      {bubbles.map((b) => (
+        <div
+          key={b.id}
+          data-probe-bubble={b.from}
+          className={cn('flex', b.from === 'me' ? 'justify-end' : 'justify-start')}
+        >
+          <div
+            className={cn(
+              'max-w-[86%] rounded-[14px] px-3 py-2 text-[13px] leading-[1.6] break-words',
+              b.from === 'me'
+                ? 'bg-content-primary text-surface'
+                : 'border border-line/70 bg-surface text-content-primary'
+            )}
+          >
+            <span className="block whitespace-pre-wrap">{b.text}</span>
+            {b.hits && b.hits.length > 0 && (
+              <span className="mt-2 flex flex-wrap gap-1.5">
+                {b.hits.map((h) => (
+                  <button
+                    key={h.fieldId}
+                    type="button"
+                    onClick={() => editField(h.fieldId)}
+                    className="inline-flex h-8 items-center rounded-full border border-line/60 px-2.5
+                      text-[11.5px] text-content-muted transition-colors active:text-content-primary"
+                  >
+                    改 · {probeFieldLabel(h.fieldId)}
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
+  const chips = current && (
+    <div data-probe-chips className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-2 pt-1.5">
+      {current.options.map((opt) => (
+        <PickButton
+          key={opt.value}
+          onClick={() => void answerOption(current, opt.value, opt.label)}
+          disabled={saving}
+        >
+          {opt.label}
+        </PickButton>
+      ))}
+      <PickButton tone="ghost" onClick={() => void skipCurrent()} disabled={saving}>
+        跳过这条
+      </PickButton>
+    </div>
+  )
+
+  // 输入行：44 高灰药丸，发送是 32 圆钮；只有中间那段对话区滚动，选项与输入钉在面板底
+  const composer = (
+    <div className="shrink-0 px-3 pb-1 pt-2">
+      <div className="flex h-11 items-center rounded-2xl bg-surface-muted pl-3.5 pr-1.5">
+        <input
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              void submitTyped()
+            }
+          }}
+          maxLength={current?.freeText ? current.max : 200}
+          placeholder={
+            current?.freeText ? '打字说也行，我照着你说的记' : '不想点就打字，一句话里几个维度我一起抽'
+          }
+          className="min-w-0 flex-1 bg-transparent text-[15px] text-content-primary outline-none placeholder:text-content-muted"
+        />
+        <button
+          type="button"
+          onClick={() => void submitTyped()}
+          disabled={saving || !typed.trim()}
+          className="ml-1 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent text-accent-foreground
+            transition-opacity disabled:opacity-40"
+          aria-label="把这句记进档案"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+        </button>
+      </div>
+    </div>
+  )
+
+  const panelContent = (
+    <div data-probe-panel className="flex min-h-0 flex-1 flex-col pb-1">
+      {stream}
+      {chips}
+      {composer}
+    </div>
+  )
+
+  // 手机端：底部面板（与模型快切 / 面具 / 更多同一套外壳），底部那一行动作是「先到这儿」。
+  // 这个弹窗会从设置页（z-100）里开出来，所以层级要顶到 102，压在设置页上面。
+  if (isMobileViewport) {
+    return (
+      <MobileSheet
+        open
+        onClose={onClose}
+        title={`让 AI 认识你 · ${stepText}`}
+        cancelLabel="先到这儿"
+        bodyClassName="flex flex-col"
+        scrollBody={false}
+        ariaLabel="让 AI 认识你"
+        zIndex={102}
+      >
+        {panelContent}
+      </MobileSheet>
+    )
+  }
+
+  // 桌面端：仍是居中卡（md 断点以上），只是气泡/选项换成同一套语言
   return createPortal(
     <>
       <div
@@ -296,118 +422,33 @@ export function ProfileProbeDialog({
         aria-label="让 AI 认识你"
         data-probe-dialog
         className={cn(
-          'fixed z-[102] border-line/60 bg-surface-muted text-xs',
-          'inset-x-0 bottom-0 rounded-t-[28px] border-t pb-[max(var(--sab,0px),10px)]',
+          'fixed left-1/2 top-1/2 z-[102] flex max-h-[80vh] w-[440px] flex-col overflow-hidden',
+          'rounded-2xl border border-line/60 bg-surface-muted text-xs',
           'shadow-[0_18px_50px_rgba(0,0,0,0.28)] transition-transform duration-300 ease-out',
-          shown ? 'translate-y-0' : 'translate-y-full',
-          // 桌面端收成居中卡;translate-y 的基准从「贴底」换成「自身中点」，两档各自给值
-          'md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:w-[440px] md:rounded-2xl md:border md:pb-0',
-          shown ? 'md:translate-y-[-50%]' : 'md:translate-y-[-44%]'
+          shown ? '-translate-y-1/2' : '-translate-y-[44%]'
         )}
       >
-        <div aria-hidden className="mx-auto mt-2.5 h-2 w-[46px] rounded-full bg-line-strong/40 md:hidden" />
-        <div className="pt-1.5" data-probe-panel>
-          <div className="flex items-center gap-1.5 px-3 py-2 border-b border-line/40 text-content-secondary">
-            <Sparkles className="w-3.5 h-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">
-              让 AI 认识你 · 第 {Math.min(turns, PROBE_MAX_QUESTIONS)} / {PROBE_MAX_QUESTIONS} 问
-            </span>
-            <button
-              type="button"
-              onClick={onClose}
-              className="shrink-0 inline-flex items-center justify-center w-9 min-h-[36px] rounded text-content-muted/70 transition-colors hover:text-content-primary"
-              aria-label="结束采集"
-              title="先到这儿，不追了"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          <div ref={streamRef} className="max-h-[38vh] overflow-y-auto px-2.5 py-2 flex flex-col gap-2">
-            {bubbles.map((b) => (
-              <div
-                key={b.id}
-                data-probe-bubble={b.from}
-                className={cn('flex', b.from === 'me' ? 'justify-end' : 'justify-start')}
-              >
-                <div
-                  className={cn(
-                    'max-w-[85%] rounded-lg px-2.5 py-1.5 leading-relaxed',
-                    b.from === 'me'
-                      ? 'bg-accent text-accent-foreground'
-                      : 'bg-surface text-content-primary border border-line/40'
-                  )}
-                >
-                  <span>{b.text}</span>
-                  {b.hits && b.hits.length > 0 && (
-                    <span className="mt-1.5 flex flex-wrap gap-1.5">
-                      {b.hits.map((h) => (
-                        <button
-                          key={h.fieldId}
-                          type="button"
-                          onClick={() => editField(h.fieldId)}
-                          className="inline-flex items-center rounded border border-line/60 px-2 min-h-[36px] text-xs text-content-muted transition-colors hover:text-content-primary"
-                        >
-                          改 · {probeFieldLabel(h.fieldId)}
-                        </button>
-                      ))}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {current && (
-            <div className="px-2.5 pb-2 flex flex-wrap gap-1.5" data-probe-chips>
-              {current.options.map((opt) => (
-                <PickButton
-                  key={opt.value}
-                  onClick={() => void answerOption(current, opt.value, opt.label)}
-                  disabled={saving}
-                >
-                  {opt.label}
-                </PickButton>
-              ))}
-              <PickButton tone="ghost" onClick={() => void skipCurrent()} disabled={saving}>
-                跳过这条
-              </PickButton>
-            </div>
-          )}
-
-          <div className="px-2.5 pb-2.5 flex gap-1.5">
-            <input
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  void submitTyped()
-                }
-              }}
-              maxLength={current?.freeText ? current.max : 200}
-              placeholder={
-                current?.freeText ? '打字说也行，我照着你说的记' : '不想点就打字，一句话里几个维度我一起抽'
-              }
-              className="min-w-0 flex-1 rounded-md border border-line/60 bg-surface px-2.5 py-2 text-xs text-content-primary placeholder:text-content-muted/70 focus:outline-none focus:border-accent/50"
-            />
-            <button
-              type="button"
-              onClick={() => void submitTyped()}
-              disabled={saving || !typed.trim()}
-              className="shrink-0 inline-flex items-center justify-center rounded-md px-3 min-h-[36px] bg-accent text-accent-foreground disabled:opacity-40"
-              aria-label="把这句记进档案"
-            >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-            </button>
-          </div>
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-line/40 px-3 py-2 text-content-secondary">
+          <Sparkles className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">让 AI 认识你 · 第 {stepText} 问</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex min-h-[36px] w-9 shrink-0 items-center justify-center rounded text-content-muted/70 transition-colors hover:text-content-primary"
+            aria-label="结束采集"
+            title="先到这儿，不追了"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
+        {panelContent}
       </div>
     </>,
     document.body
   )
 }
 
+/** 选项胶囊：灰实底 40 高，和 AI 气泡（白底描边）在形状与材质上直接分开 */
 export function PickButton({
   children,
   onClick,
@@ -425,10 +466,10 @@ export function PickButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'inline-flex items-center rounded-md px-2.5 min-h-[36px] text-xs leading-none transition-colors disabled:opacity-40',
+        'inline-flex h-10 items-center rounded-full px-3.5 text-[13px] leading-none transition-colors disabled:opacity-40',
         tone === 'solid'
-          ? 'border border-line/60 bg-surface text-content-primary hover:border-accent/50'
-          : 'border border-dashed border-line/60 text-content-muted hover:text-content-primary'
+          ? 'bg-surface-subtle text-content-primary active:bg-line/60'
+          : 'border border-dashed border-line/70 text-content-muted active:text-content-primary'
       )}
       style={{ WebkitTapHighlightColor: 'transparent' }}
     >

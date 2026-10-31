@@ -1,22 +1,25 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { Save, Trash2, Loader2, Timer, CheckCircle, AlertCircle, Key, KeyRound, Eye, EyeOff, Zap, ExternalLink, Brain, Plus, Settings2, HelpCircle, Info, MessageSquare, GitBranch, Cpu, Wrench, BarChart3, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Filter, LayoutDashboard, Sparkles, ImageIcon, Check, RefreshCw, Globe, Search, LogOut, User, CalendarDays, Pencil, X, FileUp, Download, Copy, VenetianMask, RotateCcw, Plug, MapPin, FolderOpen, Gauge, Ticket, Gift, Smartphone, FileJson } from 'lucide-react'
+import { Save, Trash2, Loader2, Timer, CheckCircle, AlertCircle, Key, KeyRound, Eye, EyeOff, Zap, ExternalLink, Brain, Plus, Settings2, HelpCircle, Info, MessageSquare, GitBranch, Cpu, Wrench, BarChart3, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Filter, LayoutDashboard, Sparkles, ImageIcon, Check, RefreshCw, Globe, Search, LogOut, User, CalendarDays, Pencil, X, FileUp, Download, Copy, VenetianMask, RotateCcw, Plug, MapPin, FolderOpen, Gauge, Ticket, Gift, Smartphone, FileJson, Watch as WatchIcon } from 'lucide-react'
 import { signOut, useSession } from 'next-auth/react'
 import { cn } from '@/lib/utils'
 import {
   applyAppearance,
-  FEST_PALETTE,
   GRID_TONES,
   normalizeAppearance,
   PALETTES,
   readAppearance,
   resolveAutoTone,
   THEME_CHOICES,
+  UI_STYLES,
+  WALLPAPER_SCHEMES,
   type Appearance,
   type GridTone,
   type SelectablePalette,
   type ThemeChoice,
+  type UiStyle,
+  type WallpaperScheme,
 } from '@/lib/theme'
 import { useCustomModels, type CustomModelForm, type SavedCustomModel, CUSTOM_MODEL_DOT } from '@/hooks/useCustomModels'
 import { useWindowDrag } from '@/hooks/useWindowDrag'
@@ -24,12 +27,12 @@ import { useBackToClose } from '@/hooks/useBackToClose'
 import { useToggleMap } from '@/hooks/useToggleMap'
 import { useProviderModels, type ProviderModelOverrideForm, makeEmptyForm as makeEmptyProviderForm } from '@/hooks/useProviderModels'
 import { detectModelCapabilities } from '@/lib/ai/model-capabilities'
-import { useChatStore, type BackdropMode } from '@/store/chat-store'
+import { useChatStore } from '@/store/chat-store'
 import { StylePicker } from '@/components/chat/StylePicker'
 import { getStylePresetLabel, STYLE_PRESETS } from '@/lib/ai/style'
 import { ReplyLengthSlider } from '@/components/chat/ReplyLengthSlider'
 import { getReplyLengthLabel, REPLY_LENGTH_LEVELS } from '@/lib/ai/reply-length'
-import { useIsTauri, useIsTauriShell, getNotifyOnReply, setNotifyOnReply, getReplyReminderDelaySec, setReplyReminderDelaySec } from '@/lib/tauri'
+import { useIsTauri, useIsTauriShell, getNotifyOnReply, setNotifyOnReply } from '@/lib/tauri'
 import { pickWorkspaceDir, getWorkspaceDir, LOCAL_FILES_SYNC_KEY } from '@/lib/tauri-files'
 import { toast } from '@/lib/toast'
 import { useQueryClient } from '@tanstack/react-query'
@@ -37,6 +40,8 @@ import { queryKeys } from '@/lib/query/keys'
 import { parseMemoryText, COMMON_IMPORT_SOURCES, MEMORY_IMPORT_REFERENCE, type ParsedMemoryDraft } from '@/lib/memory/import-parser'
 import MasksSettings from '@/components/settings/MasksSettings'
 import { PortableSettings } from '@/components/settings/PortableSettings'
+import { WatchSettings } from '@/components/settings/WatchSettings'
+import { DefaultModelSetting } from '@/components/settings/DefaultModelSetting'
 import QuotaAdminSection from '@/components/settings/QuotaAdminSection'
 import QuotaPersonalCard from '@/components/settings/QuotaPersonalCard'
 import McpSettings from '@/components/settings/McpSettings'
@@ -48,20 +53,6 @@ import type { DerivedStage } from '@/lib/profile/academic'
 
 const STYLE_OFFSET_STORAGE_KEY = 'chat:stylePreset'
 const REPLY_LENGTH_STORAGE_KEY = 'chat:replyLength'
-
-/** 背景 设置的选项 */
-const BACKDROP_CHOICES: { value: BackdropMode; label: string }[] = [
-  { value: 'off', label: '关闭' },
-  { value: 'image', label: '壁纸' },
-]
-
-/** 后台回复提醒的等待档位(秒)。存 localStorage,0 = 不提醒 */
-const REMINDER_DELAY_CHOICES: { value: string; label: string }[] = [
-  { value: '30', label: '30秒' },
-  { value: '45', label: '45秒' },
-  { value: '90', label: '1分半' },
-  { value: '0', label: '关闭' },
-]
 
 interface ProviderInfo {
   id: string
@@ -138,6 +129,9 @@ interface ChatUsageStats {
     completionTokens: number
     totalTokens: number
     messages: number
+    // prompt caching 命中量(promptTokens 的子集);旧接口无此字段时按 0 处理
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
   }
   byModel: {
     model: string
@@ -145,8 +139,9 @@ interface ChatUsageStats {
     completionTokens: number
     totalTokens: number
     messages: number
+    cacheReadTokens?: number
   }[]
-  byDay: { date: string; totalTokens: number }[]
+  byDay: { date: string; totalTokens: number; cacheReadTokens?: number }[]
 }
 
 interface ImageUsageStats {
@@ -174,8 +169,15 @@ function OverviewTab({ usageStats }: { usageStats: UsageStats }) {
   const chatPrompt = usageStats.chat.totals.promptTokens
   const chatCompletion = usageStats.chat.totals.completionTokens
   const chatTotal = chatPrompt + chatCompletion
+  // 缓存命中量是输入的子集：圆环里把输入拆成「未命中(蓝)+命中(琥珀)」两段
+  const chatCacheRead = Math.min(usageStats.chat.totals.cacheReadTokens ?? 0, chatPrompt)
+  const chatPromptMiss = Math.max(chatPrompt - chatCacheRead, 0)
+  const chatMissRatio = chatTotal > 0 ? chatPromptMiss / chatTotal : 0
+  const chatCacheRatio = chatTotal > 0 ? chatCacheRead / chatTotal : 0
   const chatInputRatio = chatTotal > 0 ? chatPrompt / chatTotal : 0
   const chatOutputRatio = chatTotal > 0 ? chatCompletion / chatTotal : 0
+  // 输入命中率：命中量 / 输入总量（上游计费口径，promptTokens 含命中部分）
+  const chatCacheRate = chatPrompt > 0 ? Math.round((chatCacheRead / chatPrompt) * 100) : 0
   // 环中心显示文案（紧凑缩写，按字符数自适应字号防溢出）
   const chatTotalLabel = fmtCompactNum(chatTotal)
 
@@ -217,7 +219,7 @@ function OverviewTab({ usageStats }: { usageStats: UsageStats }) {
   return (
     <div className="space-y-3">
       {/* 💬 聊天 - 主块：Token 圆环图 + 模型消耗排行 */}
-      <div className="rounded-xl border border-line/60 bg-surface/40 px-3.5 py-3.5">
+      <div className="rounded-xl set-card bg-surface/40 px-3.5 py-3.5">
         <div className="flex items-center gap-1.5 mb-2.5">
           <MessageSquare className="w-3.5 h-3.5 text-content-muted" />
           <p className="text-xs font-medium text-content-secondary">聊天</p>
@@ -239,7 +241,7 @@ function OverviewTab({ usageStats }: { usageStats: UsageStats }) {
                     strokeWidth="6"
                     className="text-line/40"
                   />
-                  {/* 输入 token 段（蓝） */}
+                  {/* 输入 token 段（蓝，未命中部分） */}
                   <circle
                     cx="21"
                     cy="21"
@@ -247,10 +249,24 @@ function OverviewTab({ usageStats }: { usageStats: UsageStats }) {
                     fill="none"
                     stroke="#3b82f6"
                     strokeWidth="6"
-                    strokeDasharray={`${chatInputRatio * 100} 100`}
+                    strokeDasharray={`${chatMissRatio * 100} 100`}
                     strokeDashoffset="0"
                     strokeLinecap="butt"
                   />
+                  {/* 缓存命中输入段（琥珀） */}
+                  {chatCacheRead > 0 && (
+                    <circle
+                      cx="21"
+                      cy="21"
+                      r="15.9155"
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth="6"
+                      strokeDasharray={`${chatCacheRatio * 100} 100`}
+                      strokeDashoffset={`${-chatMissRatio * 100}`}
+                      strokeLinecap="butt"
+                    />
+                  )}
                   {/* 输出 token 段（绿） */}
                   <circle
                     cx="21"
@@ -283,15 +299,27 @@ function OverviewTab({ usageStats }: { usageStats: UsageStats }) {
             )}
           </div>
 
-          {/* 输入/输出数字 + 比例 */}
+          {/* 输入/输出/缓存命中数字 + 比例 */}
           <div className="flex-1 min-w-0 pt-0.5 space-y-1">
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-sm bg-blue-500 inline-block shrink-0" />
-              <span className="text-[10px] text-content-muted">输入</span>
+              <span className="text-[10px] text-content-muted" title="输入总量（含缓存命中）">输入</span>
               <span className="ml-auto font-mono text-xs font-semibold text-content-primary tabular-nums">
                 {chatPrompt.toLocaleString()}
               </span>
             </div>
+            {chatCacheRead > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm bg-amber-500 inline-block shrink-0" />
+                <span className="text-[10px] text-content-muted">命中缓存</span>
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 tabular-nums">
+                  {chatCacheRate}%
+                </span>
+                <span className="ml-auto font-mono text-xs font-semibold text-amber-600 dark:text-amber-400 tabular-nums">
+                  {chatCacheRead.toLocaleString()}
+                </span>
+              </div>
+            )}
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-sm bg-emerald-500 inline-block shrink-0" />
               <span className="text-[10px] text-content-muted">输出</span>
@@ -317,7 +345,7 @@ function OverviewTab({ usageStats }: { usageStats: UsageStats }) {
                   </span>
                   <div className="w-16 h-1 rounded-full bg-line/40 overflow-hidden shrink-0">
                     <div
-                      className="h-full bg-accent/70 rounded-full transition-all"
+                      className="h-full bg-accent/70 rounded-full transition-[width]"
                       style={{ width: `${pct}%` }}
                     />
                   </div>
@@ -340,7 +368,7 @@ function OverviewTab({ usageStats }: { usageStats: UsageStats }) {
       </div>
 
       {/* 🖼 生图 - 辅块：模型分布饼图 */}
-      <div className="rounded-xl border border-line/60 bg-surface/40 px-3.5 py-3.5">
+      <div className="rounded-xl set-card bg-surface/40 px-3.5 py-3.5">
         <div className="flex items-center gap-1.5 mb-2.5">
           <ImageIcon className="w-3.5 h-3.5 text-content-muted" />
           <p className="text-xs font-medium text-content-secondary">生图</p>
@@ -424,7 +452,7 @@ function OverviewTab({ usageStats }: { usageStats: UsageStats }) {
       </div>
 
       {/* 📅 活跃 - 次主块：主数字适中 + sparkline 紧凑 */}
-      <div className="rounded-xl border border-line/60 bg-surface/40 px-3.5 py-3.5">
+      <div className="rounded-xl set-card bg-surface/40 px-3.5 py-3.5">
         <div className="flex items-center gap-1.5 mb-2.5">
           <CalendarDays className="w-3.5 h-3.5 text-content-muted" />
           <p className="text-xs font-medium text-content-secondary">活跃</p>
@@ -513,7 +541,7 @@ const PROVIDER_URL: Record<string, string> = {
   yi: 'https://platform.lingyiwanwu.com/apikeys',
 }
 
-type SectionId = 'overview' | 'session' | 'providers' | 'models' | 'search' | 'memory' | 'clarify' | 'localfiles' | 'masks' | 'mcp' | 'general' | 'help' | 'mobileapp' | 'about' | 'usage' | 'image' | 'buddy' | 'account' | 'apitokens' | 'portable' | 'quota' | 'redeem' | 'regcodes'
+type SectionId = 'overview' | 'session' | 'providers' | 'models' | 'search' | 'memory' | 'clarify' | 'localfiles' | 'masks' | 'mcp' | 'general' | 'help' | 'mobileapp' | 'about' | 'usage' | 'image' | 'buddy' | 'account' | 'apitokens' | 'portable' | 'quota' | 'redeem' | 'regcodes' | 'watch'
 
 type NavItem = { id: SectionId; label: string; icon: typeof Key; adminOnly?: boolean }
 type NavGroup = { title: string; items: NavItem[] }
@@ -553,6 +581,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'general', label: '通用', icon: Settings2 },
       { id: 'help', label: '帮助', icon: HelpCircle },
       { id: 'mobileapp', label: '手机客户端', icon: Smartphone },
+      { id: 'watch', label: '手表', icon: WatchIcon },
       { id: 'about', label: '关于', icon: Info },
     ],
   },
@@ -602,9 +631,10 @@ function NavButton({
   return (
     <button
       onClick={onClick}
+      data-active={active ? '' : undefined}
       className={cn(
         // 移动端:横向胶囊;桌面端:左侧 3px accent 指示条
-        'group relative flex items-center gap-2 pl-3 pr-2 py-1 rounded-md text-[13px] text-left transition-colors touch-manipulation whitespace-nowrap',
+        'settings-nav-row group relative flex items-center gap-2 pl-3 pr-2 py-1 rounded-md text-[13px] text-left transition-colors touch-manipulation whitespace-nowrap',
         // 移动端:更紧凑、上下间距 1
         'py-1 md:py-1',
         active
@@ -618,7 +648,7 @@ function NavButton({
       {/* 左侧指示条 —— 仅桌面端可见 */}
       <span
         className={cn(
-          'hidden md:block absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full transition-colors',
+          'settings-nav-indicator hidden md:block absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full transition-colors',
           active ? 'bg-accent' : 'bg-transparent'
         )}
       />
@@ -640,35 +670,43 @@ function NavButton({
   )
 }
 
-// 移动端一级列表行：图标块 + 标签 + 当前值摘要 + ›（桌面端不用，见 NavButton）
+// 移动端一级列表行：裸图标 + 标签 + 当前值摘要 + ›（桌面端不用，见 NavButton）。
+// 2026-10-22 视觉校准：去掉 28px 灰底图标片（底片对比度只有 1.35:1，既不像容器，
+// 又给每行多加一层盒子）；摘要/箭头抬到可读对比度；分隔线改由行内伪元素内缩 52px。
 function MobileSettingsRow({
   item,
   summary,
   onClick,
   lead,
+  divider,
 }: {
   item: NavItem
   summary?: string
   onClick: () => void
   lead?: React.ReactNode
+  divider?: boolean
 }) {
   const Icon = item.icon
   return (
     <button
       onClick={onClick}
-      className="flex w-full min-h-[52px] items-center gap-3 px-3.5 py-2 text-left touch-manipulation active:bg-surface-subtle/70"
+      className="relative flex w-full min-h-[52px] items-center gap-3.5 px-3.5 py-2 text-left touch-manipulation active:bg-surface-subtle/70"
       style={{ WebkitTapHighlightColor: 'transparent' }}
     >
+      {divider && (
+        <span aria-hidden className="absolute left-[52px] right-0 top-0 h-px bg-line/40" />
+      )}
       {lead ?? (
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-content-primary">
-          <Icon className="h-4 w-4" />
+        // 2026-10-31：图标 19 → 15px，压正文避免抢层级；同日主文收至 14px 后图标反高出 1px，未随动
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center text-content-secondary">
+          <Icon className="h-[15px] w-[15px]" />
         </span>
       )}
-      <span className="min-w-0 flex-1 truncate text-[15.5px] text-content-primary">{item.label}</span>
+      <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-content-primary">{item.label}</span>
       {summary ? (
-        <span className="max-w-[46%] shrink-0 truncate text-[13.5px] text-content-muted">{summary}</span>
+        <span className="max-w-[46%] shrink-0 truncate text-[13.5px] text-content-secondary/85">{summary}</span>
       ) : null}
-      <ChevronRight className="h-4 w-4 shrink-0 text-content-muted/50" />
+      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-content-muted" />
     </button>
   )
 }
@@ -693,15 +731,18 @@ function MSwitch({ on }: { on: boolean }) {
   return (
     <span
       aria-hidden
+      data-on={on ? '' : undefined}
       className={cn(
-        'relative shrink-0 rounded-full transition-colors',
+        'ms-switch relative shrink-0 rounded-full transition-colors duration-base ease-standard',
         on ? 'bg-accent' : 'bg-surface-subtle',
         'h-[28px] w-[46px] md:h-5 md:w-9'
       )}
     >
       <span
+        aria-hidden
+        data-on={on ? '' : undefined}
         className={cn(
-          'absolute rounded-full bg-white transition-transform dark:bg-surface',
+          'ms-switch-thumb absolute rounded-full bg-white transition-transform duration-base ease-standard dark:bg-surface',
           'left-[2px] top-[2px] h-6 w-6',
           on ? 'translate-x-[18px]' : 'translate-x-0',
           'md:left-0.5 md:top-0.5 md:h-4 md:w-4',
@@ -728,7 +769,7 @@ function ProfileMirror({
   alwaysMemories: { id: string; content: string }[]
 }) {
   return (
-    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2" data-profile-mirror>
+    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2" data-profile-mirror>
       <div>
         <p className="text-xs font-medium text-content-secondary">记忆里的你</p>
         <p className="text-[10px] text-content-muted/70 mt-0.5 max-md:hidden">
@@ -737,7 +778,7 @@ function ProfileMirror({
       </div>
 
       {section ? (
-        <div className="rounded-lg border border-line/50 bg-surface-muted/50 px-2.5 py-2">
+        <div className="rounded-lg set-card bg-surface-muted/50 px-2.5 py-2">
           <p className="text-[11px] leading-relaxed text-content-secondary whitespace-pre-line break-words">
             {section}
           </p>
@@ -869,7 +910,7 @@ function MSegRow<T extends string>({
 }) {
   return (
     <>
-      <div className={cn('hidden md:flex rounded-lg bg-surface-muted p-0.5 gap-0.5', className)}>
+      <div className={cn('ds-seg hidden md:flex rounded-lg bg-surface-muted p-0.5 gap-0.5', className)}>
         {options.map((opt) => (
           <button
             key={opt.value}
@@ -899,8 +940,23 @@ function MSegRow<T extends string>({
 }
 
 /** 第三层:推入式单选页(仅移动端)。盖满卡片,自带与三簇同一条 14px 基线的页头。
- *  shown 由父层的「挂载 → double RAF → true」驱动,右推/右出用 translate-x 过渡 */
+ *  shown 由父层的「挂载 → double RAF → true」驱动,右推/右出用 translate-x 过渡。
+ *  页头与一/二级同构(2026-10-31):绝对覆盖层 .m-set-head,停顶透明、下滑 >6px 才浮出毛玻璃。 */
 function MobilePickerPage({ spec, back, shown, onClose }: { spec: PickerSpec; back: string; shown: boolean; onClose: () => void }) {
+  const headRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // 只切 class，不写 React state —— 与设置页头同一套（本页是独立组件，代价本来就小，保持写法统一）
+  const syncHead = useCallback(() => {
+    const head = headRef.current
+    if (!head) return
+    head.classList.toggle('is-scrolled', (scrollRef.current?.scrollTop ?? 0) > 6)
+  }, [])
+  // 选择页关闭即卸载，正常打开必然从 0 开始；这里兜的是「同一实例换内容」——
+  // MSegRow 连点不同项时节点可能被复用，不复位就会带着上一页的滚动位置和浮出的页头。
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0
+    syncHead()
+  }, [spec.title, syncHead])
   return (
     <div
       data-m-picker
@@ -909,7 +965,10 @@ function MobilePickerPage({ spec, back, shown, onClose }: { spec: PickerSpec; ba
         shown ? 'translate-x-0' : 'translate-x-full'
       )}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-line/60 bg-surface pl-5 pr-[var(--m-chrome-inset)] pt-[var(--m-chrome-top)] pb-2">
+      <div
+        ref={headRef}
+        className="m-set-head flex items-center gap-2 border-b pl-5 pr-[var(--m-chrome-inset)] pt-[var(--m-chrome-top)] pb-2"
+      >
         <button
           onClick={onClose}
           aria-label={`返回${back}`}
@@ -920,9 +979,14 @@ function MobilePickerPage({ spec, back, shown, onClose }: { spec: PickerSpec; ba
         </button>
         <h3 className="min-w-0 truncate text-[17px] font-semibold text-content-primary">{spec.title}</h3>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">
+      {/* pt = 页头让位：52 补到页头 48 + 卡片自带 mt-2，首行落在与二级页同一个 y 上 */}
+      <div
+        ref={scrollRef}
+        onScroll={syncHead}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6 pt-[calc(var(--m-chrome-top)_+_52px)]"
+      >
         {/* 手机端统一去「介绍」:选择页顶部说明不再渲染(2026-10-06 用户定案);help 数据仍保留,便于回调复用 */}
-        <div className="mt-2 divide-y divide-line/50 overflow-hidden rounded-xl border border-line/60 bg-surface">
+        <div className="mt-2 divide-y divide-line/50 overflow-hidden rounded-xl set-card bg-surface">
           {spec.options.map((o) => {
             const on = o.value === spec.value
             return (
@@ -979,9 +1043,6 @@ export function SettingsModal({
   // 聊天行为:思考完毕自动折叠思考框(纯本地偏好,localStorage 持久化,不入 AI 可控注册表)
   const autoCollapseReasoning = useChatStore((s) => s.autoCollapseReasoning)
   const setAutoCollapseReasoning = useChatStore((s) => s.setAutoCollapseReasoning)
-  // 背景:关 / 内置壁纸(纯本地偏好,localStorage 持久化,不入 AI 可控注册表)
-  const backdropMode = useChatStore((s) => s.backdropMode)
-  const setBackdropMode = useChatStore((s) => s.setBackdropMode)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [keys, setKeys] = useState<KeyInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -1054,6 +1115,9 @@ export function SettingsModal({
   const [paletteChoice, setPaletteChoice] = useState<SelectablePalette>('base')
   const [gridTone, setGridTone] = useState<GridTone>('day')
   const [gridToneAuto, setGridToneAuto] = useState(false)
+  // 壁纸主题的明暗子档(主题 = 壁纸时生效),默认跟随系统
+  const [wallpaperScheme, setWallpaperScheme] = useState<WallpaperScheme>('system')
+  const [uiStyle, setUiStyle] = useState<UiStyle>('bigsur')
     const inTauri = useIsTauri()
     // 通知类开关按「在任意壳内」露出:安卓壳一样有系统通知能力,
     // 用 inTauri(桌面专属)会把手机端这两项藏掉,设置里根本调不了。
@@ -1094,21 +1158,6 @@ export function SettingsModal({
         setNotifyOnReply(next)
         return next
       })
-    }, [])
-
-    // 后台回复提醒(手机壳):发一条消息时向系统预约一条 N 秒后的定时通知。
-    // 做成预约式而不是「完成时通知」,是因为壳切后台会冻住 JS(WebView.onPause),
-    // 前端等不到完成那一刻;时长只能是估算值。
-    const [reminderDelay, setReminderDelayState] = useState('45')
-    useEffect(() => {
-      if (!inShell) return
-      const saved = String(getReplyReminderDelaySec())
-      // 只认档位表里的值:localStorage 被手改过或存过别的数,回落到默认档
-      setReminderDelayState(REMINDER_DELAY_CHOICES.some((c) => c.value === saved) ? saved : '45')
-    }, [inShell])
-    const handleChangeReminderDelay = useCallback((next: string) => {
-      setReminderDelayState(next)
-      setReplyReminderDelaySec(Number(next))
     }, [])
 
     // ============ AI 本地文件能力(仅桌面端) ============
@@ -1278,11 +1327,11 @@ export function SettingsModal({
     [isAdmin, inShell]
   )
 
-  // 桌面侧栏一个分组的行：滚动区里的普通分组与底部钉住的「管理」共用这一段
+  // 桌面侧栏一个分组的行：所有分组（含管理）都在同一个滚动区里
   const renderNavGroup = (group: NavGroup) => (
     <div key={group.title} className="flex md:flex-col items-stretch md:items-stretch gap-0.5 md:space-y-2">
       {/* 移动端隐藏分组标题;桌面端显示 */}
-      <div className="hidden md:block px-1.5 pb-1 pt-1 text-[10.5px] uppercase tracking-[0.04em] font-medium text-content-muted">
+      <div className="settings-nav-group hidden md:block px-1.5 pb-1 pt-1 text-[10.5px] uppercase tracking-[0.04em] font-medium text-content-muted">
         {group.title}
       </div>
       <div className="flex md:flex-col gap-0.5 md:space-y-px">
@@ -1881,8 +1930,8 @@ export function SettingsModal({
       setSettingsOpen(false)
     }
     const onEnd = (e: TransitionEvent) => {
-      // 只认卡片自身的 transform 过渡(colors 等旁支过渡不算)
-      if (e.target === el && e.propertyName === 'transform') finish()
+      // 只认卡片自身的 transform(移动滑出)或 opacity(桌面淡出)
+      if (e.target === el && (e.propertyName === 'transform' || e.propertyName === 'opacity')) finish()
     }
     el.addEventListener('transitionend', onEnd)
     const timer = window.setTimeout(finish, 450) // 兜底:transitionend 丢失(后台标签页/系统动画关闭)
@@ -1892,11 +1941,11 @@ export function SettingsModal({
     }
   }, [closePending, setSettingsOpen])
 
-  // 统一关闭入口:桌面模态无滑出动画即时关,移动端先播 slide-down 再卸载
+  // 统一关闭入口:桌面淡出、移动端滑出;独立子窗口(forceOpen)直接关
   const requestClose = useCallback(() => {
-    if (isDesktop) setSettingsOpen(false)
-    else setClosePending(true)
-  }, [isDesktop, setSettingsOpen])
+    if (forceOpen) { setSettingsOpen(false); return }
+    setClosePending(true)
+  }, [forceOpen, setSettingsOpen])
 
   // 系统/浏览器「返回」与 Escape 的智能出栈接线在下方 closeMobilePicker 定义之后:
   // 二级/三级要先逐级弹回,一级才整层关闭(旧实现无条件 requestClose,二级按返回直接掉回聊天页)。
@@ -1974,6 +2023,8 @@ export function SettingsModal({
     setPaletteChoice(a.palette)
     setGridTone(a.gridTone)
     setGridToneAuto(a.gridToneAuto)
+    setUiStyle(a.style ?? 'bigsur')
+    setWallpaperScheme(a.wallpaperScheme ?? 'system')
   }, [])
 
   // 智能模式开着设置面板时,高亮那一段要跟着时间走(每 30s 对一次表,跨段才变);
@@ -2028,7 +2079,7 @@ export function SettingsModal({
   }, [imageSize])
 
   // 外观只有一个写入路径(applyAppearance),本地 state 只负责选中态展示。
-  // 合法化统一走 lib/theme 的 normalizeAppearance: 格子接管明暗、桂花金仅深色,
+  // 合法化统一走 lib/theme 的 normalizeAppearance: 格子接管明暗,
   // 归一化后的结果必须回写 state,否则选中态会与实际渲染对不上。
   function commit(next: Appearance) {
     const safe = normalizeAppearance(next)
@@ -2039,25 +2090,31 @@ export function SettingsModal({
     setPaletteChoice(safe.palette)
     setGridTone(shown)
     setGridToneAuto(safe.gridToneAuto)
+    // 壁纸明暗子档: 调用点没带时沿用当前展示值(切主题/切样式不该把它重置)
+    if (safe.wallpaperScheme) setWallpaperScheme(safe.wallpaperScheme)
+    // 样式维度只在调用点显式带上时回写展示态(老入口不传 = 保持现状)
+    if (safe.style) setUiStyle(safe.style)
     applyAppearance(safe)
     return safe
   }
 
   function handleChoiceChange(choice: ThemeChoice) {
-    const hadFest = paletteChoice === FEST_PALETTE
-    const safe = commit({ choice, palette: paletteChoice, gridTone, gridToneAuto })
-    if (hadFest && safe.palette !== FEST_PALETTE) {
-      toast.info('月白·桂花金仅深色可用，已切回黑白基线')
-    }
+    commit({ choice, palette: paletteChoice, gridTone, gridToneAuto, wallpaperScheme })
   }
 
-  // 配色行只在「主题 ≠ 格子」时渲染,故这里 themeChoice 一定是明暗三态之一
+  /** 样式切换: 与主题/配色正交,只改 data-style,其余外观原样保留 */
+  function handleStyleChange(style: UiStyle) {
+    commit({ choice: themeChoice, palette: paletteChoice, gridTone, gridToneAuto, style, wallpaperScheme })
+  }
+
+  /** 壁纸明暗: 只在「主题 = 壁纸」时渲染。与格子的光态同理 —— 不动用户的 theme 偏好 */
+  function handleWallpaperSchemeChange(scheme: WallpaperScheme) {
+    commit({ choice: 'wallpaper', palette: paletteChoice, gridTone, gridToneAuto, wallpaperScheme: scheme })
+  }
+
+  // 配色行只在「主题 ≠ 格子 且 ≠ 壁纸」时渲染,故这里 themeChoice 一定是明暗三态之一
   function handlePaletteChange(palette: SelectablePalette) {
-    const choice: ThemeChoice = palette === FEST_PALETTE ? 'dark' : themeChoice
-    commit({ choice, palette, gridTone, gridToneAuto })
-    if (choice !== themeChoice) {
-      toast.info('月白·桂花金仅深色可用，已切到深色')
-    }
+    commit({ choice: themeChoice, palette, gridTone, gridToneAuto, wallpaperScheme })
   }
 
   // 日出/白天/暮色/晚上这一排只在「主题 = 格子」时渲染。
@@ -2750,6 +2807,30 @@ export function SettingsModal({
     return () => document.removeEventListener('keydown', handleEscape)
   }, [settingsOpen, smartBack])
 
+  // 页头：停顶透明 → 下滑浮出毛玻璃。只切 class，不写 React state ——
+  // 这个组件每帧重渲染的代价太高，而页头只需要一个布尔态。
+  // 一级列表与二级详情各自有滚动容器，按当前所在层取 scrollTop，两个容器都挂 onScroll 指向这里。
+  const mobileHeaderRef = useRef<HTMLDivElement>(null)
+  const mobileListRef = useRef<HTMLDivElement>(null)
+  const mobileDetailRef = useRef<HTMLDivElement>(null)
+  const syncMobileHead = useCallback(() => {
+    const header = mobileHeaderRef.current
+    if (!header) return
+    const scroller = mobileInDetail ? mobileDetailRef.current : mobileListRef.current
+    header.classList.toggle('is-scrolled', (scroller?.scrollTop ?? 0) > 6)
+  }, [mobileInDetail])
+  useEffect(() => {
+    if (!settingsOpen) return
+    const raf = requestAnimationFrame(() => {
+      // 二级内容列是同一个 DOM 节点：换分区时不回到顶部，会沿用上一页的滚动位置，
+      // 一进去页头就是浮出的，等于丢掉「到顶透明」这一档。
+      // 一级列表刻意不重置 —— 返回时停在原处，页头按原 scrollTop 自顾恢复。
+      if (mobileInDetail && mobileDetailRef.current) mobileDetailRef.current.scrollTop = 0
+      syncMobileHead()
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [settingsOpen, mobileInDetail, activeSection, syncMobileHead])
+
   if (!settingsOpen) return null
 
   const configured = providers.filter((p) => keys.some((k) => k.provider === p.id))
@@ -2761,11 +2842,22 @@ export function SettingsModal({
   // 移动端一级行的「当前值摘要」：只读父层已有的状态。面具 / MCP / API 令牌的数据在各自子组件里
   // （MasksSettings / McpSettings / ApiTokensSection），父层拿不到 —— 宁可不显示也不编数字
   const themeLabel = THEME_CHOICES.find((t) => t.value === themeChoice)?.label
+  // 生图摘要只给人读的名字：内置取 name，自定义按 id 找 name；找不到时退「已配置」，
+  // 不再把 custom:cmuk... 这种内部 id 直接摊在列表上。
+  const imageModelLabel = (() => {
+    if (!imageModel) return undefined
+    if (imageModel.startsWith('custom:')) {
+      const hit = imageCustomModels.find((m) => m.id === imageModel)
+      return (hit?.name as string) || '已配置'
+    }
+    const hit = imageBuiltinModels.find((m) => m.id === imageModel)
+    return (hit?.name as string) || imageModel.replace(/^builtin:/, '')
+  })()
   const sectionSummary: Partial<Record<SectionId, string>> = {
     providers: configured.length ? `${configured.length} 个` : undefined,
     models: customModels.length ? `${customModels.length} 个` : undefined,
     search: SEARCH_ENGINE_LIST.find((e) => e.id === searchEngine)?.name,
-    image: imageModel ? imageModel.replace(/^builtin:/, '') : undefined,
+    image: imageModelLabel,
     memory: memoryEnabled ? `${memories.length} 条` : '已关闭',
     clarify: clarifyEnabled ? '开' : '关',
     localfiles: inTauri ? (localFilesEnabled ? '开' : '关') : '仅桌面端',
@@ -2790,10 +2882,9 @@ export function SettingsModal({
       <div
         key={provider.id}
         className={cn(
-          'rounded-xl border px-3.5 py-3 space-y-2.5 transition-all duration-200',
-          'border-line/60',
-          existingKey 
-            ? 'bg-green-50/50 dark:bg-green-900/10 border-green-200/60 dark:border-green-800/40'
+          'rounded-xl set-card px-3.5 py-3 space-y-2.5 transition duration-200',
+          existingKey
+            ? 'border border-green-200/60 dark:border-green-800/40 bg-green-50/50 dark:bg-green-900/10'
             : 'bg-surface/60 hover:bg-surface-subtle/40'
         )}
       >
@@ -2902,7 +2993,7 @@ export function SettingsModal({
                   'text-content-primary',
                   'placeholder:text-content-muted',
                   'focus:outline-none focus:ring-2 focus:ring-accent/30',
-                  'focus:border-accent transition-all'
+                  'focus:border-accent transition-[border-color,box-shadow]'
                 )}
               />
               <button
@@ -2919,7 +3010,7 @@ export function SettingsModal({
                 onClick={() => handleTest(provider.id)}
                 disabled={isTesting}
                 className={cn(
-                  'px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 shrink-0',
+                  'px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shrink-0',
                   'bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 active:scale-95',
                   'disabled:opacity-50 disabled:cursor-not-allowed'
                 )}
@@ -2932,7 +3023,7 @@ export function SettingsModal({
               onClick={() => handleSave(provider.id)}
               disabled={!draft.trim() || isSaving}
               className={cn(
-                'px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 shrink-0',
+                'px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 shrink-0',
                 draft.trim() && !isSaving
                   ? 'bg-accent text-accent-foreground hover:bg-accent-hover active:scale-95 shadow-sm'
                   : 'bg-surface-muted text-content-muted cursor-not-allowed'
@@ -2985,7 +3076,7 @@ export function SettingsModal({
       {/* Backdrop — 纯色压暗：日间 35% 黑、夜间 65% 黑，去掉模糊与饱和度提升，兼顾模态感与性能；移动端随抽屉滑入/滑出同步淡入淡出。独立子窗口无遮罩(窗口即卡片) */}
       {!forceOpen && (
       <div
-        className={`absolute inset-0 bg-black/35 dark:bg-black/65 md:hidden transition-opacity duration-300 ease-out ${visible ? 'opacity-50' : 'opacity-0'}`}
+        className={`absolute inset-0 bg-black/35 dark:bg-black/65 md:hidden transition-opacity duration-base ease-standard ${visible ? 'opacity-50' : 'opacity-0'}`}
         onClick={requestClose}
       />
       )}
@@ -2994,11 +3085,12 @@ export function SettingsModal({
           滑入/滑出由 visible 切 translate-y 类驱动,桌面端被 md: 变体固定、transform 留给 useWindowDrag 拖拽 */}
       <div
         ref={cardRef}
+        data-force-open={forceOpen ? '' : undefined}
         onPointerDown={onCardPointerDown}
         onPointerMove={onCardPointerMove}
         onPointerUp={onCardPointerUp}
         onPointerCancel={onCardPointerCancel}
-        className={`m-set relative flex flex-col overflow-hidden transition-[transform,opacity,background-color,border-color] duration-300 ease-out ${visible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 md:translate-y-0 md:opacity-100'} ${forceOpen
+        className={`m-set relative flex flex-col overflow-hidden transition-[transform,opacity,background-color,border-color] duration-base ease-standard ${visible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 md:translate-y-0'} ${forceOpen
           ? 'h-full w-full rounded-none border-0 shadow-none'
           : 'w-full md:w-[90%] lg:w-[750px] max-w-none md:max-w-[calc(100vw-2rem)] h-[100dvh] md:h-[36rem] max-h-none md:max-h-[calc(100dvh-2rem)] rounded-none md:rounded-xl border-0 md:border border-line/60 shadow-2xl md:pointer-events-auto'}`}
       >
@@ -3008,9 +3100,13 @@ export function SettingsModal({
             同一基线(设置钮原位),否则 设置钮→面板内关闭 又跳一次;桌面端不用这行。
             进详情不新建第二条页头带(那会私藏一份 padding 破坏 --m-chrome-top 基线),
             而是就地换成「‹ + 分区名」;✕ 只在一级列表呈现——二级页 ‹ 已承担返回,✕ 再占最右
-            是重复入口(用户定案:二级页关闭钮隐藏)。页头带底色三级恒为 surface(chrome),
-            不随画布走(预览页 .m-head/.n-backbar 同律) */}
-        <div className="relative flex items-center justify-between gap-3 pl-5 pr-[var(--m-chrome-inset)] pt-[var(--m-chrome-top)] pb-2 border-b border-line/60 shrink-0 bg-surface md:hidden">
+            是重复入口(用户定案:二级页关闭钮隐藏)。
+            2026-10-22：页头改为绝对覆盖层(样式见 globals.css .m-set-head)，停顶透明、
+            下滑 >6px 才浮出毛玻璃；2026-10-31 二级页并入同一套(去掉原先的 surface 实底)。 */}
+        <div
+          ref={mobileHeaderRef}
+          className="m-set-head flex items-center justify-between gap-3 pl-5 pr-[var(--m-chrome-inset)] pt-[var(--m-chrome-top)] pb-2 border-b md:hidden"
+        >
           <div className="flex min-w-0 flex-1 items-center gap-2">
             {mobileInDetail ? (
               <>
@@ -3044,14 +3140,45 @@ export function SettingsModal({
           )}
         </div>
 
+        {/* Google 2020 桌面页头:与「设置」页一致的 56px 标题条 + 右侧关闭。
+            红点是 macOS 窗口语义,Google 对话框用标题 + X;拖窗手柄也移到这里
+            (上方红点标题栏在 google 下隐藏) */}
+        {uiStyle === 'google' && (
+          <div
+            data-drag-handle
+            {...(forceOpen
+              ? {
+                  'data-tauri-drag-region': '',
+                  style: { WebkitAppRegion: 'drag' } as React.CSSProperties,
+                  onDoubleClick: () => {
+                    import('@/lib/tauri').then(({ tauri }) => tauri.toggleMaximize())
+                  },
+                }
+              : { onDoubleClick: recenter })}
+            className="hidden md:flex h-14 shrink-0 select-none items-center gap-3 border-b border-line px-5"
+          >
+            <span className="text-[16px] font-medium tracking-[0.01em] text-content-primary">设置</span>
+            <span className="flex-1" />
+            <button
+              onClick={requestClose}
+              aria-label="关闭"
+              title="关闭"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-content-secondary transition-colors hover:bg-surface-subtle active:bg-surface-subtle"
+              style={{ WebkitAppRegion: 'no-drag', WebkitTapHighlightColor: 'transparent' } as React.CSSProperties}
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+
         {/* Body: 移动端 nav 在上(横向滚动 Tabs)+ 内容在下;桌面端左侧 nav + 右侧 内容 */}
         <div className="relative flex-1 min-h-0 flex flex-col md:flex-row">
           {/* 缝隙衬底:弹窗本体无底色(透明),侧栏毛玻璃才能透到遮罩后的页面;三条 8px 纯色条填住侧栏悬浮槽,其余区域由 header/content/footer 自身 bg-surface 覆盖 */}
-          <div aria-hidden className="hidden md:block absolute left-0 top-0 bottom-0 w-2 bg-surface pointer-events-none" />
-          <div aria-hidden className="hidden md:block absolute left-0 top-0 w-48 h-2 bg-surface pointer-events-none" />
-          <div aria-hidden className="hidden md:block absolute left-0 bottom-0 w-48 h-2 bg-surface pointer-events-none" />
+          <div aria-hidden className="m-set-seam hidden md:block absolute left-0 top-0 bottom-0 w-2 bg-surface pointer-events-none" />
+          <div aria-hidden className="m-set-seam hidden md:block absolute left-0 top-0 w-48 h-2 bg-surface pointer-events-none" />
+          <div aria-hidden className="m-set-seam hidden md:block absolute left-0 bottom-0 w-48 h-2 bg-surface pointer-events-none" />
           {/* Sidebar —— 移动端:顶部水平 Tabs 滚动条;桌面端:左侧固定栏(顶部红点标题栏固定,导航项独立滚动) */}
-          <nav className="hidden md:m-2 md:mr-0 md:w-44 shrink-0 bg-surface-muted/60 dark:bg-surface/40 glass-blur md:rounded-xl md:border md:border-line/60 overflow-hidden md:flex md:flex-col md:px-2 md:py-2">
+          <nav className="settings-nav hidden md:m-2 md:mr-0 md:w-44 shrink-0 bg-surface-muted/60 dark:bg-surface/40 glass-blur md:rounded-xl md:border md:border-line/60 overflow-hidden md:flex md:flex-col md:px-2 md:py-2">
             {/* 桌面端:固定标题栏——红点不随下方导航项滚动;标题栏语义手柄(立即拖动,双击复位居中) */}
             <div
               data-drag-handle
@@ -3068,7 +3195,7 @@ export function SettingsModal({
                     },
                   }
                 : { onDoubleClick: recenter })}
-              className={`hidden md:flex items-center gap-2.5 px-1 pt-0.5 pb-1.5 shrink-0 select-none touch-none ${forceOpen ? 'pl-3.5' : 'cursor-grab active:cursor-grabbing'}`}
+              className={`hidden items-center gap-2.5 px-1 pt-0.5 pb-1.5 shrink-0 select-none touch-none ${uiStyle === 'google' ? '' : 'md:flex'} ${forceOpen ? 'pl-3.5' : 'cursor-grab active:cursor-grabbing'}`}
             >
               {/* 独立子窗口：标题条即原生窗口拖动区(卡片内拖拽已禁用)，与 Sidebar 头部同构(灯在左标题在右) */}
               {forceOpen && (
@@ -3077,7 +3204,7 @@ export function SettingsModal({
                 </span>
               )}
               <button
-                onClick={() => setSettingsOpen(false)}
+                onClick={requestClose}
                 style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
                 className="flex w-3 h-3 rounded-full bg-red-500 hover:bg-red-600 transition-colors group items-center justify-center shrink-0"
                 aria-label="关闭"
@@ -3096,23 +3223,15 @@ export function SettingsModal({
                   active={activeSection === TOP_ITEM.id}
                   onClick={() => setActiveSection(TOP_ITEM.id)}
                 />
-                {/* 分组（「管理」不在滚动区里：它钉在侧栏底部，见本 nav 末尾） */}
+                {/* 分组：管理组也放回滚动区，跟其他分组一起滚（不再钉在底部） */}
                 <div className="md:mt-1 flex md:flex-col gap-0.5 md:gap-0 md:space-y-2 md:flex md:items-stretch">
                   {(isEphemeral ? EPHEMERAL_NAV_GROUPS : NAV_GROUPS)
-                    .filter((g) => g.title !== '管理')
+                    .map((g) => ({ ...g, items: g.items.filter(navItemVisible) }))
+                    .filter((g) => g.items.length > 0)
                     .map(renderNavGroup)}
                 </div>
               </div>
             </div>
-            {/* 「管理」钉在侧栏底部：额度号池/激活码/注册码 是 adminOnly 的唯一入口，
-                而导航项总高早已超过侧栏可视高——滚轮够不到就等于进不去，所以不给它滚动资格 */}
-            {(isEphemeral ? EPHEMERAL_NAV_GROUPS : NAV_GROUPS)
-              .filter((g) => g.title === '管理' && g.items.some(navItemVisible))
-              .map((g) => (
-                <div key={g.title} className="shrink-0 mt-1 border-t border-line/60 pt-1">
-                  {renderNavGroup(g)}
-                </div>
-              ))}
           </nav>
 
           {/* 移动端一级分组列表（主从）：组标题常驻、一行一分区、右侧当前值摘要。
@@ -3120,10 +3239,14 @@ export function SettingsModal({
               卡片本体在移动端是透明的（桌面端要靠玻璃透出页背），所以这一列必须自带底色，否则组间缝隙露出遮罩；
               列底用 background、行卡用 surface，与预览页 P1 的「凹底 + 浮卡」同构 */}
           <div
+            ref={mobileListRef}
             data-m-list
+            onScroll={syncMobileHead}
             aria-hidden={mobileInDetail || undefined}
             className={cn(
-              'w-full min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background px-4 pb-6 md:hidden',
+              // pt = 页头高度(chrome-top + 48px)。页头现在是绝对定位的覆盖层，
+              // 列表首屏必须让出这条高度；滚动后这段 padding 会随内容移出，正文才从页头底下穿过。
+              'w-full min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background px-4 pb-6 pt-[calc(var(--m-chrome-top)_+_48px)] md:hidden',
               // 详情是滑过来的覆盖层,列表留在它身后(这里再 display:none 会在滑动过程中露出透明卡背)
               mobileInDetail && 'pointer-events-none'
             )}
@@ -3132,7 +3255,7 @@ export function SettingsModal({
                 正常模式 → 用户中心(头像 + 称呼/用户名 + 邮箱摘要);临时模式 → 会话管理(剩余时间)。
                 「账户」分组里那行用户中心随之移除,同一列表不留两个入口。 */}
             <div className="pt-3">
-              <div className="divide-y divide-line/50 overflow-hidden rounded-xl border border-line/60 bg-surface">
+              <div className="m-set-listcard overflow-hidden rounded-[14px] bg-surface">
                 {isEphemeral ? (
                   <MobileSettingsRow
                     item={EPHEMERAL_SESSION_ITEM}
@@ -3143,45 +3266,60 @@ export function SettingsModal({
                     }}
                   />
                 ) : (
-                  <MobileSettingsRow
-                    item={{ id: 'account', label: profile?.nickname || profile?.name || session?.user?.name || '用户中心', icon: User }}
-                    summary={profile?.email || session?.user?.email || undefined}
+                  /* 账户行两行化：名字与邮箱不再被推到一行两端(读起来像表格)，
+                     头像 40px、名字 16.5/600、邮箱 12.5 次级色，右侧只留箭头 */
+                  <button
                     onClick={() => {
                       setActiveSection('account')
                       setMobileInDetail(true)
                     }}
-                    lead={
-                      profile?.image ? (
-                        <img
-                          src={profile.image}
-                          alt=""
-                          referrerPolicy="no-referrer"
-                          className="h-7 w-7 shrink-0 rounded-full object-cover"
-                        />
-                      ) : (
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent/20 text-[12.5px] font-medium text-accent">
-                          {(profile?.name || profile?.email || session?.user?.email || '?').charAt(0).toUpperCase()}
+                    className="flex w-full items-center gap-3.5 px-3.5 py-3 text-left touch-manipulation active:bg-surface-subtle/70"
+                    style={{ WebkitTapHighlightColor: 'transparent' }}
+                  >
+                    {profile?.image ? (
+                      <img
+                        src={profile.image}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        className="h-10 w-10 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[15px] font-medium text-content-primary">
+                        {(profile?.name || profile?.email || session?.user?.email || '?').charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[16.5px] font-semibold leading-[1.25] text-content-primary">
+                        {profile?.nickname || profile?.name || session?.user?.name || '用户中心'}
+                      </span>
+                      {(profile?.email || session?.user?.email) && (
+                        <span className="mt-[3px] block truncate text-[12.5px] leading-[1.3] text-content-secondary">
+                          {profile?.email || session?.user?.email}
                         </span>
-                      )
-                    }
-                  />
+                      )}
+                    </span>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-content-muted" />
+                  </button>
                 )}
               </div>
             </div>
             {(isEphemeral ? EPHEMERAL_NAV_GROUPS.filter((g) => g.title !== '会话') : NAV_GROUPS)
-              .map((g) => ({ ...g, items: g.items.filter((i) => i.id !== 'account' && navItemVisible(i)) }))
+              // 手机端不展示「本地文件（仅桌面端）」：这是一条在手机上永远不可用的行，
+              // 留在同一清单里只会强化「桌面版缩水」的印象；桌面导航不受影响。
+              .map((g) => ({ ...g, items: g.items.filter((i) => i.id !== 'account' && i.id !== 'localfiles' && navItemVisible(i)) }))
               .filter((g) => g.items.length)
               .map((group) => (
-              <div key={group.title} className="pt-4">
-                <div className="px-1 pb-1.5 text-[12px] font-semibold tracking-[0.02em] text-content-muted">
+              <div key={group.title} className="pt-[26px]">
+                <div className="m-set-listgroup px-1.5 pb-2 text-[12px] font-medium tracking-[0.02em] text-content-secondary/80">
                   {group.title}
                 </div>
-                <div className="divide-y divide-line/50 overflow-hidden rounded-xl border border-line/60 bg-surface">
-                  {group.items.map((item) => (
+                <div className="m-set-listcard overflow-hidden rounded-[14px] bg-surface">
+                  {group.items.map((item, index) => (
                     <MobileSettingsRow
                       key={item.id}
                       item={item}
                       summary={sectionSummary[item.id]}
+                      divider={index > 0}
                       onClick={() => {
                         setActiveSection(item.id)
                         setMobileInDetail(true)
@@ -3198,22 +3336,22 @@ export function SettingsModal({
               以外填 bg-surface(与缝隙色条同色),恰好补齐缺口且不与玻璃重叠 */}
           <div
             aria-hidden
-            className="hidden md:block absolute left-2 top-2 w-3 h-3 pointer-events-none"
+            className="m-set-corner hidden md:block absolute left-2 top-2 w-3 h-3 pointer-events-none"
             style={{ backgroundImage: 'radial-gradient(circle at 100% 100%, transparent 11.5px, rgb(var(--surface)) 12px)' }}
           />
           <div
             aria-hidden
-            className="hidden md:block absolute left-[172px] top-2 w-3 h-3 pointer-events-none"
+            className="m-set-corner hidden md:block absolute left-[172px] top-2 w-3 h-3 pointer-events-none"
             style={{ backgroundImage: 'radial-gradient(circle at 0% 100%, transparent 11.5px, rgb(var(--surface)) 12px)' }}
           />
           <div
             aria-hidden
-            className="hidden md:block absolute left-2 bottom-2 w-3 h-3 pointer-events-none"
+            className="m-set-corner hidden md:block absolute left-2 bottom-2 w-3 h-3 pointer-events-none"
             style={{ backgroundImage: 'radial-gradient(circle at 100% 0%, transparent 11.5px, rgb(var(--surface)) 12px)' }}
           />
           <div
             aria-hidden
-            className="hidden md:block absolute left-[172px] bottom-2 w-3 h-3 pointer-events-none"
+            className="m-set-corner hidden md:block absolute left-[172px] bottom-2 w-3 h-3 pointer-events-none"
             style={{ backgroundImage: 'radial-gradient(circle at 0% 0%, transparent 11.5px, rgb(var(--surface)) 12px)' }}
           />
 
@@ -3232,11 +3370,19 @@ export function SettingsModal({
               'md:static md:z-auto md:pointer-events-auto md:translate-x-0'
             )}
           >
-          <div data-no-drag className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-4 pt-3 pb-3 md:pt-0">
+          {/* 移动端页头是绝对定位覆盖层：内容列首屏让出 chrome-top + 48px(页头高) + 12px 呼吸；
+              桌面端维持原 pt-0，由 sticky 分区标题接管。
+              这个滚动容器同时是二级页页头的判定源（onScroll → syncMobileHead） */}
+          <div
+            ref={mobileDetailRef}
+            data-no-drag
+            onScroll={syncMobileHead}
+            className="m-set-content flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-4 pt-[calc(var(--m-chrome-top)_+_60px)] pb-3 md:pt-0"
+          >
             {/* Section title —— 桌面端标题栏语义拖拽手柄:横贯内容宽,按下立即拖动窗口;sticky 钉在滚动区顶部,内容上滑时标题不随滚。
                 移动端不在这里显示标题:页头带已经承载「‹ 设置 + 分区名」,再显示一次就是双标题 */}
-            <div data-drag-handle className="hidden sticky top-0 z-10 -mx-4 items-center bg-surface px-4 pb-3 pt-5 cursor-grab select-none active:cursor-grabbing md:flex md:touch-none">
-              <h3 className="text-base font-semibold text-content-primary text-left">
+            <div data-drag-handle className="m-set-titlebar hidden sticky top-0 z-10 -mx-4 items-center bg-surface px-4 pb-3 pt-5 cursor-grab select-none active:cursor-grabbing md:flex md:touch-none">
+              <h3 className="m-set-title text-base font-semibold text-content-primary text-left">
                 {sectionTitle}
               </h3>
             </div>
@@ -3263,7 +3409,7 @@ export function SettingsModal({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => setActiveSection('session')}
-                    className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors"
+                    className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors"
                   >
                     <Timer className="w-4 h-4 text-accent mb-1.5" />
                     <p className="text-xs font-medium text-content-primary truncate">
@@ -3273,7 +3419,7 @@ export function SettingsModal({
                   </button>
                   <button
                     onClick={() => setActiveSection('session')}
-                    className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors"
+                    className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors"
                   >
                     <MessageSquare className="w-4 h-4 text-accent mb-1.5" />
                     <p className="text-xs font-medium text-content-primary truncate">
@@ -3323,7 +3469,7 @@ export function SettingsModal({
 
                 {/* KPI 行:今日 / 30 天 / 活跃天数 */}
                 <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left">
+                  <div className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left">
                     <p className="text-[10px] text-content-muted">今日 Token</p>
                     <p className="text-[15px] font-semibold font-mono text-content-primary tabular-nums mt-1 leading-none">
                       {loading ? '—' : fmtTok(ovTodayTok)}
@@ -3332,7 +3478,7 @@ export function SettingsModal({
                       {ovDeltaPct === null ? '暂无对比' : `较昨日 ${ovDeltaPct > 0 ? '+' : ''}${ovDeltaPct}%`}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left">
+                  <div className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left">
                     <p className="text-[10px] text-content-muted">30 天 Token</p>
                     <p className="text-[15px] font-semibold font-mono text-content-primary tabular-nums mt-1 leading-none">
                       {loading ? '—' : fmtTok(usageStats?.chat.totals.totalTokens ?? 0)}
@@ -3341,7 +3487,7 @@ export function SettingsModal({
                       {usageStats ? `${usageStats.chat.totals.messages.toLocaleString()} 条消息` : '—'}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left">
+                  <div className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left">
                     <p className="text-[10px] text-content-muted">活跃天数</p>
                     <p className="text-[15px] font-semibold font-mono text-content-primary tabular-nums mt-1 leading-none">
                       {loading ? '—' : `${ovActiveDays} 天`}
@@ -3351,7 +3497,7 @@ export function SettingsModal({
                 </div>
 
                 {/* 最近 7 天用量:灰白系双柱(聊天=深灰/生图=浅灰),圆角与零值桩样式对齐用量统计页 */}
-                <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                   <div className="flex items-center gap-2.5 mb-2">
                     <p className="text-[11px] font-medium text-content-secondary text-left">最近 7 天用量</p>
                     <span className="flex items-center gap-1 text-[10px] text-content-muted">
@@ -3416,7 +3562,7 @@ export function SettingsModal({
                   {/* 服务商状态 */}
                   <button
                     onClick={() => setActiveSection('providers')}
-                    className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors group"
+                    className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors group"
                   >
                     <div className="flex items-center justify-between mb-1.5">
                       <Key className="w-4 h-4 text-accent" />
@@ -3438,7 +3584,7 @@ export function SettingsModal({
                   {/* 记忆状态 */}
                   <button
                     onClick={() => setActiveSection('memory')}
-                    className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors group"
+                    className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors group"
                   >
                     <div className="flex items-center justify-between mb-1.5">
                       <Brain className="w-4 h-4 text-purple-500" />
@@ -3458,13 +3604,13 @@ export function SettingsModal({
                         aria-label="记忆开关"
                         onClick={(e) => { e.stopPropagation(); handleToggleMemory(!memoryEnabled) }}
                         className={cn(
-                          'relative w-8 h-[18px] rounded-full transition-colors shrink-0 ml-auto cursor-pointer',
+                          'relative w-8 h-[18px] rounded-full transition-colors duration-base ease-standard shrink-0 ml-auto cursor-pointer',
                           memoryEnabled ? 'bg-accent' : 'bg-surface-subtle'
                         )}
                       >
                         <span
                           className={cn(
-                            'absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white dark:bg-surface transition-transform',
+                            'absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white dark:bg-surface transition-transform duration-base ease-standard',
                             memoryEnabled && 'translate-x-[14px]'
                           )}
                         />
@@ -3475,7 +3621,7 @@ export function SettingsModal({
                   {/* 自定义模型 */}
                   <button
                     onClick={() => setActiveSection('models')}
-                    className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors group"
+                    className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors group"
                   >
                     <div className="flex items-center justify-between mb-1.5">
                       <Cpu className="w-4 h-4 text-blue-500" />
@@ -3492,7 +3638,7 @@ export function SettingsModal({
                   {/* 主题 */}
                   <button
                     onClick={() => setActiveSection('general')}
-                    className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors group"
+                    className="rounded-xl set-card bg-surface/60 px-3 py-2.5 text-left hover:bg-surface-subtle/40 transition-colors group"
                   >
                     <div className="flex items-center justify-between mb-1.5">
                       <Settings2 className="w-4 h-4 text-amber-500" />
@@ -3502,13 +3648,14 @@ export function SettingsModal({
                     </div>
                     <p className="text-xs font-medium text-content-primary">外观</p>
                     <p className="text-[10px] text-content-muted mt-0.5 truncate">
-                      浅色 · 深色 · 跟随系统 · 格子
+                      {/* 从 THEME_CHOICES 推导: 日后增删主题不用再回来改这行 */}
+                      {THEME_CHOICES.map((c) => c.label).join(' · ')}
                     </p>
                   </button>
                 </div>
 
                 {/* 快速操作 */}
-                <div className="rounded-xl border border-line/60 bg-surface/60 px-3 py-2.5">
+                <div className="rounded-xl set-card bg-surface/60 px-3 py-2.5">
                   <p className="text-[11px] font-medium text-content-secondary mb-2 text-left">快速操作</p>
                   <div className="flex flex-wrap gap-1.5">
                     <button
@@ -3561,7 +3708,7 @@ export function SettingsModal({
                     <div className="space-y-3">
 
                       {/* 引擎选择:桌面 = 音量风格滑块轨道;移动 = 整行点开第三层单选页(滑块在 390px 上拇指对不准两档) */}
-                      <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                      <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                         <div className="mb-2 hidden items-center justify-between md:flex">
                           <div className="flex items-center gap-1.5">
                             <Globe className="w-4 h-4 text-content-secondary" />
@@ -3593,7 +3740,7 @@ export function SettingsModal({
                           <div className="relative h-2 rounded-full bg-surface-muted border border-line/60">
                             {/* 渐变填充 */}
                             <div
-                              className="absolute top-0 bottom-0 left-0 rounded-full bg-accent/60 transition-all duration-200"
+                              className="absolute top-0 bottom-0 left-0 rounded-full bg-accent/60 transition-[width] duration-200"
                               style={{ width: `${(engineIndex / (SEARCH_ENGINE_LIST.length - 1)) * 100}%` }}
                             />
                             {/* 滑块thumb */}
@@ -3613,7 +3760,7 @@ export function SettingsModal({
                             />
                             {/* 滑块圆点 */}
                             <div
-                              className="absolute top-1/2 w-4 h-4 rounded-full bg-white dark:bg-surface border-2 border-accent shadow-md transition-all duration-200 cursor-pointer -translate-x-1/2 -translate-y-1/2"
+                              className="absolute top-1/2 w-4 h-4 rounded-full bg-white dark:bg-surface border-2 border-accent shadow-md transition-[left] duration-200 cursor-pointer -translate-x-1/2 -translate-y-1/2"
                               style={{ left: `${(engineIndex / (SEARCH_ENGINE_LIST.length - 1)) * 100}%` }}
                             />
                           </div>
@@ -3630,7 +3777,7 @@ export function SettingsModal({
                       </div>
 
                       {/* 当前引擎 Key 配置卡片 */}
-                      <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                      <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                         <div className="flex items-center gap-2 mb-0.5">
                           <p className="text-xs font-semibold text-content-primary">{engineDef.name}</p>
                           {key && (
@@ -3693,7 +3840,7 @@ export function SettingsModal({
                             onClick={() => handleSaveSearchKey(searchEngine)}
                             disabled={!draft.trim() || saving}
                             className={cn(
-                              'px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 shrink-0',
+                              'px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shrink-0',
                               draft.trim() && !saving
                                 ? 'bg-accent text-accent-foreground hover:bg-accent/90 active:scale-[0.97]'
                                 : 'bg-surface-muted text-content-muted cursor-not-allowed'
@@ -3706,7 +3853,7 @@ export function SettingsModal({
                       </div>
 
                       {/* 工作原理 */}
-                      <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2">
+                      <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2">
                         <div className="flex items-center gap-1.5">
                           <Sparkles className="w-3.5 h-3.5 text-content-secondary" />
                           <p className="text-xs font-medium text-content-secondary">工作原理</p>
@@ -3720,7 +3867,7 @@ export function SettingsModal({
                       </div>
 
                       {/* 测试搜索 */}
-                      <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                      <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                         <div className="flex items-center gap-1.5">
                           <Search className="w-3.5 h-3.5 text-content-secondary" />
                           <p className="text-xs font-medium text-content-secondary">测试搜索</p>
@@ -3786,7 +3933,7 @@ export function SettingsModal({
                       </div>
 
                       {/* 地图服务(plan_trip 行程卡片) */}
-                      <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                      <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                         <div className="flex items-center gap-1.5 mb-0.5">
                           <MapPin className="w-3.5 h-3.5 text-content-secondary" />
                           <p className="text-xs font-semibold text-content-primary">地图服务（行程规划）</p>
@@ -3847,7 +3994,7 @@ export function SettingsModal({
                             onClick={handleSaveAmapKeys}
                             disabled={amapSaving || (!amapDraft.jsKey.trim() && !amapDraft.sec.trim() && !amapDraft.ws.trim())}
                             className={cn(
-                              'px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 shrink-0',
+                              'px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shrink-0',
                               (amapDraft.jsKey.trim() || amapDraft.sec.trim() || amapDraft.ws.trim()) && !amapSaving
                                 ? 'bg-accent text-accent-foreground hover:bg-accent/90 active:scale-[0.97]'
                                 : 'bg-surface-muted text-content-muted cursor-not-allowed'
@@ -3882,7 +4029,7 @@ export function SettingsModal({
                   <div className="space-y-3">
                     {/* 内置模型 */}
                     {imageBuiltinModels.length > 0 && (
-                      <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                      <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                         <div className="flex items-center gap-1.5">
                           <p className="text-xs font-medium text-content-secondary text-left">内置模型</p>
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-subtle/80 text-content-muted font-mono shrink-0">
@@ -3895,10 +4042,10 @@ export function SettingsModal({
                               key={m.id as string}
                               onClick={() => setImageModel(m.id as string)}
                               className={cn(
-                                'relative px-3 py-2.5 rounded-xl border text-left transition-all',
+                                'relative px-3 py-2.5 rounded-xl border set-card text-left transition',
                                 imageModel === m.id
                                   ? 'border-accent bg-accent/10 ring-2 ring-accent/20'
-                                  : 'border-line/60 bg-surface-muted/60 hover:border-line-strong'
+                                  : 'border-transparent bg-surface-muted/60'
                               )}
                             >
                               {imageModel === m.id && (
@@ -3920,7 +4067,7 @@ export function SettingsModal({
                     )}
 
                     {/* 自定义模型 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                           <p className="text-xs font-medium text-content-secondary text-left">我的自定义模型</p>
@@ -3946,10 +4093,10 @@ export function SettingsModal({
                             <div
                               key={m.id as string}
                               className={cn(
-                                'flex items-center justify-between px-2.5 py-2 rounded-lg border transition-all',
+                                'flex items-center justify-between px-2.5 py-2 rounded-lg border set-card transition',
                                 imageModel === m.id
                                   ? 'border-accent bg-accent/10'
-                                  : 'border-line/40 bg-surface-muted/60'
+                                  : 'border-transparent bg-surface-muted/60'
                               )}
                             >
                               <div className="flex items-center gap-2 min-w-0">
@@ -4015,7 +4162,7 @@ export function SettingsModal({
                     <details
                       open={imageFormOpen}
                       onToggle={(e) => setImageFormOpen(e.currentTarget.open)}
-                      className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 group"
+                      className="rounded-xl set-card bg-surface/60 px-3.5 py-3 group"
                     >
                       <summary className="flex items-center justify-between cursor-pointer list-none">
                         <p className="text-xs font-medium text-content-secondary text-left">
@@ -4091,7 +4238,7 @@ export function SettingsModal({
                             onClick={handleSaveImageModel}
                             disabled={imageCmSaving}
                             className={cn(
-                              'flex-1 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5',
+                              'flex-1 px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5',
                               !imageCmSaving && imageCmForm.name.trim() && imageCmForm.modelId.trim() && imageCmForm.baseURL.trim()
                                 ? 'bg-accent text-accent-foreground hover:bg-accent-hover'
                                 : 'bg-surface-muted text-content-muted cursor-not-allowed'
@@ -4115,7 +4262,7 @@ export function SettingsModal({
                     </details>
 
                     {/* 尺寸设置 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                       <div className="flex items-center justify-between">
                         <p className="text-xs font-medium text-content-secondary text-left">图片尺寸</p>
                         {imageSizeSaving && <Loader2 className="w-3 h-3 text-content-muted animate-spin" />}
@@ -4130,10 +4277,10 @@ export function SettingsModal({
                             key={opt.value}
                             onClick={() => setImageSize(opt.value)}
                             className={cn(
-                              'relative px-3 py-2.5 rounded-xl border text-left transition-all',
+                              'relative px-3 py-2.5 rounded-xl border set-card text-left transition',
                               imageSize === opt.value
                                 ? 'border-accent bg-accent/10 ring-2 ring-accent/20'
-                                : 'border-line/60 bg-surface-muted/60 hover:border-line-strong'
+                                : 'border-transparent bg-surface-muted/60'
                             )}
                           >
                             {imageSize === opt.value && (
@@ -4194,7 +4341,7 @@ export function SettingsModal({
                         {!configuredCollapsed && (
                           <div className="space-y-2 mt-2">
                             {sortedConfiguredList.map((provider) => (
-                              <div key={provider.id} className="animate-in fade-in slide-in-from-top-2 duration-300">
+                              <div key={provider.id} className="enter-pop">
                                 {renderProviderCard(provider)}
                               </div>
                             ))}
@@ -4229,7 +4376,7 @@ export function SettingsModal({
                         {!unconfiguredCollapsed && (
                           <div className="space-y-2 mt-2">
                             {unconfigured.map((provider) => (
-                              <div key={provider.id} className="animate-in fade-in slide-in-from-top-2 duration-300">
+                              <div key={provider.id} className="enter-pop">
                                 {renderProviderCard(provider)}
                               </div>
                             ))}
@@ -4430,7 +4577,7 @@ export function SettingsModal({
                         {customModels.map((model) => (
                           <li
                             key={model.id}
-                            className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-surface/60 border border-line/60"
+                            className="flex items-center justify-between px-3 py-2.5 rounded-xl set-card bg-surface/60"
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', CUSTOM_MODEL_DOT)} />
@@ -4470,7 +4617,7 @@ export function SettingsModal({
                     )}
 
                     {/* 快速预设管理：内置 + 用户自定义 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                       <div className="flex items-center justify-between">
                         <p className="text-[11px] font-medium text-content-secondary text-left">快速预设</p>
                         <button
@@ -4616,7 +4763,7 @@ export function SettingsModal({
                     <details
                       open={cmFormOpen}
                       onToggle={(e) => setCmFormOpen(e.currentTarget.open)}
-                      className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 group"
+                      className="rounded-xl set-card bg-surface/60 px-3.5 py-3 group"
                     >
                       <summary className="flex items-center justify-between cursor-pointer list-none">
                         <p className="text-xs font-medium text-content-secondary text-left">
@@ -4827,7 +4974,7 @@ export function SettingsModal({
                             onClick={handleCmSave}
                             disabled={cmSaving || (cmForm.keySource === 'own' && !cmForm.apiKey && !cmForm.id)}
                             className={cn(
-                              'px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 shrink-0',
+                              'px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5 shrink-0',
                               !(cmSaving || (cmForm.keySource === 'own' && !cmForm.apiKey && !cmForm.id))
                                 ? 'bg-accent text-accent-foreground hover:bg-accent-hover'
                                 : 'bg-surface-muted text-content-muted cursor-not-allowed'
@@ -4854,6 +5001,7 @@ export function SettingsModal({
 
                 {/* 对话搬运(本地 dev ↔ 线上 的会话导出/导入) */}
                 {activeSection === 'portable' && <PortableSettings />}
+                {activeSection === 'watch' && <WatchSettings />}
 
                 {/* 管理(管理员专属):号池 / 激活码 / 注册码三 tab 共用同一组件按视图切片;接口自行验权,非管理员只会看到 403 降级态 */}
                 {activeSection === 'quota' && <QuotaAdminSection view="pool" />}
@@ -4865,7 +5013,7 @@ export function SettingsModal({
                 {activeSection === 'account' && (
                   <div className="space-y-3 text-left">
                     {/* 用户卡片 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3.5">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3.5">
                       <div className="flex items-center gap-3">
                         {profile?.image ? (
                           <img
@@ -4897,7 +5045,7 @@ export function SettingsModal({
                     </div>
 
                     {/* 修改用户名 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2">
                       <p className="text-xs font-medium text-content-secondary">用户名</p>
                       <div className="flex items-center gap-2">
                         <input
@@ -4912,7 +5060,7 @@ export function SettingsModal({
                           onClick={handleSaveName}
                           disabled={nameSaving || !nameDraft.trim() || nameDraft.trim() === (profile?.name ?? '')}
                           className={cn(
-                            'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0',
+                            'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition shrink-0',
                             nameSaving || !nameDraft.trim() || nameDraft.trim() === (profile?.name ?? '')
                               ? 'bg-surface-muted text-content-muted cursor-not-allowed'
                               : 'bg-accent text-accent-foreground hover:bg-accent-hover'
@@ -4928,7 +5076,7 @@ export function SettingsModal({
                     </div>
 
                     {/* 称呼（AI 怎么叫你）:可留空，留空回退用户名，不回退邮箱前缀 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2">
                       <p className="text-xs font-medium text-content-secondary">称呼</p>
                       <div className="flex items-center gap-2">
                         <input
@@ -4943,7 +5091,7 @@ export function SettingsModal({
                           onClick={handleSaveNickname}
                           disabled={nicknameSaving || nicknameDraft.trim() === (profile?.nickname ?? '')}
                           className={cn(
-                            'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0',
+                            'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition shrink-0',
                             nicknameSaving || nicknameDraft.trim() === (profile?.nickname ?? '')
                               ? 'bg-surface-muted text-content-muted cursor-not-allowed'
                               : 'bg-accent text-accent-foreground hover:bg-accent-hover'
@@ -4960,7 +5108,7 @@ export function SettingsModal({
 
                     {/* 通用档案:只读查看卡——填与改一律走采集弹窗，界面不重复实现一遍档位 */}
                     {!isEphemeral && (
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2" data-profile-card>
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2" data-profile-card>
                       <MSwitchRow
                         label="让 AI 了解这份档案"
                         help="开启后每次对话都会把这些事实告知模型；关闭则完全不注入"
@@ -4997,7 +5145,7 @@ export function SettingsModal({
                       </div>
 
                       {profileDerived && profileDerived.kind !== 'keep' && (
-                        <div className="rounded-lg border border-line/50 bg-surface-muted/50 px-2.5 py-2">
+                        <div className="rounded-lg set-card bg-surface-muted/50 px-2.5 py-2">
                           <p className="text-[11px] leading-snug text-content-secondary">
                             {profileDerived.note}
                           </p>
@@ -5024,7 +5172,7 @@ export function SettingsModal({
                         <button
                           onClick={() => setProbeDialogOpen(true)}
                           className={cn(
-                            'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0',
+                            'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition shrink-0',
                             'bg-accent text-accent-foreground hover:bg-accent-hover'
                           )}
                         >
@@ -5078,7 +5226,7 @@ export function SettingsModal({
                     />
 
                     {/* 访客密码(临时登录入口) */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 text-left">
                           <p className="text-xs font-medium text-content-secondary">访客密码</p>
@@ -5124,7 +5272,7 @@ export function SettingsModal({
                               onClick={() => handleSaveGuestPassword(false)}
                               disabled={guestPwdSaving || !guestPwdDraft.trim() || !guestMainPwdDraft}
                               className={cn(
-                                'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0',
+                                'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition shrink-0',
                                 guestPwdSaving || !guestPwdDraft.trim() || !guestMainPwdDraft
                                   ? 'bg-surface-muted text-content-muted cursor-not-allowed'
                                   : 'bg-accent text-accent-foreground hover:bg-accent-hover'
@@ -5158,7 +5306,7 @@ export function SettingsModal({
                     </div>
 
                     {/* 临时聊天(隔离区管理) */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2">
                       <p className="text-xs font-medium text-content-secondary text-left">临时聊天</p>
                       <p className="text-[10px] text-content-muted/70 text-left">
                         通过访客密码产生的对话保存在这里，正常历史列表不可见。
@@ -5168,7 +5316,7 @@ export function SettingsModal({
                       ) : (
                         <div className="space-y-1.5">
                           {ephemeralItems.map((it) => (
-                            <div key={it.id} className="rounded-lg border border-line/40 bg-surface px-2.5 py-2 space-y-1.5">
+                            <div key={it.id} className="rounded-lg set-card bg-surface px-2.5 py-2 space-y-1.5">
                               <div className="flex items-center gap-1.5">
                                 <div className="min-w-0 flex-1 text-left">
                                   <p className="text-[11px] font-medium text-content-primary truncate">
@@ -5243,7 +5391,7 @@ export function SettingsModal({
                     </div>
 
                     {/* 临时模式记忆读取开关 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0 text-left">
                           <p className="text-xs font-medium text-content-secondary">临时模式允许读取我的记忆</p>
@@ -5255,13 +5403,13 @@ export function SettingsModal({
                           onClick={() => handleToggleMemoryInjection(!(ephemeralSettings?.ephemeralMemoryInjection ?? false))}
                           disabled={memInjectSaving}
                           className={cn(
-                            'relative w-9 h-5 rounded-full transition-colors shrink-0',
+                            'relative w-9 h-5 rounded-full transition-colors duration-base ease-standard shrink-0',
                             (ephemeralSettings?.ephemeralMemoryInjection ?? false) ? 'bg-accent' : 'bg-surface-subtle'
                           )}
                         >
                           <span
                             className={cn(
-                              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white dark:bg-surface transition-transform',
+                              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white dark:bg-surface transition-transform duration-base ease-standard',
                               (ephemeralSettings?.ephemeralMemoryInjection ?? false) && 'translate-x-4'
                             )}
                           />
@@ -5310,7 +5458,7 @@ export function SettingsModal({
                                 key={tab.id}
                                 onClick={() => setUsageTab(tab.id)}
                                 className={cn(
-                                  'px-3 py-1 rounded-md text-[11px] font-medium transition-all',
+                                  'px-3 py-1 rounded-md text-[11px] font-medium transition',
                                   usageTab === tab.id
                                     ? 'bg-surface text-content-primary shadow-sm'
                                     : 'text-content-muted hover:text-content-secondary'
@@ -5341,7 +5489,7 @@ export function SettingsModal({
                         ) : usageTab === 'chat' ? (
                           <>
                             {/* 总览卡片 */}
-                            <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                            <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                               <div className="flex items-end justify-between gap-3">
                                 <div className="text-left">
                                   <p className="text-[11px] text-content-muted">累计消耗 Token</p>
@@ -5388,9 +5536,54 @@ export function SettingsModal({
                               </div>
                             </div>
 
+                            {/* 缓存命中（上游报了命中量才显示，避免不支持缓存的模型永远挂个 0） */}
+                            {(usageStats.chat.totals.cacheReadTokens ?? 0) > 0 && (() => {
+                              const t = usageStats.chat.totals
+                              const cacheRead = t.cacheReadTokens ?? 0
+                              const cacheRate = t.promptTokens > 0
+                                ? Math.round((cacheRead / t.promptTokens) * 100)
+                                : 0
+                              return (
+                                <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
+                                  <div className="flex items-end justify-between gap-3">
+                                    <div className="text-left">
+                                      <p className="text-[11px] text-content-muted">缓存命中输入</p>
+                                      <p className="text-xl font-semibold text-amber-600 dark:text-amber-400 font-mono leading-tight">
+                                        {cacheRead.toLocaleString()}
+                                        <span className="text-xs font-normal text-content-muted ml-1">tokens</span>
+                                      </p>
+                                    </div>
+                                    <div className="text-right">
+                                      <p className="text-[11px] text-content-muted">输入命中率</p>
+                                      <p className="text-lg font-semibold text-content-primary font-mono leading-tight">
+                                        {cacheRate}%
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 h-1.5 rounded-full bg-surface-muted overflow-hidden flex">
+                                    <div
+                                      className="h-full bg-amber-500/80"
+                                      style={{ width: `${cacheRate}%` }}
+                                      title={`缓存命中 ${cacheRead.toLocaleString()}`}
+                                    />
+                                    <div
+                                      className="h-full bg-blue-500/40 flex-1"
+                                      title={`未命中 ${Math.max(t.promptTokens - cacheRead, 0).toLocaleString()}`}
+                                    />
+                                  </div>
+                                  <p className="mt-1.5 text-[10px] text-content-muted text-left tabular-nums">
+                                    命中 {cacheRead.toLocaleString()} / 输入 {t.promptTokens.toLocaleString()}
+                                    {(t.cacheWriteTokens ?? 0) > 0
+                                      ? ` · 写入缓存 ${(t.cacheWriteTokens ?? 0).toLocaleString()}`
+                                      : ''}
+                                  </p>
+                                </div>
+                              )
+                            })()}
+
                             {/* 最近 30 天柱状图 */}
                             {usageStats.chat.byDay.length > 0 && (
-                              <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                              <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                                 <p className="text-[11px] font-medium text-content-secondary mb-2 text-left">
                                   最近 30 天 Token 消耗
                                 </p>
@@ -5398,34 +5591,54 @@ export function SettingsModal({
                                   const days = usageStats.chat.byDay
                                   const max = Math.max(...days.map((d) => d.totalTokens), 1)
                                   const sum30 = days.reduce((s, d) => s + d.totalTokens, 0)
+                                  const cacheSum30 = days.reduce((s, d) => s + (d.cacheReadTokens ?? 0), 0)
                                   return (
                                     <>
                                       <div className="flex items-end gap-[3px] h-20">
-                                        {days.map((d) => (
-                                          <div
-                                            key={d.date}
-                                            className="flex-1 flex items-end h-full group"
-                                            title={`${d.date.slice(5)} · ${d.totalTokens.toLocaleString()} tokens`}
-                                          >
+                                        {days.map((d) => {
+                                          const cache = Math.min(d.cacheReadTokens ?? 0, d.totalTokens)
+                                          return (
                                             <div
-                                              className={cn(
-                                                'w-full rounded-t-[3px] transition-colors',
-                                                d.totalTokens > 0
-                                                  ? 'bg-accent/70 group-hover:bg-accent'
-                                                  : 'bg-surface-subtle/60'
-                                              )}
-                                              style={{
-                                                height: d.totalTokens > 0
-                                                  ? `${Math.max((d.totalTokens / max) * 100, 4)}%`
-                                                  : '4px',
-                                              }}
-                                            />
-                                          </div>
-                                        ))}
+                                              key={d.date}
+                                              className="flex-1 flex items-end h-full group"
+                                              title={`${d.date.slice(5)} · ${d.totalTokens.toLocaleString()} tokens${cache > 0 ? ` · 缓存命中 ${cache.toLocaleString()}` : ''}`}
+                                            >
+                                              <div
+                                                className={cn(
+                                                  'w-full relative overflow-hidden rounded-t-[3px] transition-colors',
+                                                  d.totalTokens > 0
+                                                    ? 'bg-accent/70 group-hover:bg-accent'
+                                                    : 'bg-surface-subtle/60'
+                                                )}
+                                                style={{
+                                                  height: d.totalTokens > 0
+                                                    ? `${Math.max((d.totalTokens / max) * 100, 4)}%`
+                                                    : '4px',
+                                                }}
+                                              >
+                                                {/* 柱底琥珀段 = 缓存命中量（输入 token 的子集） */}
+                                                {cache > 0 && (
+                                                  <div
+                                                    className="absolute inset-x-0 bottom-0 bg-amber-500/80"
+                                                    style={{ height: `${(cache / d.totalTokens) * 100}%` }}
+                                                  />
+                                                )}
+                                              </div>
+                                            </div>
+                                          )
+                                        })}
                                       </div>
                                       <div className="flex items-center justify-between mt-1.5 text-[10px] text-content-muted font-mono">
                                         <span>{days[0].date.slice(5)}</span>
-                                        <span>{sum30.toLocaleString()} tokens</span>
+                                        <span className="flex items-center gap-1.5">
+                                          {sum30.toLocaleString()} tokens
+                                          {cacheSum30 > 0 && (
+                                            <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
+                                              命中 {fmtCompactNum(cacheSum30)}
+                                            </span>
+                                          )}
+                                        </span>
                                         <span>{days[days.length - 1].date.slice(5)}</span>
                                       </div>
                                     </>
@@ -5436,7 +5649,7 @@ export function SettingsModal({
 
                             {/* 按模型统计 */}
                             {usageStats.chat.byModel.length > 0 && (
-                              <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                              <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                                 <p className="text-[11px] font-medium text-content-secondary mb-2 text-left">
                                   按模型
                                 </p>
@@ -5445,10 +5658,14 @@ export function SettingsModal({
                                     const pct = usageStats.chat.totals.totalTokens > 0
                                       ? Math.round((m.totalTokens / usageStats.chat.totals.totalTokens) * 100)
                                       : 0
+                                    const mCache = m.cacheReadTokens ?? 0
+                                    const mCacheRate = m.promptTokens > 0
+                                      ? Math.round((mCache / m.promptTokens) * 100)
+                                      : 0
                                     return (
                                       <li
                                         key={m.model}
-                                        className="rounded-lg bg-surface-muted/60 border border-line/40 px-2.5 py-2"
+                                        className="rounded-lg set-card bg-surface-muted/60 px-2.5 py-2"
                                       >
                                         <div className="flex items-center justify-between gap-2">
                                           <span className="text-xs text-content-primary truncate">
@@ -5469,9 +5686,18 @@ export function SettingsModal({
                                             {pct}%
                                           </span>
                                         </div>
-                                        <div className="mt-1 flex items-center justify-between text-[10px] text-content-muted">
-                                          <span>输入 {m.promptTokens.toLocaleString()} · 输出 {m.completionTokens.toLocaleString()}</span>
-                                          <span>{m.messages} 条</span>
+                                        <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-content-muted">
+                                          <span className="truncate">
+                                            输入 {m.promptTokens.toLocaleString()} · 输出 {m.completionTokens.toLocaleString()}
+                                          </span>
+                                          <span className="shrink-0 flex items-center gap-2">
+                                            {mCache > 0 && (
+                                              <span className="text-amber-600 dark:text-amber-400">
+                                                命中 {mCacheRate}%
+                                              </span>
+                                            )}
+                                            <span>{m.messages} 条</span>
+                                          </span>
                                         </div>
                                       </li>
                                     )
@@ -5483,7 +5709,7 @@ export function SettingsModal({
                         ) : (
                           <>
                             {/* 生图总览卡片 */}
-                            <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                            <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                               <div className="flex items-end justify-between gap-3">
                                 <div className="text-left">
                                   <p className="text-[11px] text-content-muted">累计生图</p>
@@ -5549,7 +5775,7 @@ export function SettingsModal({
 
                             {/* 最近 30 天柱状图 */}
                             {usageStats.image.byDay.length > 0 && (
-                              <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                              <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                                 <p className="text-[11px] font-medium text-content-secondary mb-2 text-left">
                                   最近 30 天生图张数
                                 </p>
@@ -5595,7 +5821,7 @@ export function SettingsModal({
 
                             {/* 按模型统计 */}
                             {usageStats.image.byModel.length > 0 && (
-                              <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                              <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                                 <p className="text-[11px] font-medium text-content-secondary mb-2 text-left">
                                   按模型
                                 </p>
@@ -5607,7 +5833,7 @@ export function SettingsModal({
                                     return (
                                       <li
                                         key={m.model}
-                                        className="rounded-lg bg-surface-muted/60 border border-line/40 px-2.5 py-2"
+                                        className="rounded-lg set-card bg-surface-muted/60 px-2.5 py-2"
                                       >
                                         <div className="flex items-center justify-between gap-2">
                                           <span className="text-xs text-content-primary truncate">
@@ -5661,7 +5887,7 @@ export function SettingsModal({
                     {/* ── 导入入口（收起时显示为按钮，展开时显示完整面板）──────── */}
                     {memoryImportOpen ? (
                       /* 展开的导入面板（独立区域，不受列表滚动影响） */
-                      <div className="rounded-xl border border-line/60 bg-surface/40 p-3 space-y-2">
+                      <div className="rounded-xl set-card bg-surface/40 p-3 space-y-2">
                         {/* 标题栏 */}
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5 text-left min-w-0">
@@ -5709,7 +5935,7 @@ export function SettingsModal({
                         </p>
 
                         {/* 参考提示（可复制到其他 AI） */}
-                        <div className="rounded-lg border border-line/60 bg-surface overflow-hidden">
+                        <div className="rounded-lg set-card bg-surface overflow-hidden">
                           <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-surface-muted/50 border-b border-line/40">
                             <span className="text-[11px] font-medium text-content-secondary">参考提示</span>
                             <button
@@ -5760,7 +5986,7 @@ export function SettingsModal({
                               {memoryImportDrafts.map((d, idx) => (
                                 <li
                                   key={idx}
-                                  className="flex items-start gap-1.5 px-2 py-1.5 rounded-md bg-surface-muted/60 border border-line/40"
+                                  className="flex items-start gap-1.5 px-2 py-1.5 rounded-md set-card bg-surface-muted/60"
                                 >
                                   <select
                                     value={d.category}
@@ -5806,7 +6032,7 @@ export function SettingsModal({
                               !memoryImportSource.trim()
                             }
                             className={cn(
-                              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5',
+                              'px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5',
                               memoryImportDrafts.length > 0 && memoryImportSource.trim() && !memoryImportSaving
                                 ? 'bg-purple-500 text-white hover:bg-purple-600 active:scale-[0.97]'
                                 : 'bg-surface-muted text-content-muted cursor-not-allowed'
@@ -5860,7 +6086,7 @@ export function SettingsModal({
                           onClick={handleAddMemory}
                           disabled={!memoryDraft.trim() || memorySaving}
                           className={cn(
-                            'px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 shrink-0',
+                            'px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 shrink-0',
                             memoryDraft.trim() && !memorySaving
                               ? 'bg-accent text-accent-foreground hover:bg-accent-hover active:scale-[0.97]'
                               : 'bg-surface-muted text-content-muted cursor-not-allowed'
@@ -5896,7 +6122,7 @@ export function SettingsModal({
                           return (
                             <div
                               key={key}
-                              className="rounded-lg border border-line/50 bg-surface-muted/40 p-2 space-y-1.5"
+                              className="rounded-lg set-card bg-surface-muted/40 p-2 space-y-1.5"
                             >
                               <p className="text-[10px] text-content-muted">{group.reason}</p>
                               {members.map((m) => (
@@ -5950,7 +6176,7 @@ export function SettingsModal({
                         {memories.map((m) => (
                           <li
                             key={m.id}
-                            className="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-surface-muted/60 border border-line/40"
+                            className="flex items-start gap-2 px-2.5 py-2 rounded-lg set-card bg-surface-muted/60"
                           >
                             {memoryEditingId === m.id ? (
                               <div className="flex-1 min-w-0 space-y-1.5">
@@ -5977,7 +6203,7 @@ export function SettingsModal({
                                     onClick={() => handleSaveMemoryEdit(m.id)}
                                     disabled={!memoryEditDraft.trim() || memorySavingEdit}
                                     className={cn(
-                                      'px-2.5 py-1 rounded-md text-[11px] font-medium transition-all flex items-center gap-1',
+                                      'px-2.5 py-1 rounded-md text-[11px] font-medium transition flex items-center gap-1',
                                       memoryEditDraft.trim() && !memorySavingEdit
                                         ? 'bg-accent text-accent-foreground hover:bg-accent-hover'
                                         : 'bg-surface-subtle/80 text-content-muted cursor-not-allowed'
@@ -6053,7 +6279,7 @@ export function SettingsModal({
                             {supersededMemories.map((m) => (
                               <li
                                 key={m.id}
-                                className="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-surface-muted/40 border border-line/30"
+                                className="flex items-start gap-2 px-2.5 py-2 rounded-lg set-card bg-surface-muted/40"
                               >
                                 <div className="flex-1 min-w-0 text-left">
                                   <p className="text-xs text-content-muted break-words leading-relaxed line-through decoration-line-strong/60">
@@ -6124,7 +6350,7 @@ export function SettingsModal({
                     />
 
                     {inTauri ? (
-                      <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2">
+                      <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2">
                         <div className="text-left">
                           <p className="text-xs text-content-secondary">工作区文件夹</p>
                           <p className="text-[11px] text-content-muted">AI 只能在此文件夹内操作；删除会移入回收站，且每次都需你确认。</p>
@@ -6167,13 +6393,13 @@ export function SettingsModal({
                           aria-checked={localFilesExecAutoRun}
                           onClick={() => handleToggleExecAutoRun(!localFilesExecAutoRun)}
                           className={cn(
-                            'relative w-9 h-5 rounded-full transition-colors shrink-0',
+                            'relative w-9 h-5 rounded-full transition-colors duration-base ease-standard shrink-0',
                             localFilesExecAutoRun ? 'bg-amber-500' : 'bg-surface-subtle'
                           )}
                         >
                           <span
                             className={cn(
-                              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white dark:bg-surface transition-transform',
+                              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white dark:bg-surface transition-transform duration-base ease-standard',
                               localFilesExecAutoRun && 'translate-x-4'
                             )}
                           />
@@ -6191,7 +6417,7 @@ export function SettingsModal({
                 {activeSection === 'general' && (
                   <div className="space-y-2.5">
                     {/* Style Settings */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                     <div className="text-left">
                       <p className="text-xs text-content-secondary">AI 风格</p>
                       <p className="text-[11px] text-content-muted max-md:hidden">选择 AI 回答的语气与详略风格</p>
@@ -6223,7 +6449,7 @@ export function SettingsModal({
                     </div>
 
                     {/* 回复长度:篇幅独立于语气可调,长度段在服务端覆盖风格段的详略描述 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                     <div className="text-left">
                       <p className="text-xs text-content-secondary">AI 篇幅</p>
                       <p className="text-[11px] text-content-muted max-md:hidden">只规定篇幅，不改变语气与内容准确性</p>
@@ -6254,23 +6480,28 @@ export function SettingsModal({
                     />
                     </div>
 
-                    {/* 外观是一维的: 上面那排「主题」四选一(浅色/深色/跟随系统/格子),
-                        下面那排随主题切换 —— 非格子时选配色,格子时选日出/白天/暮色/晚上。
+                    <DefaultModelSetting />
+
+                    {/* 外观是一维的: 上面那排「主题」五选一(浅色/深色/跟随系统/格子/壁纸),
+                        下面那排随主题切换 —— 明暗三态选配色,格子选日出/白天/暮色/晚上,
+                        壁纸选自己的明暗子档。
                         明暗走 html.dark,配色走 html[data-pal],格子的光态走
-                        html[data-grid-tone]。注意四个光态里**只有晚上是深底**,
-                        它也是格子下唯一会写 .dark 的态(下游组件靠 .dark 判明暗) */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3">
+                        html[data-grid-tone],壁纸层显隐走 html[data-wallpaper]。
+                        注意四个光态里**只有晚上是深底**,它也是格子下唯一会写 .dark 的态 */}
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3">
                     <div className="text-left">
                       <p className="text-xs text-content-secondary">外观</p>
                       <p className="text-[11px] text-content-muted max-md:hidden">
                         {themeChoice === 'grid'
                           ? '格子四个光态：日出 / 白天(正午) / 暮色(日落) / 晚上(深夜)'
-                          : '月白·桂花金仅深色可用'}
+                          : themeChoice === 'wallpaper'
+                            ? '壁纸是新对话的那片天；对话页会加厚纸，保证正文清晰'
+                            : '黑白基线是唯一配色'}
                       </p>
                     </div>
                     <MSegRow
                       label="主题"
-                      help="「格子」仅在深色基线上另有四个光态"
+                      help="「格子」「壁纸」各有自己的下方选项"
                       options={THEME_CHOICES}
                       value={themeChoice}
                       onChange={handleChoiceChange}
@@ -6291,13 +6522,13 @@ export function SettingsModal({
                           aria-label="按时间自动选择光态"
                           onClick={() => handleAutoToneToggle(!gridToneAuto)}
                           className={cn(
-                            'relative w-8 h-[18px] rounded-full transition-colors shrink-0 ml-auto cursor-pointer',
+                            'relative w-8 h-[18px] rounded-full transition-colors duration-base ease-standard shrink-0 ml-auto cursor-pointer',
                             gridToneAuto ? 'bg-accent' : 'bg-surface-subtle'
                           )}
                         >
                           <span
                             className={cn(
-                              'absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white dark:bg-surface transition-transform',
+                              'absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white dark:bg-surface transition-transform duration-base ease-standard',
                               gridToneAuto && 'translate-x-[14px]'
                             )}
                           />
@@ -6324,10 +6555,20 @@ export function SettingsModal({
                         </p>
                       ) : null}
                       </>
+                    ) : themeChoice === 'wallpaper' ? (
+                      /* 主题 = 壁纸: 下面这排选壁纸自己的明暗(不动用户的 theme 偏好)。
+                         浅色 = 白纸 + 淡蓝薄雾,深色 = 暗底 + 夜景蓝天;
+                         两张照片的处理完全不同(浅色漂白、深色压暗),写在 globals.css 里 */
+                      <MSegRow
+                        label="明暗"
+                        help="浅色 = 白纸薄雾；深色 = 暗底夜色。默认跟随系统"
+                        options={WALLPAPER_SCHEMES}
+                        value={wallpaperScheme}
+                        onChange={handleWallpaperSchemeChange}
+                        className="mt-2.5"
+                      />
                     ) : (
-                      /* 主题 ≠ 格子: 下面这排选配色。每套配色一个色点 + 名称;
-                         月白·桂花金仅深色,选中会自动切到深色。
-                         两套起步,故用两列网格换行,避免 flex 等分把名称挤断 */
+                      /* 主题 ≠ 格子 且 ≠ 壁纸: 下面这排选配色(桂金已删除,只剩黑白基线一项) */
                       <>
                       <div className="mt-2.5 hidden grid-cols-2 gap-2 md:grid">
                         {PALETTES.map((p) => (
@@ -6361,7 +6602,7 @@ export function SettingsModal({
                       </div>
                       <MPickerRow
                         label="配色"
-                        help="每套配色一个色点;月白·桂花金仅深色可用,选中会自动切到深色"
+                        help="黑白基线是唯一配色"
                         options={PALETTES}
                         value={paletteChoice}
                         onPick={handlePaletteChange}
@@ -6369,42 +6610,20 @@ export function SettingsModal({
                       />
                       </>
                     )}
-                    </div>
-
-                    {/* 背景:关 / 内置壁纸(欢迎页) / 桌面毛玻璃(透出软件外部,仅桌面端) */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-2.5">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0 text-left">
-                          {/* 缩略图:一眼看出「壁纸」选项对应哪张图 */}
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src="/wallpaper/bizhi.jpg"
-                            alt=""
-                            className="w-9 h-9 rounded-lg object-cover border border-line/60 shrink-0"
-                            loading="lazy"
-                          />
-                          <div className="min-w-0">
-                            <p className="text-xs text-content-secondary">背景</p>
-                            <p className="text-[11px] text-content-muted max-md:hidden">
-                              {backdropMode === 'image'
-                                ? '新对话欢迎页显示内置壁纸'
-                                : '纯色界面;壁纸仅新对话欢迎页生效'}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                      <MSegRow
-                        label="背景"
-                        help="壁纸只在新对话欢迎页出现;关闭则为纯色界面"
-                        options={BACKDROP_CHOICES}
-                        value={backdropMode}
-                        onChange={setBackdropMode}
-                        className="mt-2"
-                      />
+                    {/* 样式维度与主题/配色正交:管形状与材质,不管颜色。
+                        Big Sur = 玻璃扩到侧栏/顶栏/输入岛 + 双层软阴影 + 系统蓝强调色(仅黑白基线) */}
+                    <MSegRow
+                      label="样式"
+                      help="Big Sur = 玻璃材质；经典 / Google 2020 暂时收起"
+                      options={UI_STYLES}
+                      value={uiStyle}
+                      onChange={handleStyleChange}
+                      className="mt-2.5"
+                    />
                     </div>
 
                     {/* 聊天行为:开关组(卡内两行,行间细线分隔) */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-1">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-1">
                     <MSwitchRow
                       label="思考完毕自动折叠"
                       help="深度思考输出完后自动收起思考框,点击标题可重新展开"
@@ -6412,24 +6631,17 @@ export function SettingsModal({
                       onChange={setAutoCollapseReasoning}
                     />
 
-                    {/* 通知类:桌面=失焦时完成即通知;手机壳另有一条预约式提醒。
+                    {/* 通知类:桌面=失焦时完成即通知;手机壳=生成期常驻进度,
+                        完成后弹完成通知(前台服务保活,切后台也继续跑完)。
                         按 inShell 露出而不是 inTauri —— 安卓壳同样有通知能力,
-                        用桌面专属口径会把手机端这两项整个藏掉。 */}
+                        用桌面专属口径会把这个开关整个藏掉。 */}
                     {inShell && (
                     <>
                     <MSwitchRow
                       label="回复完成通知"
-                      help="窗口失焦时,AI 回复完成弹系统通知提醒"
+                      help="生成时通知栏显示「正在生成」;手机切到后台也会继续跑完,完成即弹系统通知"
                       checked={notifyOnReply}
                       onChange={handleToggleNotify}
-                      className="border-t border-line/60"
-                    />
-                    <MSegRow
-                      label="离开后提醒我回来看"
-                      help="发消息后过这么久催一次。手机切后台会暂停生成,回来才有结果,所以是「催回来看」而不是「已完成」"
-                      options={REMINDER_DELAY_CHOICES}
-                      value={reminderDelay}
-                      onChange={handleChangeReminderDelay}
                       className="border-t border-line/60"
                     />
                     </>
@@ -6476,7 +6688,7 @@ export function SettingsModal({
                     </div>
 
                     {/* 清空本次临时对话(两段式确认,防误触) */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 flex items-center justify-between gap-3">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 flex items-center justify-between gap-3">
                       <div className="text-left min-w-0">
                         <p className="text-xs text-content-secondary">清空本次临时对话</p>
                         <p className="text-[11px] text-content-muted">
@@ -6507,7 +6719,7 @@ export function SettingsModal({
                     </div>
 
                     {/* 结束临时会话 */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 flex items-center justify-between gap-3">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 flex items-center justify-between gap-3">
                       <div className="text-left min-w-0">
                         <p className="text-xs text-content-secondary">结束临时会话</p>
                         <p className="text-[11px] text-content-muted max-md:hidden">退出登录并返回临时聊天登录页</p>
@@ -6530,7 +6742,7 @@ export function SettingsModal({
                     <p className="text-xs text-content-secondary text-left leading-relaxed">
                       在下方服务商官网注册并创建 API Key，然后粘贴到「服务商」分类中即可开始使用。
                     </p>
-                    <div className="rounded-xl border border-line/60 bg-surface/60 p-3.5">
+                    <div className="rounded-xl set-card bg-surface/60 p-3.5">
                       <ul className="text-[11px] space-y-1.5">
                         {providers.map((provider) => {
                           const url = PROVIDER_URL[provider.id]
@@ -6556,7 +6768,7 @@ export function SettingsModal({
                       安卓客户端把本站打包成 App,界面、账号与会话数据与网页完全一致。
                     </p>
 
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
                       <div className="flex items-center gap-2.5">
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-content-primary">
                           <Smartphone className="w-4 h-4" />
@@ -6600,7 +6812,7 @@ export function SettingsModal({
                       )}
                     </div>
 
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 text-left">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 text-left">
                       <p className="text-xs text-content-secondary">安装步骤</p>
                       <ol className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-content-muted">
                         <li>1. 建议直接用手机浏览器打开本页下载,省掉传文件这一步。</li>
@@ -6620,7 +6832,7 @@ export function SettingsModal({
                 {activeSection === 'about' && (
                   <div className="space-y-2.5">
                     {/* App identity */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-4 flex flex-col items-center gap-2">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-4 flex flex-col items-center gap-2">
                       <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center">
                         <MessageSquare className="w-6 h-6 text-accent-foreground" />
                       </div>
@@ -6629,7 +6841,7 @@ export function SettingsModal({
                     </div>
 
                     {/* Info rows */}
-                    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-2.5 divide-y divide-line/40">
+                    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-2.5 divide-y divide-line/40">
                       <div className="flex items-center justify-between gap-3 py-2">
                         <span className="text-xs text-content-secondary shrink-0">版本</span>
                         <span className="text-xs text-content-primary text-right">0.1.0</span>
@@ -6653,7 +6865,7 @@ export function SettingsModal({
                       href="https://github.com/molinglong"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl border border-line/60 bg-surface/60 text-xs text-content-primary hover:border-line-strong transition-colors"
+                      className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl set-card bg-surface/60 text-xs text-content-primary transition-colors"
                     >
                       <GitBranch className="w-4 h-4 text-content-muted shrink-0" />
                       GitHub · molinglong
@@ -6732,7 +6944,7 @@ function PresetModelsManager({
     overrides.filter((o) => o.provider === providerId)
 
   return (
-    <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+    <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Settings2 className="w-3.5 h-3.5 text-content-secondary" />
@@ -6877,7 +7089,7 @@ function PresetModelsManager({
 
                   {/* 添加表单：仅在当前 provider 触发时显示 */}
                   {formOpen && form.provider === p.id && (
-                    <div className="mt-2 p-2.5 rounded-lg border border-accent/30 bg-accent/5 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="mt-2 p-2.5 rounded-lg border border-accent/30 bg-accent/5 space-y-2 enter-pop">
                       <p className="text-[11px] font-medium text-accent">添加模型到 {p.name}</p>
                       <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
                         <input
@@ -7072,7 +7284,7 @@ function ApiTokensSection() {
 
   return (
     <div className="space-y-3 text-left">
-      <div className="rounded-xl border border-line/60 bg-surface/60 px-3.5 py-3 space-y-2.5">
+      <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs text-content-secondary">API 令牌</p>

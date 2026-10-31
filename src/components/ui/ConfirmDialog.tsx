@@ -144,7 +144,7 @@ export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
   })
 }
 
-const CLOSE_MS = 160
+const CLOSE_MS = 180
 
 export function ConfirmDialogHost() {
   const [stack, setStack] = useState<Item[]>([])
@@ -199,7 +199,7 @@ export function ConfirmDialogHost() {
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
       <div
         onClick={() => settle(false)}
-        className={`absolute inset-0 bg-black/45 transition-opacity duration-150 ${
+        className={`absolute inset-0 bg-black/45 transition-opacity duration-fast ${
           leaving ? 'opacity-0' : 'opacity-100'
         }`}
       />
@@ -207,7 +207,7 @@ export function ConfirmDialogHost() {
         role="alertdialog"
         aria-modal="true"
         aria-label={current.title ?? '确认操作'}
-        className={`relative w-[300px] max-w-full rounded-3xl bg-surface px-5 pt-5 pb-4 shadow-[0_24px_70px_rgba(0,0,0,0.28)] transition-all duration-150 ease-pop ${
+        className={`relative w-[300px] max-w-full rounded-3xl bg-surface px-5 pt-5 pb-4 shadow-[0_24px_70px_rgba(0,0,0,0.28)] transition-[opacity,transform] duration-fast ease-standard ${
           leaving ? 'scale-[0.97] opacity-0' : 'scale-100 opacity-100'
         }`}
       >

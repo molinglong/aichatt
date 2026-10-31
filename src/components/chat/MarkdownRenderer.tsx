@@ -1,6 +1,6 @@
 'use client'
 
-import React, { memo, useMemo, useState, useCallback, useRef, useEffect, useLayoutEffect, useContext, createContext } from 'react'
+import React, { memo, useMemo, useState, useCallback, useRef, useEffect, useContext, createContext } from 'react'
 import { useRenderProbe } from '@/lib/client-diagnostics'
 import { usePathname } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
@@ -19,8 +19,12 @@ import { insertTextToInput, sendTextAsUser } from '@/lib/input-bridge'
 import { useChatStore } from '@/store/chat-store'
 import dynamic from 'next/dynamic'
 import { ChartCard } from './ChartCard'
+import { TriangleFigure } from './TriangleFigure'
+import { parseTriangleFigure } from '@/lib/triangle-figure'
 import { parseChartMetadata } from '@/lib/chart-parser'
 import type { InlineImageRef } from './ToolCallCard'
+import { ChatImageLightbox } from './ChatImageLightbox'
+import type { Attachment } from '@/lib/attachment-types'
 
 // 可视化熔断开关: 一行降级——出现渲染死循环/性能退化时改 false,
 // 全部消息回到纯文本渲染(两段式渲染的保险丝;历史坑: 流式重渲染 Maximum update depth)
@@ -42,20 +46,16 @@ const MindMapBlock = dynamic(() => import('./MindMapBlock'), {
   ),
 })
 
-// useLayoutEffect 的同构封装: SSR 退化为 useEffect 消除服务端告警;客户端保持
-// 「提交后、绘制前」时序 —— 淡入类若晚一帧挂上,会先全亮再渐显,等于白做
-const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
-
 interface MarkdownRendererProps {
   content: string
   className?: string
   messageId?: string
   /**
    * 富渲染开关(两段式策略):
-   * - 生成期间传 false → 纯文本,与打字机/throttle 配合保持轻量。
+   * - 生成期间传 false → live=true 时轻量排版,否则纯文本。
    *   以「整条消息是否在生成」为粒度(含工具轮次间隙、远程轮询),不随单个
    *   text part 的 state 翻转 —— 否则多轮工具循环会 plain↔rich 反复横跳(闪烁)
-   * - 生成结束后传 true → react-markdown + KaTeX 一次性渲染
+   * - 生成结束后传 true → 普通正文白名单保留节点;其余走 react-markdown + KaTeX
    * summary 卡片与「复制为 HTML」镜像始终传 true
    */
   rich?: boolean
@@ -352,24 +352,50 @@ function substituteInlineImages(md: string, images: InlineImageRef[]): string {
   return lines.join('\n')
 }
 
+/** 白名单图 → 灯箱 Attachment(灯箱只读 url/name;type 走 image/* 语义) */
+function toViewerAttachment(image: InlineImageRef): Attachment {
+  return {
+    url: image.url,
+    name: image.description?.trim() || image.host || '搜索配图',
+    type: 'image/*',
+    size: image.bytes ?? 0,
+  }
+}
+
 /**
  * 内联图卡:圆角/限高/cover 与预览稿 A-1 一致;图注取 Tavily description,
  * 来源域名走 URL host;onError 退化为承托条(绝不留碎图标)。
  * referrerpolicy="no-referrer" 与服务端白名单探测口径一致(防盗链按无 Referer 放行)。
+ * 点图走应用内看图器(缩放/平移/系统返回先关灯箱),不再跳系统浏览器 ——
+ * 跳出 App 既放大不了也没有返回键,还会让 WebView 切后台把流掐断(2026-10-24 实测)。
  */
-const InlineImageCard = memo(function InlineImageCard({ image }: { image: InlineImageRef }) {
+const InlineImageCard = memo(function InlineImageCard({
+  image,
+  gallery,
+}: {
+  image: InlineImageRef
+  /** 同一条消息的全部白名单图:灯箱内可左右切换,与附件图同一套交互 */
+  gallery?: InlineImageRef[]
+}) {
   const [failed, setFailed] = useState(false)
   // 骨架承托到 onLoad 才撤:图未到位时不露白底,正文也不跳动
   const [loaded, setLoaded] = useState(false)
+  // 看图器下标;null = 关闭
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null)
   const caption = image.description?.trim()
+  const visible = gallery && gallery.length > 0 ? gallery : [image]
+  const openViewer = () => {
+    const i = visible.findIndex((g) => g.n === image.n)
+    setViewerIndex(i >= 0 ? i : 0)
+  }
   return (
     <span className="inline-fig" data-n={image.n}>
       {!failed ? (
-        <a
-          href={image.url}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={openViewer}
           className="inline-fig-img"
+          aria-label={`查看大图:${caption || image.host}`}
           title={caption || image.host}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -383,7 +409,7 @@ const InlineImageCard = memo(function InlineImageCard({ image }: { image: Inline
             onError={() => setFailed(true)}
           />
           {!loaded && <span className="inline-fig-sk" aria-hidden />}
-        </a>
+        </button>
       ) : (
         <span className="inline-fig-broken">
           <ImageOff className="w-3.5 h-3.5" aria-hidden />
@@ -400,6 +426,14 @@ const InlineImageCard = memo(function InlineImageCard({ image }: { image: Inline
           {image.bytes ? <span className="meta">{formatImgBytes(image.bytes)}</span> : null}
         </span>
       )}
+      {viewerIndex != null && (
+        <ChatImageLightbox
+          images={visible.map(toViewerAttachment)}
+          index={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+          onIndexChange={setViewerIndex}
+        />
+      )}
     </span>
   )
 })
@@ -409,7 +443,7 @@ function InlineImageSlot({ src, alt }: { src?: string; alt?: string }) {
   const images = useContext(InlineImagesContext)
   const m = alt?.match(INLINE_IMG_ALT_RE)
   const img = m ? images.find((i) => i.n === Number(m[1])) : undefined
-  if (img && src) return <InlineImageCard image={img} />
+  if (img && src) return <InlineImageCard image={img} gallery={images} />
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt={m ? '' : alt ?? ''} className="my-2 max-w-full rounded-xl border border-line" />
 }
@@ -479,11 +513,13 @@ const mdComponents: Components = {
     <th className="border-b border-line px-3.5 py-2 text-left text-[13px] font-semibold text-content-secondary max-md:px-2">{withInlineMarks(children)}</th>
   ),
   td: ({ children }) => <td className="border-b border-line px-3.5 py-2.5 align-top max-md:px-2">{withInlineMarks(children)}</td>,
-  // ```mindmap 围栏 → 导图卡片;```chart 围栏 → 图表卡片;其余语言照旧走 CodeBlock
+  // ```mindmap 围栏 → 导图卡片;```chart 围栏 → 图表卡片;```triangle 围栏 → 可交互三角形;
+  // 其余语言照旧走 CodeBlock(解析失败时 TriangleFigure 也会退回原始代码块)
   pre: (props) => {
     const { language, code } = extractCodeInfo(props.children)
     if (language === 'mindmap') return <MindMapBlock source={code} />
     if (language === 'chart') return <ChartBlock source={code}>{props.children}</ChartBlock>
+    if (language === 'triangle') return <TriangleFigure source={code} rawChildren={props.children} />
     return <CodeBlock>{props.children}</CodeBlock>
   },
   // 行内 code 样式;块级 code 在 pre 内由 globals.css 的 .rich-md pre code 覆盖为无背景无边框
@@ -501,7 +537,7 @@ const mdComponents: Components = {
  * 与 rich 档的分工: 这里只做行级块切分 + 行内加粗/斜体/行内码, 不跑
  * remark/rehype 全管线(KaTeX、highlight、试卷块), 每帧成本是纯字符串扫描;
  * 元素一律调 mdComponents 里同一批渲染函数, 样式单一来源, 不与定格后漂移。 */
-type LiveBlock =
+type LiveBlock = { start: number } & (
   | { type: 'h'; level: number; text: string }
   | { type: 'p'; text: string }
   | { type: 'quote'; text: string }
@@ -509,6 +545,7 @@ type LiveBlock =
   | { type: 'ol'; items: string[] }
   | { type: 'code'; lang: string; text: string }
   | { type: 'table'; rows: string[][] }
+)
 
 type MdElProps = { children?: React.ReactNode; href?: string }
 type MdElName = 'h1' | 'h2' | 'h3' | 'h4' | 'p' | 'ul' | 'ol' | 'li' | 'blockquote' | 'table' | 'thead' | 'th' | 'td' | 'pre'
@@ -522,61 +559,8 @@ function mdEl(name: MdElName, props: MdElProps, key: number | string) {
 
 const LIVE_INLINE_RE = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\*[^*\n]+\*)/
 
-/** 句末切分时的「整体不可切」区段:行内码/加粗/行内公式/链接。
- *  先全局扫一遍拿区间再按区间走 —— 项目未设 tsconfig target,sticky(y) 标志会被 tsc 拒 */
-const LIVE_SENT_ATOMIC_RE =
-  /(`[^`\n]+`|\*\*[^*\n]+\*\*|\$[^$\n]+\$|\\\([\s\S]*?\\\)|\[[^\]\n]*\]\([^)\n]*\))/g
-
 /**
- * 按句末标点切句(供句级淡入用)。切分只发生在纯文本里:
- * 行内码/公式/链接整体跳过,所以 `$f'(x) = 3x² - 3$。` 不会从公式中间断开。
- * 英文 '.' 要求后跟空白且前一位不是数字,避开 "3.14" 与 "1." 这类序号被误切。
- */
-function splitLiveSentences(text: string): string[] {
-  const atoms: number[] = []
-  LIVE_SENT_ATOMIC_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = LIVE_SENT_ATOMIC_RE.exec(text))) atoms.push(m.index, m.index + m[0].length)
-
-  const parts: string[] = []
-  let buf = ''
-  let i = 0
-  let a = 0
-  const flush = () => {
-    if (buf) {
-      parts.push(buf)
-      buf = ''
-    }
-  }
-  while (i < text.length) {
-    if (a < atoms.length && i === atoms[a]) {
-      const end = atoms[a + 1]
-      buf += text.slice(i, end)
-      i = end
-      a += 2
-      continue
-    }
-    const ch = text[i]
-    buf += ch
-    i++
-    const isCjkEnd = /[。！？；]/.test(ch)
-    const isLatinEnd = /[!?;]/.test(ch)
-    const isPeriod = ch === '.' && (i >= text.length || /\s/.test(text[i])) && !/\d$/.test(buf.slice(0, -1))
-    if (isCjkEnd || isLatinEnd || isPeriod) {
-      // 收尾引号/括号跟着上一句走,不留孤点起句
-      while (i < text.length && /[”’）】」』]/.test(text[i])) {
-        buf += text[i]
-        i++
-      }
-      flush()
-    }
-  }
-  flush()
-  return parts
-}
-
-/**
- * 打字机停在「只开了头、还没闭合」的行内定界符上时,补一个假闭合再切句/切样式。
+ * 打字机停在「只开了头、还没闭合」的行内定界符上时,补一个假闭合再切样式。
  * 不补的代价(实测: 一篇 900 字长回答,流式期间 9 次「上面已上屏的文字被改写」):
  * `**` / 反引号会先按字面画上屏,等真闭合那一刻再从 DOM 里吃掉 —— 那一行的结尾少掉
  * 2~7 个字、整行向左回收,肉眼就是「正文往下走,上面的行尾又闪一下」。
@@ -590,6 +574,8 @@ function closePendingAtoms(text: string): string {
     const tail = text.slice(at + 2)
     // 开头敲完、后面还没字 → 这个开头先别上屏(否则它按字面亮一帧,下一帧再被吃掉)
     if (!tail) return text.slice(0, at)
+    // 闭合 ** 只到第一个 * 时也保持粗体,不能暂时退回字面标记/普通字重。
+    if (tail.endsWith('*') && !tail.slice(0, -1).includes('*')) return text + '*'
     if (!tail.includes('*')) return text + '**'
   }
   const ticks = (text.match(/`/g) || []).length
@@ -615,59 +601,63 @@ function closePendingAtoms(text: string): string {
   return text
 }
 
-/** 行内三件套: 加粗 / 行内码 / 斜体; 未闭合定界符按「已成形的最终样式」渲染(见 closePendingAtoms)。
- *  外层再按句切 span.md-sent 承载句级淡入:span 的 key 只跟句序走,
- *  打字机在同一句内推进时该 span 不重挂载,故一句只淡入一次。
- *  images: 图文混排白名单(流式期 [图N] 也直接换卡,不等 rich 定格) */
+/** 不按句切分、不挂动画 span。行内 key 跟语法片段的源偏移走,
+ * 链接/标点闭合不会再改变已显示文本的父节点。仅样式定界符沿用假闭合。
+ * 图片只在普通文本中切分,不侵入行内码/加粗/斜体的既有语义。 */
 function liveInline(text: string, keyBase: string, images: InlineImageRef[]): React.ReactNode[] {
   const out: React.ReactNode[] = []
-  splitLiveSentences(closePendingAtoms(text)).forEach((sent, si) => {
-    const sentKey = `${keyBase}-s${si}`
-    const nodes: React.ReactNode[] = []
-    sent.split(LIVE_INLINE_RE).forEach((part, i) => {
-      if (!part) return
-      const key = `${sentKey}-${i}`
-      const imgToken = part.match(/^\[图\s*(\d+)\]$/)
-      if (imgToken) {
-        const img = images.find((x) => x.n === Number(imgToken[1]))
-        if (img) {
-          nodes.push(<InlineImageCard key={key} image={img} />)
-          return
-        }
+  let offset = 0
+  for (const part of closePendingAtoms(text).split(LIVE_INLINE_RE)) {
+    const start = offset
+    offset += part.length
+    if (!part) continue
+    const key = `${keyBase}-${start}`
+    if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
+      out.push(<strong key={key}>{part.slice(2, -2)}</strong>)
+    } else if (part.length > 2 && part.startsWith('`') && part.endsWith('`')) {
+      out.push(<CodeInline key={key}>{part.slice(1, -1)}</CodeInline>)
+    } else if (part.length > 2 && part.startsWith('*') && part.endsWith('*')) {
+      out.push(<em key={key}>{part.slice(1, -1)}</em>)
+    } else {
+      let cursor = 0
+      // 独立或夹在正文中的 [图N] 都能显示;未知编号不动,不引入任意 URL 解析。
+      const tokens = images.length ? Array.from(part.matchAll(/\[图\s*(\d+)\]/g)) : []
+      for (const token of tokens) {
+        const image = images.find((img) => img.n === Number(token[1]))
+        if (!image) continue
+        const at = token.index!
+        if (at > cursor) out.push(<React.Fragment key={`${keyBase}-${start + cursor}`}>{part.slice(cursor, at)}</React.Fragment>)
+        out.push(<InlineImageCard key={`${keyBase}-${start + at}`} image={image} gallery={images} />)
+        cursor = at + token[0].length
       }
-      if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
-        nodes.push(<strong key={key}>{part.slice(2, -2)}</strong>)
-      } else if (part.length > 2 && part.startsWith('`') && part.endsWith('`')) {
-        nodes.push(<CodeInline key={key}>{part.slice(1, -1)}</CodeInline>)
-      } else if (part.length > 2 && part.startsWith('*') && part.endsWith('*')) {
-        nodes.push(<em key={key}>{part.slice(1, -1)}</em>)
-      } else {
-        nodes.push(<React.Fragment key={key}>{part}</React.Fragment>)
-      }
-    })
-    out.push(<span key={sentKey} className="md-sent">{nodes}</span>)
-  })
+      if (cursor < part.length) out.push(<React.Fragment key={`${keyBase}-${start + cursor}`}>{part.slice(cursor)}</React.Fragment>)
+    }
+  }
   return out
 }
 
 const LIVE_PARA_BREAK_RE = /^(#{1,4}\s|>\s?|\||```|[-*+]\s|\d+[.)]\s|:::)/
 
-/** 行级块切分: 只认 markdown 的「块」层, 未闭合结构按已有内容渲染(不吞后续正文) */
-function parseLiveBlocks(md: string): LiveBlock[] {
+/** 解析传入的 live 文本片段;调用方负责尾部增量与必要的边界回退。
+ * start 是片段内偏移(调用方补基址);triangle 映射直接提供原始消息偏移。 */
+function parseLiveBlocks(md: string, sourceLines?: number[]): LiveBlock[] {
   const lines = md.split('\n')
+  let offset = 0
+  const starts = sourceLines ?? lines.map((line) => { const start = offset; offset += line.length + 1; return start })
   const blocks: LiveBlock[] = []
   // 最后一个非空行 = 打字机此刻正在写的那一行(只有它处于「半截」状态)
   let lastLine = lines.length - 1
   while (lastLine >= 0 && !lines[lastLine].trim()) lastLine--
+  const isPendingMarker = (index: number) =>
+    index === lastLine && /^(#{1,4}|[-*+]|\d{1,3}[.)]?|`{1,2})$/.test(lines[index].trim())
   let i = 0
   while (i < lines.length) {
+    const start = starts[i]
     const trimmed = lines[i].trim()
     if (!trimmed) { i++; continue }
-    // 块标记只敲出字符、后面那个空格还没来(整行就剩 # / - / 1 / 1. / 两个反引号)时先不上屏。
-    // 不拦的话它被当成正文并进上一段,标记一到再从段里吃掉:上面那行行尾凭空少几个字,
-    // 且该块从 p 换成 h2/ol/ul —— React 认标签不同即重建节点,整块上浮 + 块内每句重淡
-    if (i === lastLine && /^(#{1,4}|[-*+]|\d{1,3}[.)]?|`{1,2})$/.test(trimmed)) break
-    // 试卷块标记(:::material 等)流式期直接隐去, 内部内容照常按普通块渲染
+    // 半截块标记不并入上一段,避免标记补全时改变上一段的文本。
+    if (isPendingMarker(i)) break
+    // 试卷块标记(:::material 等)流式期直接隐去,内部内容照常按普通块渲染。
     if (/^:::+/.test(trimmed)) { i++; continue }
     const fence = trimmed.match(/^```+([a-zA-Z0-9+#._-]*)/)
     if (fence) {
@@ -676,21 +666,20 @@ function parseLiveBlocks(md: string): LiveBlock[] {
       i++
       while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) { body.push(lines[i]); i++ }
       if (i < lines.length) i++
-      blocks.push({ type: 'code', lang, text: body.join('\n') })
+      blocks.push({ start, type: 'code', lang, text: body.join('\n') })
       continue
     }
     const head = trimmed.match(/^(#{1,4})\s+(.*)$/)
-    if (head) { blocks.push({ type: 'h', level: head[1].length, text: head[2] }); i++; continue }
-    if (/^>\s?/.test(trimmed)) { blocks.push({ type: 'quote', text: trimmed.replace(/^>\s?/, '') }); i++; continue }
+    if (head) { blocks.push({ start, type: 'h', level: head[1].length, text: head[2] }); i++; continue }
+    if (/^>\s?/.test(trimmed)) { blocks.push({ start, type: 'quote', text: trimmed.replace(/^>\s?/, '') }); i++; continue }
     if (trimmed.startsWith('|')) {
       const rows: string[][] = []
       while (i < lines.length && lines[i].trim().startsWith('|')) {
         const cells = lines[i].trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim())
-        // 分隔行(| --- | --- |)不进气泡
         if (!cells.every((c) => /^:?-{2,}:?$/.test(c))) rows.push(cells)
         i++
       }
-      blocks.push({ type: 'table', rows })
+      blocks.push({ start, type: 'table', rows })
       continue
     }
     const ulItem = /^[-*+]\s+(.*)$/
@@ -701,7 +690,7 @@ function parseLiveBlocks(md: string): LiveBlock[] {
         if (!m) break
         items.push(m[1]); i++
       }
-      blocks.push({ type: 'ul', items })
+      blocks.push({ start, type: 'ul', items })
       continue
     }
     const olItem = /^\d+[.)]\s+(.*)$/
@@ -712,13 +701,13 @@ function parseLiveBlocks(md: string): LiveBlock[] {
         if (!m) break
         items.push(m[1]); i++
       }
-      blocks.push({ type: 'ol', items })
+      blocks.push({ start, type: 'ol', items })
       continue
     }
     const para = [lines[i]]
     i++
-    while (i < lines.length && lines[i].trim() && !LIVE_PARA_BREAK_RE.test(lines[i].trim())) { para.push(lines[i]); i++ }
-    blocks.push({ type: 'p', text: para.join(' ').trim() })
+    while (i < lines.length && lines[i].trim() && !isPendingMarker(i) && !LIVE_PARA_BREAK_RE.test(lines[i].trim())) { para.push(lines[i]); i++ }
+    blocks.push({ start, type: 'p', text: para.join(' ').trim() })
   }
   return blocks
 }
@@ -738,9 +727,22 @@ function renderLiveBlock(b: LiveBlock, k: number, images: InlineImageRef[]): Rea
     )
   }
   if (b.type === 'code') {
+    // 三角形块在流式期只做两档:JSON 已闭合→直接出图;还没写完→定高骨架。
+    // 不把半截 JSON 画到屏幕上再换成图,那正是「上面文字被改写」的观感来源。
+    if (b.lang === 'triangle') {
+      if (parseTriangleFigure(b.text)) {
+        return <TriangleFigure key={k} source={b.text} rawChildren={<code className="language-triangle">{b.text}</code>} />
+      }
+      return (
+        <div key={k} className="tri-live-skeleton" aria-hidden>
+          <span className="tri-figure-tag">图形</span>
+          <span className="tri-skeleton-body" />
+        </div>
+      )
+    }
     return mdEl('pre', { children: <code className={`language-${b.lang}`}>{b.text}</code> }, k)
   }
-  const head = b.rows[0]
+  const head = b.rows[0] ?? []
   const body = b.rows.slice(1)
   return mdEl(
     'table',
@@ -760,13 +762,112 @@ function renderLiveBlock(b: LiveBlock, k: number, images: InlineImageRef[]): Rea
   )
 }
 
-const LiveMarkdown = memo(function LiveMarkdown({ content }: { content: string }) {
-  // 每帧一次行扫描(几十行量级), 比走 react-markdown 全管线低一个数量级
-  const blocks = useMemo(() => parseLiveBlocks(content), [content])
-  // 图文混排:占位符在流式期直接换卡(图随搜索结果先到,不必等 rich 定格)
+// 增量路径复用已完成块的引用;修订/重排路径才按数据比较,不逐帧序列化整篇。
+// 图片 context 有实际变化时仍能穿过 memo,无永久缓存。
+const LiveBlockView = memo(function LiveBlockView({ block }: { block: LiveBlock }) {
   const images = useContext(InlineImagesContext)
-  const rendered = useMemo(() => blocks.map((b, k) => renderLiveBlock(b, k, images)), [blocks, images])
-  return <div className="rich-md md-live">{rendered}</div>
+  return renderLiveBlock(block, block.start, images)
+}, (previous, next) => previous.block === next.block || JSON.stringify(previous.block) === JSON.stringify(next.block))
+
+const MD_PUNCTUATION = new RegExp('[\\p{P}\\p{S}]', 'u')
+
+/** 收尾复用的保守白名单,不是新的 Markdown 解析器。只放行与 live 树等价的
+ * 单行段落/ATX 标题/紧凑平级列表及无嵌套三件套。歧义/扩展语法一律回完整 rich,
+ * 包括引用定义、链接、公式、HTML、试卷、游戏、代码围栏等,绝不为保节点禁用功能。 */
+function canKeepLiveMarkdown(content: string): boolean {
+  if (/[\r\t\\[\]<>_~&$@|]/.test(content) || /www\.|(?:https?|mailto):/i.test(content) || content.includes('***') || content.includes('==')) return false
+  const inlineSafe = (text: string): boolean => {
+    if (!text || text.trim() !== text || /^-{3,}$/.test(text) || /^(?:[-+*]\s|\d+[.)]\s|:::)/.test(text)) return false
+    let offset = 0
+    for (const part of text.split(LIVE_INLINE_RE)) {
+      const at = offset
+      offset += part.length
+      if (!part) continue
+      const size = part.startsWith('**') ? 2 : part.startsWith('*') || part.startsWith('`') ? 1 : 0
+      if (!size) {
+        if (/[*`#]/.test(part)) return false
+        continue
+      }
+      if (!part.endsWith(part.slice(0, size))) return false
+      const inner = part.slice(size, -size)
+      if (!inner || inner.trim() !== inner || /[*`#]/.test(inner)) return false
+      if (part[0] === '`') continue
+      // CommonMark * 定界符的左右 flanking 条件;含嵌套标记的内容已在上面拒绝。
+      const before = text[at - 1] ?? ''
+      const after = text[offset] ?? ''
+      if (MD_PUNCTUATION.test(inner[0]) && before && !/\s/.test(before) && !MD_PUNCTUATION.test(before)) return false
+      if (MD_PUNCTUATION.test(inner[inner.length - 1]) && after && !/\s/.test(after) && !MD_PUNCTUATION.test(after)) return false
+    }
+    return true
+  }
+  let previousList = false
+  for (const section of content.split(/\n{2,}/)) {
+    if (!section) continue
+    // 首尾空行允许;段内软换行/硬换行留给 rich,不猜其语义。
+    const lines = section.replace(/^\n|\n$/g, '').split('\n')
+    const list = lines[0].match(/^([-+*]|\d{1,9}[.)]) (.+)$/)
+    if (list) {
+      if (previousList) return false // 空行可能把相邻项改成 loose list。
+      const ordered = /^\d/.test(list[1])
+      if (ordered && !/^1[.)]$/.test(list[1])) return false // live 列表没有自定义 start。
+      const delimiter = list[1].slice(-1)
+      if (!lines.every((line) => {
+        const item = line.match(/^([-+*]|\d{1,9}[.)]) (.+)$/)
+        return !!item && /^\d/.test(item[1]) === ordered && item[1].slice(-1) === delimiter && inlineSafe(item[2])
+      })) return false
+      previousList = true
+    } else {
+      previousList = false
+      if (lines.length !== 1) return false
+      const heading = lines[0].match(/^#{1,4} (.+)$/)
+      const text = heading ? heading[1] : lines[0]
+      if (!inlineSafe(text)) return false
+      // 数字/空列表标记等歧义终态交回 rich,包括四位以上编号。
+      if (!heading && /^(?:#{1,4}|[-*+]|\d+[.)]?|`{1,2})$/.test(text)) return false
+    }
+  }
+  return true
+}
+
+const LiveMarkdown = memo(function LiveMarkdown({ content, sourceLines, rich, inlineImages }: {
+  content: string
+  sourceLines?: number[]
+  rich: boolean
+  inlineImages?: InlineImageRef[]
+}) {
+  const keepBlocks = useMemo(() => !rich || canKeepLiveMarkdown(content), [content, rich])
+  const parsedRef = useRef<{ content: string; sourceLines?: number[]; blocks: LiveBlock[] } | null>(null)
+  const blocks = useMemo(() => {
+    if (!keepBlocks) return []
+    const previous = parsedRef.current
+    // 通常只重扫最后一块;半截普通行补成列表等结构时,回退一块重判合并边界。
+    // 不是按空行永久冻结 Markdown AST:修订/triangle 重排全量重算,
+    // 收尾引用定义等仍交完整 rich 管线。
+    if (previous && !sourceLines && !previous.sourceLines && content.startsWith(previous.content) && previous.blocks.length) {
+      const last = previous.blocks[previous.blocks.length - 1]
+      let tail = last.start
+      let keep = previous.blocks.length - 1
+      let parsed = parseLiveBlocks(content.slice(tail))
+      if (last.type === 'p' && parsed[0]?.type !== 'p' && keep > 0) {
+        tail = previous.blocks[--keep].start
+        parsed = parseLiveBlocks(content.slice(tail))
+      }
+      return previous.blocks.slice(0, keep).concat(
+        parsed.map(block => ({ ...block, start: block.start + tail })),
+      )
+    }
+    return parseLiveBlocks(content, sourceLines)
+  }, [content, sourceLines, keepBlocks])
+  // 只提交已 commit 的缓存,中断的并发 render 不污染下一次解析。
+  useEffect(() => {
+    parsedRef.current = keepBlocks ? { content, sourceLines, blocks } : null
+  }, [content, sourceLines, blocks, keepBlocks])
+  if (!keepBlocks) return <RichMarkdown content={content} inlineImages={inlineImages} />
+  return (
+    <div className={cn('rich-md', !rich && 'md-live')}>
+      {blocks.map((block) => <LiveBlockView key={block.start} block={block} />)}
+    </div>
+  )
 })
 
 /**
@@ -804,6 +905,44 @@ function promoteStandaloneMath(md: string): string {
     if (inline) lines[i] = `$$\n${inline[1]}\n$$`
   }
   return lines.join('\n')
+}
+
+/**
+ * 首个 ```triangle 围栏提升到消息最顶:解题图是「题目主图」,固定占满消息列、
+ * 居中最前,题干/推导文字在图下从头排(教材版式),
+ * 不跟随模型落笔位置。只提升第一张(后面的图可能对应变式或后续步骤);
+ * 围栏已是第一条内容时原样返回。流式期围栏未闭合时先不提升 —— 不闭合的围栏会被
+ * live 解析器吃到 EOF,提升会吞掉后文;闭合后再提升,位置一步到位。
+ * 围栏头写法与 live 解析器对齐(```triangle 紧贴无空格)。
+ */
+function hoistTriangleFigure(md: string): { content: string; sourceLines?: number[] } {
+  const unchanged = { content: md }
+  if (!md.includes('triangle')) return unchanged
+  const lines = md.split('\n')
+  let i0 = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (/^`{3,}triangle\s*$/.test(lines[i].trim())) { i0 = i; break }
+  }
+  if (i0 < 0) return unchanged
+  let j0 = -1
+  for (let j = i0 + 1; j < lines.length; j++) {
+    if (/^`{3,}\s*$/.test(lines[j].trim())) { j0 = j; break }
+  }
+  if (j0 < 0) return unchanged
+  let t = 0
+  while (t < lines.length && !lines[t].trim()) t++
+  if (t >= i0) return unchanged
+  // 文本与原始行偏移同步搬动,不让被提升的图改变其他块的 React key。
+  let offset = 0
+  const starts = lines.map((line) => { const start = offset; offset += line.length + 1; return start })
+  const fence = lines.slice(i0, j0 + 1)
+  const rest = [...lines.slice(0, i0), ...lines.slice(j0 + 1)]
+  const out = [...fence]
+  const sourceLines = starts.slice(i0, j0 + 1)
+  if (rest.length && rest[0].trim()) { out.push(''); sourceLines.push(-1) }
+  out.push(...rest)
+  sourceLines.push(...starts.slice(0, i0), ...starts.slice(j0 + 1))
+  return { content: out.join('\n'), sourceLines }
 }
 
 /**
@@ -854,14 +993,33 @@ const RichSegment = memo(function RichSegment({ content, promote = true }: { con
 
 const EXAM_TAG: Record<ExamKind, string> = { choice: '选择题', material: '材料', question: '设问', answer: '作答', poem: '诗句', lyrics: '歌词', essay: '作文', timeline: '时间轴', translate: '译文', sentence: '成分分析', gamestatus: '状态', gamechoice: '行动' }
 
+/** 题干自带题号（1. / 1、/ 1））: 题库原题逐字转写时常见。剥离后统一走卷面题号，
+ *  既避免「1. 1. 题干」双号，也避免「1. 」被 markdown 解析成有序列表；后随数字不剥（「1.5万」不是题号） */
+const STEM_OWN_NO_RE = /^\s*\d{1,3}\s*[.、．)）]\s*(?!\d)/
+
+/** 卷面题号行: 题号缀在题干首行左侧、与首行基线对齐；no 缺省时按普通题干渲染 */
+function ExamStemRow({ no, stem }: { no?: number; stem: string }) {
+  // 只在有卷面题号替换时才剥离原文号，保证任何情况下不吞内容
+  if (no == null) return <RichSegment content={stem} />
+  const cleaned = stem.replace(STEM_OWN_NO_RE, '')
+  return (
+    <div className="exam-stem-row">
+      <span className="exam-qno" aria-hidden>{no}.</span>
+      <div className="exam-stem-body">
+        <RichSegment content={cleaned} />
+      </div>
+    </div>
+  )
+}
+
 /** 单组题面: 题干 + 试卷式选项（长选项通栏，全部短选项时自动两列）；选项内高亮照常生效 */
-function ChoiceGroupView({ stem, options }: { stem: string; options: ExamChoiceOption[] }) {
-  if (!options.length) return <RichSegment content={stem} />
+function ChoiceGroupView({ stem, options, no }: { stem: string; options: ExamChoiceOption[]; no?: number }) {
+  if (!options.length) return <ExamStemRow no={no} stem={stem} />
   // 试卷排版启发: 短选项（如古文化常识/词语判断）两列更像卷面，长句选项通栏易读
   const twoCol = options.length > 2 && options.every((o) => o.text.length <= 14)
   return (
     <div className="exam-choice-group">
-      {stem && <RichSegment content={stem} />}
+      {stem && <ExamStemRow no={no} stem={stem} />}
       <div className={cn('exam-options', twoCol && 'exam-options-2col')}>
         {options.map((o) => (
           <div key={o.letter} className="exam-option">
@@ -876,14 +1034,17 @@ function ChoiceGroupView({ stem, options }: { stem: string; options: ExamChoiceO
   )
 }
 
-/** 选择题块渲染: 单题直渲；模型把多题塞进一个块时（parseChoice 拆组成功）逐组渲染，组间虚线分隔 */
-function ExamChoiceBody({ text }: { text: string }) {
+/** 选择题块渲染: 单题直渲；模型把多题塞进一个块时（parseChoice 拆组成功）逐组渲染，组间虚线分隔；
+ *  startNo 为卷内首题题号，拆组时逐组递增 */
+function ExamChoiceBody({ text, startNo }: { text: string; startNo?: number }) {
   const { stem, options, groups } = useMemo(() => parseChoice(text), [text])
-  if (!options.length) return <RichSegment content={text} />
+  if (!options.length) return <ExamStemRow no={startNo} stem={text} />
   if (groups.length > 1) {
-    return groups.map((g, i) => <ChoiceGroupView key={i} stem={g.stem} options={g.options} />)
+    return groups.map((g, i) => (
+      <ChoiceGroupView key={i} stem={g.stem} options={g.options} no={startNo != null ? startNo + i : undefined} />
+    ))
   }
-  return <ChoiceGroupView stem={stem} options={options} />
+  return <ChoiceGroupView stem={stem} options={options} no={startNo} />
 }
 
 /** 译文块分区: 英文题目的中文翻译卡(首行题干+逐选项中文)，复用 parseChoice 的选项行解析;
@@ -1099,10 +1260,10 @@ function ExamEssayBody({ text }: { text: string }) {
  * 编号后括号必须纯数字,避免误伤 f(x)/(1+x) 这类数学式 */
 const QUESTION_PART_SPLIT_RE = /(?=[(（]\s*\d{1,2}\s*[)）]|[①-⑫])/
 
-function ExamQuestionBody({ text }: { text: string }) {
+function ExamQuestionBody({ text, no }: { text: string; no?: number }) {
   const parts = useMemo(() => text.split(QUESTION_PART_SPLIT_RE).map((s) => s.trim()).filter(Boolean), [text])
   // 拆行用行尾双空格硬换行:小问问距保持行内紧凑,不产生段落级大空隙
-  return <RichSegment content={parts.length >= 2 ? parts.join('  \n') : text} />
+  return <ExamStemRow no={no} stem={parts.length >= 2 ? parts.join('  \n') : text} />
 }
 
 /** 出题场景的作答块:默认收起防剧透,点击展开(仅当同组题块带出处徽标时启用);流式期间折叠状态不重置。
@@ -1215,6 +1376,7 @@ function ExamBlock({
   joinBottom,
   answerCollapsible,
   quizAnswerText,
+  questionNo,
 }: {
   kind: ExamKind
   text: string
@@ -1224,6 +1386,8 @@ function ExamBlock({
   answerCollapsible?: boolean
   /** 题块专用:紧邻 answer 块原文(齐备才显示收进题库按钮) */
   quizAnswerText?: string
+  /** 题块专用:卷内题号(渲染层按消息内题块顺序编号) */
+  questionNo?: number
 }) {
   const isQuizStem = kind === 'choice' || kind === 'question'
   const { sourceRef, body } = isQuizStem ? parseSourceRefLine(text) : { sourceRef: null as ExamSourceRef | null, body: text }
@@ -1255,7 +1419,7 @@ function ExamBlock({
         <span className="absolute right-2 top-2 text-[11px] leading-none text-content-muted whitespace-nowrap">参考 {sourceRef.ref}</span>
       )}
       {kind === 'choice' ? (
-        <ExamChoiceBody text={displayText} />
+        <ExamChoiceBody text={displayText} startNo={questionNo} />
       ) : kind === 'timeline' ? (
         <ExamTimelineBody text={text} />
       ) : kind === 'poem' || kind === 'lyrics' ? (
@@ -1263,7 +1427,7 @@ function ExamBlock({
       ) : kind === 'essay' ? (
         <ExamEssayBody text={text} />
       ) : kind === 'question' ? (
-        <ExamQuestionBody text={displayText} />
+        <ExamQuestionBody text={displayText} no={questionNo} />
       ) : kind === 'translate' ? (
         <ExamTranslateBody text={text} />
       ) : kind === 'sentence' ? (
@@ -1424,6 +1588,37 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
     () => segments.some((s) => s.type === 'exam' && (s.kind === 'gamestatus' || s.kind === 'gamechoice')),
     [segments],
   )
+  // 卷面判定: 一条消息里出现选择题块(:::choice)或 ≥2 道题块即视为成卷/练习,
+  // 卷内答案块一律默认收起(先做后看)。此前只认「题块首行单独一行出处」,
+  // 模型把出处写成题干里的「（参考教材…）」或干脆不写时整卷答案全裸奔、边做边被剧透。
+  // 单题 :::question 答疑不算卷,照旧直接展开,不把用户刚问的讲解藏进按钮
+  const isPaper = useMemo(() => {
+    let stems = 0
+    let hasChoice = false
+    for (const s of segments) {
+      if (s.type !== 'exam') continue
+      if (s.kind === 'choice') {
+        hasChoice = true
+        stems += 1
+      } else if (s.kind === 'question') {
+        stems += 1
+      }
+    }
+    return hasChoice || stems >= 2
+  }, [segments])
+  // 卷内题号: 题块(choice/question)按出现顺序编号,一块多题按拆出的组数跳号;
+  // 题号是「按题号作答」的对齐锚点(题库抽题工具的作答约定依赖它),故在渲染层统一发号
+  const stemNos = useMemo(() => {
+    const map = new Map<number, number>()
+    let next = 1
+    segments.forEach((s, i) => {
+      if (s.type !== 'exam' || (s.kind !== 'choice' && s.kind !== 'question')) return
+      map.set(i, next)
+      const groups = s.kind === 'choice' ? parseChoice(s.text).groups.length : 0
+      next += Math.max(1, groups)
+    })
+    return map
+  }, [segments])
   const nodes: React.ReactNode[] = []
   let mdRun: string[] = []
   const flushMd = () => {
@@ -1477,6 +1672,18 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
       }
       return null
     })()
+    // 卷面内收紧: answer 前方必须有题块(允许隔 ::translate 译文块),避免把正文里
+    // 孤立出现的 :::answer(如整段讲解包了答案块)也收进按钮
+    const hasPrevStem = (() => {
+      for (let j = i - 1; j >= 0; j--) {
+        const s = segments[j]
+        if (s.type !== 'exam') return false
+        if (s.kind === 'translate') continue
+        if (s.kind === 'answer') return false
+        return s.kind === 'choice' || s.kind === 'question' || s.kind === 'material'
+      }
+      return false
+    })()
     const isQuizStem = seg.kind === 'choice' || seg.kind === 'question'
     const stemRef = isQuizStem ? parseSourceRefLine(seg.text).sourceRef : null
     nodes.push(
@@ -1486,8 +1693,9 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
         text={seg.text}
         joinTop={i > 0 && segments[i - 1].type === 'exam'}
         joinBottom={i < segments.length - 1 && segments[i + 1].type === 'exam'}
-        answerCollapsible={seg.kind === 'answer' && !!prevQuizRef}
+        answerCollapsible={seg.kind === 'answer' && (!!prevQuizRef || (isPaper && hasPrevStem))}
         quizAnswerText={isQuizStem && stemRef && nextAnswerText ? nextAnswerText : undefined}
+        questionNo={stemNos.get(i)}
       />,
     )
   })
@@ -1503,58 +1711,30 @@ function MarkdownRendererInner({
   inlineImages,
 }: MarkdownRendererProps) {
   useRenderProbe('MarkdownRenderer')
-  // 两段式翻转淡入: 纯文本→富渲染的瞬间挂 md-enter(180ms 渐显),把排版硬切软化
-  // 成渐显。只在「本次挂载内发生过翻转」时触发 —— 历史消息与虚拟化重挂载首帧就是
-  // rich=true,不加动画,避免滚动回看/空闲预热挂载时跟着闪
-  const [enterAnim, setEnterAnim] = useState(false)
-  const prevRichRef = useRef(rich)
-  const enterPlayedRef = useRef(false)
-  useIsoLayoutEffect(() => {
-    // 闸门:淡入只在首次 plain→rich 定格播一次。恢复轮询场景下 rich 会随
-    // 打字机在 chunk 间隙反复翻转(每 1.2s 一次),不设闸整段文字反复淡入=「闪很多下」
-    if (rich && !prevRichRef.current && !enterPlayedRef.current) {
-      enterPlayedRef.current = true
-      setEnterAnim(true)
-    }
-    prevRichRef.current = rich
-  }, [rich])
+  // 首个 triangle 围栏提升到消息最前,三档共用文本;另保留原始源位置供 live key 使用。
+  const finalContent = useMemo(() => hoistTriangleFigure(content), [content])
 
-  // live 模式: 流式期间的轻量排版(熔断开关优先, RICH_RENDER_ENABLED=false 时一律回纯文本)
-  if (RICH_RENDER_ENABLED && live && !rich) {
+  // 纯文本/熔断口径不变。
+  if (!RICH_RENDER_ENABLED || (!rich && !live)) {
     return (
-      <div className={cn('text-[15px] text-content-primary leading-[1.85] break-words', className)}>
-        <LiveMarkdown content={content} />
+      <div className={cn('text-[15px] text-content-primary leading-[1.85] break-words whitespace-pre-wrap', className)}>
+        {finalContent.content}
       </div>
     )
   }
-  // 纯文本模式: 流式期间/熔断时走这里,与旧版行为完全一致(whitespace-pre-wrap 保留换行)
-  if (!RICH_RENDER_ENABLED || !rich) {
-    return (
-      <div
-        className={cn('text-[15px] text-content-primary leading-[1.85] break-words whitespace-pre-wrap', className)}
-      >
-        {content}
-      </div>
-    )
-  }
-  // 富渲染: 仅内容稳定后触发(content 固定 → 外层 memo 拦截父组件重渲染,只渲染一次)
+  // live 与 rich 共用组件边界,已确认等价的普通正文收尾仅撤 md-live class。
+  // 非白名单正文仍完整升级到 RichMarkdown(包括特殊卡片和安全 URL 处理)。
   return (
-    <div
-      className={cn(
-        'text-[15px] text-content-primary leading-[1.85] break-words',
-        enterAnim && 'md-enter',
-        className,
-      )}
-    >
-      <RichMarkdown content={content} inlineImages={inlineImages} />
+    <div className={cn('text-[15px] text-content-primary leading-[1.85] break-words', className)}>
+      <LiveMarkdown content={finalContent.content} sourceLines={finalContent.sourceLines} rich={!!rich} inlineImages={inlineImages} />
     </div>
   )
 }
 
 /**
  * 外层壳:只负责挂 InlineImagesContext(图文混排 [图N] 数据源,rich/live 两档共用)。
- * memo 在这一层做 props 比较,inner 不再自带 memo —— 与旧版比较行为等价,
- * inlineImages 引用由调用方 useMemo 保证稳定(MessageBubble 按 message 提取)。
+ * memo 在这一层做 props 比较,inner 不再自带 memo。
+ * 图片数据在此按内容稳定引用,隔离调用方随 message 快照创建的新数组。
  */
 export const MarkdownRenderer = memo(function MarkdownRenderer({
   content,
@@ -1563,9 +1743,16 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   live,
   inlineImages,
 }: MarkdownRendererProps) {
+  // MessageBubble 的 message 快照每次改变都会提取新数组(包括空数组)。
+  // 按实际数据稳定 context,否则它会绕过每个 LiveBlockView 的 memo。
+  const imagesKey = JSON.stringify(inlineImages ?? EMPTY_INLINE_IMAGES)
+  const stableImages = useMemo<InlineImageRef[]>(
+    () => imagesKey === '[]' ? EMPTY_INLINE_IMAGES : JSON.parse(imagesKey),
+    [imagesKey],
+  )
   return (
-    <InlineImagesContext.Provider value={inlineImages ?? EMPTY_INLINE_IMAGES}>
-      <MarkdownRendererInner content={content} className={className} rich={rich} live={live} inlineImages={inlineImages} />
+    <InlineImagesContext.Provider value={stableImages}>
+      <MarkdownRendererInner content={content} className={className} rich={rich} live={live} inlineImages={stableImages} />
     </InlineImagesContext.Provider>
   )
 })

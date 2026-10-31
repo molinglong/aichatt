@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 export type { Attachment } from '@/lib/attachment-types'
 import type { Attachment } from '@/lib/attachment-types'
 
-interface UploadingFile {
+export interface UploadingItem {
   id: string
   name: string
   progress: number
@@ -19,6 +19,7 @@ interface FileUploadProps {
   attachments: Attachment[]
   onAttachmentsChange: React.Dispatch<React.SetStateAction<Attachment[]>>
   disabled?: boolean
+  onUploadingChange?: (uploading: boolean) => void
   /** 隐藏已上传附件的预览(由 ChatInput 顶部统一展示),仅保留上传中进度 */
   hideAttachmentsPreview?: boolean
   /** 视觉变体: 'icon'(默认) 28px 圆形图标按钮; 'pill' 带文字的胶囊按钮(输入框下方) */
@@ -29,6 +30,58 @@ interface FileUploadProps {
   hideTrigger?: boolean
   /** 外部触发文件选择的句柄,挂载时写入、卸载时清空 */
   openRef?: React.MutableRefObject<(() => void) | null>
+  /** 外部投递文件的句柄(输入框 Ctrl+V 粘贴):复用同一套上传/进度/错误链路 */
+  filesRef?: React.MutableRefObject<((files: FileList | File[]) => void) | null>
+  /** 不在本组件内渲染上传进度卡(由宿主放到附件行统一渲染,避免撑高输入框底部工具行) */
+  hideUploads?: boolean
+  /** 上传中条目变化回调,配合 hideUploads 由宿主自行渲染进度 */
+  onUploadingFilesChange?: (items: UploadingItem[]) => void
+}
+
+/**
+ * 上传中的附件卡:与 ChatInput 已上传附件卡同骨架(40px 图块 + 文件名 + 进度/报错)。
+ * 宿主可经 hideUploads 接管渲染位置(会话输入框把它和已上传卡排在同一行)。
+ */
+export function UploadingChip({ item }: { item: UploadingItem }) {
+  const failed = item.status === 'error'
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-2.5 rounded-xl border p-1.5 pr-2 w-full sm:w-auto sm:max-w-[228px]',
+        failed
+          ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30'
+          : 'border-line bg-surface-muted/70'
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+          failed ? 'bg-red-100 dark:bg-red-900/40' : 'bg-surface-subtle'
+        )}
+      >
+        <Upload className={cn('w-4 h-4', failed ? 'text-red-500' : 'text-content-muted animate-pulse')} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[11px] font-medium leading-tight text-content-primary">{item.name}</p>
+        {failed ? (
+          <p className="mt-1 truncate text-[10px] leading-none text-red-500">{item.error || '上传失败'}</p>
+        ) : (
+          <div className="mt-1 flex items-center gap-1.5">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-subtle">
+              <div
+                className="h-full rounded-full bg-accent transition-all duration-200"
+                style={{ width: `${item.progress}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-[9px] leading-none tabular-nums text-content-muted">
+              {item.progress}%
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function deleteUploadedFile(url: string) {
@@ -95,15 +148,34 @@ export function FileUpload({
   attachments,
   onAttachmentsChange,
   disabled,
+  onUploadingChange,
   hideAttachmentsPreview = false,
   variant = 'icon',
   pillClassName,
   hideTrigger = false,
   openRef,
+  filesRef,
+  hideUploads = false,
+  onUploadingFilesChange,
 }: FileUploadProps) {
-  const [uploading, setUploading] = useState<UploadingFile[]>([])
+  const [uploading, setUploading] = useState<UploadingItem[]>([])
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const uploadPending = uploading.some((file) => file.status === 'uploading')
+  useEffect(() => {
+    onUploadingChange?.(uploadPending)
+  }, [uploadPending, onUploadingChange])
+
+  // 上传中条目同步给宿主(它要把进度卡渲染到附件行):回调走 ref,避免宿主内联函数导致 effect 反复触发
+  const uploadingCbRef = useRef(onUploadingFilesChange)
+  useEffect(() => {
+    uploadingCbRef.current = onUploadingFilesChange
+  }, [onUploadingFilesChange])
+  useEffect(() => {
+    uploadingCbRef.current?.(uploading)
+  }, [uploading])
+  // 卸载时清空宿主那份副本,避免残留一条永不结束的进度卡
+  useEffect(() => () => uploadingCbRef.current?.([]), [])
 
   // 外部触发入口(手机端 ⋯ 面板「添加附件」):input 始终挂载,点击代理到隐藏 input
   useEffect(() => {
@@ -121,7 +193,7 @@ export function FileUpload({
 
       const tasks = fileArray.map(async (file) => {
         const id = `upload-${++idCounter}`
-        const entry: UploadingFile = { id, name: file.name, progress: 0, status: 'uploading' }
+        const entry: UploadingItem = { id, name: file.name, progress: 0, status: 'uploading' }
         setUploading((prev) => [...prev, entry])
 
         try {
@@ -152,6 +224,18 @@ export function FileUpload({
     },
     [onAttachmentsChange]
   )
+
+  // 外部投递文件(输入框 Ctrl+V):与点选/拖拽共用同一条上传链路,进度与报错一并复用
+  useEffect(() => {
+    if (!filesRef) return
+    filesRef.current = (files) => {
+      if (disabled) return
+      void handleFiles(files)
+    }
+    return () => {
+      filesRef.current = null
+    }
+  }, [filesRef, handleFiles, disabled])
 
   function handleRemove(index: number) {
     const removed = attachments[index]
@@ -187,7 +271,7 @@ export function FileUpload({
       ref={inputRef}
       type="file"
       multiple
-      accept="image/*,text/*,application/pdf,.xlsx,.xls,.docx,.html,.htm"
+      accept="image/*,text/*,application/pdf,.xlsx,.xls,.docx,.pptx,.html,.htm"
       className="hidden"
       onChange={(e) => {
         if (e.target.files) handleFiles(e.target.files)
@@ -198,16 +282,15 @@ export function FileUpload({
 
   // 手机端:无上传进行中且预览由宿主渲染时,只留这个 display:none 的 input。
   // 若照常挂 flex 容器,它会作为空子项占掉胶囊一整行(实测手机端输入胶囊被顶高 4px)
-  if (hideTrigger && hideAttachmentsPreview && uploading.length === 0) return fileInput
+  if (hideTrigger && hideAttachmentsPreview && (uploading.length === 0 || hideUploads)) return fileInput
 
   return (
     <div className="flex flex-col gap-1.5 max-md:w-full">
       {/* Hidden file input */}
       {fileInput}
 
-      {/* Attachments preview */}
-      {(!hideAttachmentsPreview || uploading.length > 0) &&
-        (attachments.length > 0 || uploading.length > 0) && (
+      {/* Attachments preview(进度卡可经 hideUploads 交给宿主渲染) */}
+      {((!hideAttachmentsPreview && attachments.length > 0) || (!hideUploads && uploading.length > 0)) && (
           <div className="flex flex-wrap gap-2 px-1">
             {!hideAttachmentsPreview &&
               attachments.map((att, idx) => (
@@ -229,14 +312,14 @@ export function FileUpload({
                       {att.name}
                     </p>
                     {att.parseStatus ? (
-                      // 中转站解析型附件(文本/PDF/Excel/Word/HTML):展示解析状态
+                      // 中转站解析型附件(文本/PDF/Excel/Word/PPT/HTML):展示解析状态
                       att.parseStatus === 'failed' ? (
                         <p className="text-[10px] text-red-500 truncate">
                           解析失败{att.parseError ? `：${att.parseError}` : ''}
                         </p>
-                      ) : att.type === 'application/pdf' ? (
+                      ) : att.pageCount != null ? (
                         <p className="text-[10px] text-content-muted">
-                          {att.pageCount ?? '?'} 页 · {formatChars(att.charCount ?? 0)}
+                          {att.pageCount} 页 · {formatChars(att.charCount ?? 0)}
                         </p>
                       ) : (
                         <p className="text-[10px] text-content-muted">
@@ -250,6 +333,7 @@ export function FileUpload({
                     )}
                   </div>
                   <button
+                    type="button"
                     onClick={() => handleRemove(idx)}
                     className={cn(
                       'shrink-0 p-0.5 rounded-md transition-colors',
@@ -263,33 +347,7 @@ export function FileUpload({
                 </div>
               ))}
 
-          {uploading.map((u) => (
-            <div
-              key={u.id}
-              className={cn(
-                'flex items-center gap-2 rounded-lg border px-2 py-1.5 max-w-[180px]',
-                u.status === 'error'
-                  ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30'
-                  : 'border-line bg-surface-muted'
-              )}
-            >
-              <Upload className={cn('w-4 h-4 shrink-0', u.status === 'error' ? 'text-red-400' : 'text-content-muted animate-pulse')} />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-content-primary truncate">{u.name}</p>
-                {u.status === 'uploading' && (
-                  <div className="mt-0.5 w-full h-1 rounded-full bg-surface-subtle overflow-hidden">
-                    <div
-                      className="h-full bg-accent rounded-full transition-all duration-200"
-                      style={{ width: `${u.progress}%` }}
-                    />
-                  </div>
-                )}
-                {u.status === 'error' && (
-                  <p className="text-[10px] text-red-500">{u.error}</p>
-                )}
-              </div>
-            </div>
-          ))}
+          {!hideUploads && uploading.map((u) => <UploadingChip key={u.id} item={u} />)}
         </div>
       )}
 
@@ -305,6 +363,7 @@ export function FileUpload({
         )}
       >
         <button
+          type="button"
           onClick={() => inputRef.current?.click()}
           disabled={disabled}
           className={cn(
@@ -328,7 +387,7 @@ export function FileUpload({
                 )
           )}
           aria-label="添加附件"
-          title="添加附件 (图片、文本、PDF, 最大10MB)"
+          title="添加附件 (图片、文本、PDF, 最大10MB) · 支持 Ctrl+V 粘贴"
         >
           <Paperclip className="w-3.5 h-3.5" />
           {/* pill 变体已图标化(与工具组圆形钮同构),不再渲染文字 */}

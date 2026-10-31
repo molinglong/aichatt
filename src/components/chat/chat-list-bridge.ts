@@ -123,6 +123,15 @@ export function isListFollowing(): boolean {
   return followingGetterRef.current()
 }
 
+// 单聊的段落锚点控制器接管尺寸变化补偿;对比/独立列表保持旧虚拟化补偿。
+let listAnchoring = false
+export function registerListAnchoring(active: boolean): void {
+  listAnchoring = active
+}
+export function isListAnchoring(): boolean {
+  return listAnchoring
+}
+
 /* ── 进入会话贴底:ChatPanel(单聊)与 CompareLane(对比泳道)共用 ──────────── */
 
 /**

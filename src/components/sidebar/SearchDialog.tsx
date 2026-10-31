@@ -5,15 +5,18 @@ import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { Search, X, Loader2, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { BUILTIN_MASKS } from '@/lib/ai/builtin-masks'
+import { ALL_BUILTIN_MASKS } from '@/lib/ai/builtin-masks'
 import { resolveMaskBadge, type MaskDTO } from '@/lib/ai/mask-types'
 import { queryKeys, STALE } from '@/lib/query/keys'
 import { fetchJson } from '@/lib/query/fetcher'
+import { useIsMobileViewport } from '@/hooks/useIsMobileViewport'
 
 interface ConversationData {
   id: string
   title: string
   mode?: string
+  /** 学习模式会话:搜索结果据此跳 /study?c=id */
+  studyMode?: boolean
   maskId?: string | null
   updatedAt: string
   // 搜索模式下,由 /api/messages/snippets 注入的"消息级命中"预览
@@ -104,7 +107,8 @@ function MaskFilterChip({
       title={title}
       aria-pressed={active}
       className={cn(
-        'shrink-0 px-2 py-0.5 rounded-full text-[11px] leading-5 whitespace-nowrap transition-colors',
+        // 手机端全屏页:胶囊放大到可点尺寸(13px / 32px 高);桌面浮层维持紧凑 11px
+        'shrink-0 px-3 py-1 rounded-full text-[13px] leading-5 whitespace-nowrap transition-colors touch-manipulation md:px-2 md:py-0.5 md:text-[11px]',
         active
           ? 'bg-accent-soft text-content-primary'
           : 'bg-surface-subtle/60 text-content-muted hover:text-content-primary hover:bg-surface-subtle'
@@ -140,6 +144,9 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 手机端(≤md)全屏页形态;桌面端保持居中浮层。
+  // 媒体查询口径与 useIsMobileViewport 一致,SSR 首帧 false → 桌面形态,水合后切换。
+  const isMobile = useIsMobileViewport()
 
   // 自定义面具列表(筛选胶囊用;打开时才启用,与侧边栏共享缓存)
   const { data: userMasks } = useQuery({
@@ -245,8 +252,11 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
     [filterMask]
   )
 
-  // 防抖触发首次/重置查询(query 或筛选变化)
+  // 防抖触发首次/重置查询(query 或筛选变化)。
+  // 依赖里必须带 open:关闭时结果被清空,重开若 query 未变,旧实现不会重新请求,
+  // 表现为「第二次打开搜索永远是空列表」。
   useEffect(() => {
+    if (!open) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       runSearch(query, true)
@@ -254,7 +264,7 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [query, filterMask, runSearch])
+  }, [open, query, filterMask, runSearch])
 
   // 当搜索结果或关键词变化时,拉取消息级命中片段。
   // 翻页加载也会重新触发,保证新增会话也能拿到片段。
@@ -352,6 +362,11 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
 
   function handleSelect(conv: ConversationData) {
     onClose()
+    if (conv.studyMode) {
+      // 学习模式会话必须回学习室:外部 onSelect 只认会话 id(Sidebar 直接 push 普通聊天地址)
+      router.push(`/study?c=${conv.id}`)
+      return
+    }
     if (onSelect) {
       onSelect(conv.id)
       return
@@ -368,7 +383,7 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
       (maskUsage?.usage ?? []).map((u) => [u.maskId, u.count])
     )
     return [
-      ...BUILTIN_MASKS.map((m) => ({ id: m.id, avatar: m.avatar, name: m.name })),
+      ...ALL_BUILTIN_MASKS.map((m) => ({ id: m.id, avatar: m.avatar, name: m.name })),
       ...(userMasks ?? []).map((m) => ({ id: m.id, avatar: m.avatar, name: m.name })),
     ]
       .map((m) => ({ ...m, count: usageMap.get(m.id) ?? 0 }))
@@ -401,6 +416,14 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
   )
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // 手机端没有方向键语境:回车 = 收起键盘,不要误开高亮的第一条
+    if (isMobile) {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        e.currentTarget.blur()
+      }
+      return
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setActiveIndex((i) => Math.min(i + 1, Math.max(0, flatResults.length - 1)))
@@ -418,20 +441,40 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-start justify-center pt-[12vh] px-4"
-      onClick={onClose}
+      className={cn(
+        'fixed inset-0 z-[200]',
+        isMobile
+          ? // 手机端:整页全屏(inset-0,软键盘弹起时随 WebView 视口一起缩),不再留 12vh 悬浮边距
+            'flex flex-col bg-surface'
+          : 'flex items-start justify-center pt-[12vh] px-4'
+      )}
+      onClick={isMobile ? undefined : onClose}
     >
-      {/* Backdrop — 主题感知磨砂遮罩 */}
-      <div className="absolute inset-0 bg-black/20 backdrop-blur-[12px] saturate-150 dark:bg-white/15 dark:saturate-150" />
+      {/* Backdrop — 主题感知磨砂遮罩(仅桌面浮层;手机端整页不透明) */}
+      {!isMobile && (
+        <div className="absolute inset-0 bg-black/20 backdrop-blur-[12px] saturate-150 dark:bg-white/15 dark:saturate-150" />
+      )}
 
       {/* Panel */}
       <div
-        className="relative w-full max-w-lg rounded-xl border border-line/60 bg-surface-glass glass-blur shadow-2xl overflow-hidden"
+        className={cn(
+          'relative overflow-hidden',
+          isMobile
+            ? 'flex h-full min-h-0 w-full flex-col bg-surface'
+            : 'w-full max-w-lg rounded-xl border border-line/60 bg-surface-glass glass-blur shadow-2xl'
+        )}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Search input */}
-        <div className="flex items-center gap-2 px-3.5 py-3 border-b border-line/50">
-          <Search className="w-4 h-4 text-content-muted shrink-0" />
+        {/* Search input — 手机端页头与全局 chrome 同一 --m-chrome-top 基线 */}
+        <div
+          className={cn(
+            'flex items-center gap-2 border-b border-line/50',
+            isMobile
+              ? 'shrink-0 pl-5 pr-[var(--m-chrome-inset)] pt-[var(--m-chrome-top)] pb-2'
+              : 'px-3.5 py-3'
+          )}
+        >
+          <Search className={cn('shrink-0 text-content-muted', isMobile ? 'w-[18px] h-[18px]' : 'w-4 h-4')} />
           <input
             ref={inputRef}
             type="text"
@@ -439,21 +482,42 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="搜索聊天记录..."
-            className="flex-1 bg-transparent text-sm text-content-primary placeholder:text-content-muted outline-none"
+            enterKeyHint="search"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            className={cn(
+              'flex-1 min-w-0 bg-transparent text-content-primary placeholder:text-content-muted outline-none',
+              isMobile ? 'text-[16px] leading-6' : 'text-sm'
+            )}
           />
           {loading && <Loader2 className="w-3.5 h-3.5 text-content-muted animate-spin" />}
           <button
             onClick={onClose}
-            className="p-1 rounded-md hover:bg-surface-subtle transition-colors"
+            className={cn(
+              'hover:bg-surface-subtle transition-colors touch-manipulation',
+              isMobile
+                ? 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full active:bg-surface-subtle/70'
+                : 'p-1 rounded-md'
+            )}
             aria-label="关闭搜索"
           >
-            <X className="w-3.5 h-3.5 text-content-muted" />
+            <X className={cn('text-content-muted', isMobile ? 'w-[18px] h-[18px]' : 'w-3.5 h-3.5')} />
           </button>
         </div>
 
-        {/* Mask filter chips */}
+        {/* Mask filter chips —— 2026-10-31 收成悬浮圆角条：去掉贴边底边线，
+            两侧内缩 + 极淡外投影，读作浮在搜索框与结果之间的独立一层 */}
         <div
-          className="flex items-center gap-1 px-3.5 py-2 border-b border-line/50 overflow-x-auto"
+          className={cn(
+            'flex items-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+            // 浮卡用卡面色（不用灰底）：chips 未选中的 surface-subtle 才看得出底，
+            // 与面板的分层交给外投影，和设置列表卡同一套语言
+            'mb-1 mt-1.5 rounded-[14px] bg-surface',
+            'shadow-[0_1px_2px_rgb(0_0_0/0.04),0_6px_14px_-8px_rgb(0_0_0/0.16)] dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_8px_18px_-10px_rgb(0_0_0/0.6)]',
+            // 内缩量 + 条内 padding = 原起点，chips 位置不漂移
+            isMobile ? 'shrink-0 gap-1.5 mx-3.5 px-2 py-2' : 'gap-1 mx-2 px-1.5 py-1.5'
+          )}
           role="group"
           aria-label="按面具筛选"
         >
@@ -501,10 +565,15 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
           </MaskFilterChip>
         </div>
 
-        {/* Results */}
+        {/* Results — 手机端吃满剩余高度,滚到底就是键盘/系统手势区 */}
         <div
           ref={scrollRef}
-          className="max-h-[50vh] overflow-y-auto py-1"
+          className={cn(
+            'overflow-y-auto py-1',
+            isMobile
+              ? 'flex-1 min-h-0 overscroll-contain pb-[max(var(--sab,0px),8px)]'
+              : 'max-h-[50vh]'
+          )}
         >
           {results.length === 0 && !loading ? (
             !query.trim() ? (
@@ -531,7 +600,12 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
                 return (
                   <div key={group.key} className={cn(gi === 0 ? '' : 'mt-1')}>
                     {/* 分组标题 —— 搜索时显示"搜索结果",浏览时显示时间分组 */}
-                    <div className="px-3.5 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-content-muted">
+                    <div
+                      className={cn(
+                        'font-medium uppercase tracking-wider text-content-muted',
+                        isMobile ? 'px-5 pt-3 pb-1.5 text-[11px]' : 'px-3.5 pt-2 pb-1 text-[10px]'
+                      )}
+                    >
                       {query.trim() ? '搜索结果' : group.key}
                       <span className="ml-1.5 text-content-muted/70 normal-case tracking-normal">
                         {group.items.length}
@@ -539,7 +613,7 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
                       </span>
                     </div>
                   {/* 该分组下的对话 */}
-                  <ul className="space-y-0.5 px-1">
+                  <ul className={cn('space-y-0.5', isMobile ? 'px-2' : 'px-1')}>
                     {group.items.map((conv) => {
                       const flatIdx = flatResults.indexOf(conv)
                       const fragment = fragmentsByConv.get(conv.id)
@@ -550,16 +624,24 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
                             onClick={() => handleSelect(conv)}
                             onMouseEnter={() => setActiveIndex(flatIdx)}
                             className={cn(
-                              'w-full flex items-start gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors',
-                              flatIdx === activeIndex
+                              'w-full flex rounded-lg text-left transition-colors touch-manipulation',
+                              isMobile
+                                ? 'items-center gap-3 px-3 py-2.5 min-h-[52px] text-content-secondary active:bg-surface-subtle/70'
+                                : 'items-start gap-2 px-2.5 py-1.5',
+                              !isMobile && flatIdx === activeIndex
                                 ? 'bg-accent/15 text-content-primary'
-                                : 'text-content-secondary hover:bg-surface-subtle/60'
+                                : !isMobile && 'text-content-secondary hover:bg-surface-subtle/60'
                             )}
                           >
-                            <MessageSquare className="w-3.5 h-3.5 shrink-0 opacity-60 mt-1" />
+                            <MessageSquare
+                              className={cn(
+                                'shrink-0 opacity-60',
+                                isMobile ? 'w-4 h-4 mt-0.5' : 'w-3.5 h-3.5 mt-1'
+                              )}
+                            />
                             <div className="flex-1 min-w-0">
                               {/* 标题行(支持高亮,尾随面具徽标) */}
-                              <div className="text-sm truncate">
+                              <div className={cn('truncate', isMobile ? 'text-[15px]' : 'text-sm')}>
                                 {highlightMatch(conv.title || '新对话', query)}
                                 {badge && (
                                   <span className="ml-1 text-xs" title={`面具：${badge.name}`} aria-label={`面具：${badge.name}`}>
@@ -571,7 +653,12 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
                               {fragment && (
                                 <div className="mt-0.5 flex items-center gap-1.5 min-w-0">
                                   <FragmentRoleBadge role={fragment.role} />
-                                  <span className="text-[11px] text-content-muted/90 truncate flex-1">
+                                  <span
+                                    className={cn(
+                                      'text-content-muted/90 truncate flex-1',
+                                      isMobile ? 'text-[12.5px]' : 'text-[11px]'
+                                    )}
+                                  >
                                     {highlightMatch(fragment.snippet, query)}
                                   </span>
                                 </div>
@@ -603,8 +690,8 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
           )}
         </div>
 
-        {/* Footer hint */}
-        <div className="flex items-center justify-between px-3.5 py-2 border-t border-line/50 text-[10px] text-content-muted">
+        {/* Footer hint — 桌面键盘提示;手机端无键盘语境且会被软键盘盖住,不渲染 */}
+        <div className="hidden md:flex items-center justify-between px-3.5 py-2 border-t border-line/50 text-[10px] text-content-muted">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <kbd className="px-1 py-0.5 rounded bg-surface-subtle text-content-secondary">↑</kbd>

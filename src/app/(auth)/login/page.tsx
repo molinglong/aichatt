@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { signIn } from "next-auth/react"
 import Link from "next/link"
 import {
@@ -17,6 +17,57 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
+  const [showLegacy, setShowLegacy] = useState(false)
+  const homeStarted = useRef(false)
+  // 第 3 波开关：默认关闭；确认迁移完成后再设为 1，只保留 home 登录。
+  const homeOnly = process.env.NEXT_PUBLIC_HOME_ONLY === "1"
+
+  // home 授权回调会带 home_code 回到这里，自动完成一次 NextAuth 登录。
+  useEffect(() => {
+    // 应急入口：即使开启 homeOnly，也允许 /login?legacy=1 使用原账号密码。
+    if (new URLSearchParams(window.location.search).get("legacy") === "1") {
+      setShowLegacy(true)
+    }
+
+    if (homeStarted.current) return
+
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get("home_code")
+    const homeError = params.get("home_error")
+
+    if (homeError) {
+      homeStarted.current = true
+      setError(
+        homeError === "no_email"
+          ? "home 账号没有邮箱，无法对应 aichatt 用户"
+          : homeError === "email_unverified"
+            ? "邮箱还没有验证，请先到 home 完成验证"
+            : "统一登录已过期，请重试"
+      )
+      window.history.replaceState(null, "", "/login")
+      return
+    }
+
+    if (!code) return
+    homeStarted.current = true
+
+    const requested = params.get("next") || "/chat"
+    const next = requested.startsWith("/") && !requested.startsWith("//") ? requested : "/chat"
+
+    // 先清掉 URL 里的一次性 code：避免并发挂载重复提交，也不把它留在历史记录里。
+    window.history.replaceState(null, "", "/login")
+    setLoading(true)
+
+    signIn("home", { code, redirect: false }).then((res) => {
+      if (res?.error) {
+        setLoading(false)
+        setError("这个邮箱还没有 aichatt 账号，请先注册")
+        window.history.replaceState(null, "", "/login")
+        return
+      }
+      window.location.replace(next)
+    })
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -48,12 +99,42 @@ export default function LoginPage() {
         欢迎回来
       </h2>
       <p className="auth-reveal auth-delay-2 mb-7 mt-2 text-[13.5px] text-content-secondary">
-        登录你的账户以继续
+        用 home 账号登录，aichatt 与 plan 共用同一身份
       </p>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        {error && <ErrorBar message={error} />}
+      {error && <ErrorBar message={error} />}
 
+      <div className="auth-reveal auth-delay-3 mt-5 flex flex-col gap-3">
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => window.location.assign("/api/auth/home/start")}
+          className={primaryButtonClass}
+        >
+          {loading ? (
+            <>
+              <span className="h-[15px] w-[15px] animate-spin rounded-full border-2 border-accent-foreground/35 border-t-accent-foreground" />
+              <span className="ml-2">正在登录…</span>
+            </>
+          ) : (
+            "使用 home 账号登录"
+          )}
+        </button>
+
+        {(!homeOnly || showLegacy) && (
+          <button
+            type="button"
+            onClick={() => setShowLegacy((value) => !value)}
+            className={`${footerLinkClass} self-center`}
+          >
+            {showLegacy ? "收起原账号登录" : "使用原账号密码登录"}
+          </button>
+        )}
+      </div>
+
+      {showLegacy && (
+        <>
+      <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
         <div className="auth-reveal auth-delay-3">
           <label htmlFor="email" className={labelClass}>
             邮箱或用户名
@@ -104,6 +185,8 @@ export default function LoginPage() {
           临时聊天
         </Link>
       </p>
+        </>
+      )}
     </div>
   )
 }

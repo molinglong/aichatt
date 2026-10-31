@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, KeyboardEvent, ChangeEvent } from 'react'
-import { Send, Square, X, Plus, AlertCircle, FileText, Play, ArrowUp, Columns2, Drama, Settings as SettingsIcon, Brain, Globe, Plug, Check, ChevronRight, ChevronDown, MoreHorizontal, Copy, ClipboardPaste, TextSelect, Eraser, Paperclip } from 'lucide-react'
+import { Send, Square, X, Plus, AlertCircle, FileText, Play, ArrowUp, Columns2, Drama, Brain, Globe, Plug, Check, ChevronRight, ChevronDown, MoreHorizontal, Copy, ClipboardPaste, TextSelect, Eraser, Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
 import { useContextMenuStore, type ContextMenuItem } from '@/store/contextMenuStore'
-import { FileUpload, deleteUploadedFile, type Attachment } from './FileUpload'
+import { FileUpload, deleteUploadedFile, UploadingChip, type Attachment, type UploadingItem } from './FileUpload'
+import { ChatImageLightbox } from './ChatImageLightbox'
 import { ModelSelector } from './ModelSelector'
 import { ModelQuickSheet } from './ModelQuickSheet'
 import { ReasoningTierPicker } from './ReasoningTierPicker'
@@ -13,6 +14,7 @@ import { PROVIDER_DOT } from '@/lib/ai/provider-meta'
 import { MaskPickerMenu } from './MaskPickerMenu'
 import { McpToolMenu } from './McpToolMenu'
 import { MiniSwitch } from '@/components/settings/MiniSwitch'
+import { MobileSheet, SheetGroup, SheetRow, SheetToggleRow } from '@/components/ui/MobileSheet'
 import {
   SEARCH_PLATFORMS,
   getSearchPlatform,
@@ -20,13 +22,17 @@ import {
 } from '@/lib/ai/search-platforms'
 import { ActivityHeatmap } from './ActivityHeatmap'
 import type { MaskDTO } from '@/lib/ai/mask-types'
+import type { BuiltinMask } from '@/lib/ai/builtin-masks'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
 import { useMaskMenuMaxHeight } from '@/hooks/useMaskMenuMaxHeight'
+import { usePanelPresence } from '@/hooks/usePanelPresence'
 import { useIsMobileViewport } from '@/hooks/useIsMobileViewport'
 import { useChatStore } from '@/store/chat-store'
 import { draftKeyFor, setDraft as persistDraft } from '@/lib/draft-storage'
 import { INPUT_INSERT_EVENT } from '@/lib/input-bridge'
 import type { ModelDefinition } from '@/lib/ai/types'
+import { useComposerShortcuts } from './useComposerShortcuts'
+import { normalizeReferences, prependConversationReferences, type ConversationReference } from '@/lib/chat-shortcuts'
 
 /** 中秋桂花散点坐标(百分比,定稿自 preview-midautumn-themes F-3): 落点避开中心内容带 */
 const OSMANTHUS_PTS: [number, number][] = [
@@ -36,6 +42,34 @@ const OSMANTHUS_PTS: [number, number][] = [
 
 /** 手机端输入正文行高(15px/24px),长文升半屏的行数判据基准 */
 const MOBILE_LINE_H = 24
+
+/** 剪贴板文件常叫 image.png / 空名,附件卡上一列同名很糊,这类通用名替换成带时间戳的可读名 */
+const GENERIC_PASTE_NAME = /^(image|blob|clipboard)(\.\w+)?$/i
+
+/** 读屏文件类型的扩展名(jpeg → jpg,其余按 mime 子类型) */
+function pasteExtOf(type: string): string {
+  const sub = type.split('/')[1] || 'png'
+  return sub.replace(/^jpeg$/, 'jpg').replace(/^\+xml$/, '')
+}
+
+function withPasteName(file: File): File {
+  if (file.name && !GENERIC_PASTE_NAME.test(file.name)) return file
+  const ext = pasteExtOf(file.type)
+  const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '-')
+  const base = file.type.startsWith('image/') ? '粘贴图片' : '粘贴文件'
+  return new File([file], `${base}-${stamp}.${ext}`, { type: file.type, lastModified: file.lastModified })
+}
+
+/** 从剪贴板事件里捞可上传的文件:截图/复制的图片、从资源管理器复制的文件都在其中 */
+function filesFromClipboard(data: DataTransfer | null): File[] {
+  if (!data) return []
+  const fromItems = Array.from(data.items)
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((f): f is File => !!f)
+  const files = fromItems.length > 0 ? fromItems : Array.from(data.files)
+  return files.map(withPasteName)
+}
 
 /** 半屏编辑器计数文案:字数 + 按 300 字/分折算的通读时长(不足 1 分钟只报字数) */
 function longTextCount(text: string): string {
@@ -79,6 +113,8 @@ export interface ChatInputProps {
   onMaskChange?: (maskId: string | null) => void
   /** 自定义面具列表(欢迎页胶囊菜单「我的面具」分组) */
   userMasks?: MaskDTO[]
+  /** 面具面板已下载的内置面具(与自定义面具一起进「我的面具」) */
+  installedMasks?: readonly BuiltinMask[]
   /** 打开面具管理(设置页 masks 分区) */
   onManageMasks?: () => void
   /** 「接着说」横幅:存在时显示在输入框上方 */
@@ -123,6 +159,7 @@ export function ChatInput({
   mask,
   onMaskChange,
   userMasks,
+  installedMasks,
   onManageMasks,
   pendingContinuationExists,
   onContinue,
@@ -133,6 +170,12 @@ export function ChatInput({
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  // 上传中条目:进度卡与已上传附件卡排在同一行(FileUpload 经 hideUploads 交出渲染权),
+  // 否则进度卡会挤进底部工具行,把胶囊行撑高、把附件钮挤到下一排
+  const [uploadingFiles, setUploadingFiles] = useState<UploadingItem[]>([])
+  const [references, setReferences] = useState<ConversationReference[]>([])
+  // 待发送图片附件的大图预览下标(对应 attachments 过滤出的图片序列)
+  const [previewImageIndex, setPreviewImageIndex] = useState<number | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
   const [draftRestored, setDraftRestored] = useState(false)
   // welcome 变体:面具胶囊菜单开合
@@ -155,12 +198,18 @@ export function ChatInput({
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   // 手机端模型入口:胶囊内不放 ModelSelector,改由 ⋯ 唤 iOS 半屏快切
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
+  // 面板退场统一入口:关闭后保留 180ms 播完动效再卸载；动效本体见 globals.css 的 .panel-motion
+  const morePanel = usePanelPresence(moreMenuOpen)
+  const platformPanel = usePanelPresence(platformMenuOpen)
+  const maskPanel = usePanelPresence(maskMenuOpen)
   const isMobileViewport = useIsMobileViewport()
-  // 面具菜单盒高: 桌面在胶囊里向下弹;手机端胶囊贴底,同一颗钮改为向上弹,故方向按视口切换
+  // 面具菜单盒高: 桌面在胶囊里向下弹;手机端改走 MobileSheet(自带 portal,不受输入卡 glass-blur 的包含块影响)
   const maskMenu = useMaskMenuMaxHeight(maskMenuOpen, isMobileViewport ? 'up' : 'down')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   // 手机端严格两钮:胶囊内不放上传钮,⋯ 面板「添加附件」经此句柄代理点击隐藏 input
   const attachOpenRef = useRef<(() => void) | null>(null)
+  // 剪贴板直传句柄:FileUpload 挂载时写入,Ctrl+V / 右键粘贴的图片与文件由此进上传链路
+  const attachFilesRef = useRef<((files: FileList | File[]) => void) | null>(null)
   // 手机端长文:>6 行自动升半屏编辑器,≤5 行收回(留 1 行滞回,防阈值抖动反复升降)
   const [longTextMode, setLongTextMode] = useState(false)
   // 手动「收起」后按住不自动弹回,直到行数真的落回阈值以下
@@ -172,9 +221,6 @@ export function ChatInput({
   const replyingTo = useChatStore((s) => s.replyingTo)
   const setReplyingTo = useChatStore((s) => s.setReplyingTo)
 
-  // 内置壁纸模式(背景=图片):开启时欢迎页收起点阵/光效装饰,壁纸在 shell 层渲染
-  const wallpaperOn = useChatStore((s) => s.backdropMode === 'image')
-
   // ── 草稿自动保存 ──────────────────────────────────────────────────────────
   // 用 store 里的 currentConversationId 作为 key 维度;空会话用 '__new__'
   const currentConversationId = useChatStore((s) => s.currentConversationId)
@@ -184,12 +230,31 @@ export function ChatInput({
   // 跟踪上一次挂载的 key:key 变化时重新加载草稿(防止跨会话串台)
   const lastLoadedKeyRef = useRef<string | null>(null)
 
+  const shortcuts = useComposerShortcuts({
+    input, setInput, textareaRef, scopeKey: draftKey, isLoading,
+    models, selectedModel, onModelChange, compareMode,
+    deepThink, onDeepThinkChange, webSearch, webSearchAvailable, onWebSearchChange,
+    maskId: mask?.id, userMasks, installedMasks, onMaskChange, references, setReferences,
+    onUpload: () => attachOpenRef.current?.(),
+    onOpen: () => {
+      setMoreMenuOpen(false)
+      setMaskMenuOpen(false)
+      setMcpMenuOpen(false)
+      setPlatformMenuOpen(false)
+      setModelSheetOpen(false)
+    },
+  })
+  const hasSendContent = !!input.trim() || attachments.length > 0 || references.length > 0
+  const sendBlocked = isLoading || shortcuts.pending
+
   // key 切换 → 加载对应草稿(SSR 期间 drafts 为空,客户端 hydrate 后再加载)
   useEffect(() => {
     if (lastLoadedKeyRef.current === draftKey) return
     lastLoadedKeyRef.current = draftKey
     const draft = draftsMap[draftKey]
-    if (draft && draft.text) {
+    const restoredReferences = normalizeReferences(draft?.references)
+    setReferences(restoredReferences)
+    if (draft && (draft.text || restoredReferences.length)) {
       setInput(draft.text)
       setDraftRestored(true)
       // 3 秒后自动隐藏"已恢复"提示
@@ -211,17 +276,18 @@ export function ChatInput({
   useEffect(() => {
     const t = setTimeout(() => {
       const trimmed = input.trim()
-      if (trimmed) {
-        storeSetDraft(draftKey, { text: input, savedAt: Date.now() })
-        persistDraft(draftKey, { text: input, savedAt: Date.now() })
+      if (trimmed || references.length) {
+        const draft = { text: input, savedAt: Date.now(), ...(references.length ? { references } : {}) }
+        storeSetDraft(draftKey, draft)
+        persistDraft(draftKey, draft)
       } else {
-        // 空文本 → 清掉草稿,避免残留旧内容
+        // 空文本且无引用 → 清掉草稿,避免残留旧内容
         storeSetDraft(draftKey, null)
         persistDraft(draftKey, null)
       }
     }, 400)
     return () => clearTimeout(t)
-  }, [input, draftKey, storeSetDraft])
+  }, [input, references, draftKey, storeSetDraft])
 
   // 外部注入文本(右键代码块「让 AI 解释」等深层入口):追加到输入框并聚焦。
   // 草稿持久化由上方 input effect 自动完成,这里只管 setState。
@@ -292,6 +358,52 @@ export function ChatInput({
 
   function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value)
+    shortcuts.updateFromTextarea(e.target)
+  }
+
+  // Ctrl+V 直传:剪贴板里的图片/文件直接进待发送附件,不必先存盘再点附件钮。
+  // 纯文字粘贴一律放行(浏览器原生插入);图文混贴时文字照常插入、图片收进附件
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (isLoading) return
+    const files = filesFromClipboard(e.clipboardData)
+    if (files.length === 0) return
+    attachFilesRef.current?.(files)
+  }
+
+  // 右键「粘贴」:先读富内容(截图/复制的图片直接进附件),不支持或被拒权限时退回纯文本
+  async function pasteRichFromClipboard(focusTarget: HTMLTextAreaElement) {
+    const appendText = (text: string) => {
+      if (!text) return
+      setInput((prev) => (prev ? `${prev}${text}` : text))
+    }
+    if (!isLoading && navigator.clipboard?.read) {
+      try {
+        const items = await navigator.clipboard.read()
+        const files: File[] = []
+        let text = ''
+        for (const item of items) {
+          const imageType = item.types.find((t) => t.startsWith('image/'))
+          if (imageType) {
+            const blob = await item.getType(imageType)
+            files.push(withPasteName(new File([blob], '', { type: imageType })))
+          } else if (item.types.includes('text/plain')) {
+            text += await (await item.getType('text/plain')).text()
+          }
+        }
+        if (files.length > 0) attachFilesRef.current?.(files)
+        appendText(text)
+        requestAnimationFrame(() => focusTarget.focus())
+        return
+      } catch {
+        // 落到下面的纯文本读取
+      }
+    }
+    try {
+      appendText(await navigator.clipboard.readText())
+      requestAnimationFrame(() => focusTarget.focus())
+    } catch {
+      // 剪贴板不可读时静默(与改版前一致)
+    }
   }
 
   // 输入框右键 → 轮盘(粘贴/复制/全选/清空),替换浏览器原生菜单。
@@ -307,14 +419,7 @@ export function ChatInput({
         label: '粘贴',
         icon: <ClipboardPaste className="w-3.5 h-3.5" />,
         onSelect: () => {
-          navigator.clipboard
-            .readText()
-            .then((text) => {
-              if (!text) return
-              setInput((prev) => (prev ? `${prev}${text}` : text))
-              requestAnimationFrame(() => ta.focus())
-            })
-            .catch(() => {})
+          void pasteRichFromClipboard(ta)
         },
       },
       {
@@ -357,6 +462,7 @@ export function ChatInput({
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     // IME 组合态(拼音选词中)不触发发送;Safari 组合结束帧 isComposing 已翻转但 keyCode 仍为 229,一并拦截
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+    if (shortcuts.handleKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSendDebounced()
@@ -365,7 +471,7 @@ export function ChatInput({
 
   function handleSendInternal() {
     const trimmed = input.trim()
-    if ((!trimmed && attachments.length === 0) || isLoading) return
+    if (!hasSendContent || isLoading || shortcuts.isPending()) return
 
     // 图片附件需要视觉模型:拦截不支持视觉的模型,给出明确指引
     if (attachments.some((a) => a.type.startsWith('image/'))) {
@@ -409,8 +515,13 @@ export function ChatInput({
       // 清空引用状态
       setReplyingTo(null)
     }
+    // 复用现有文本发送/持久化/对比链路：发送的是可见的正文快照，不只是会话标题。
+    finalText = prependConversationReferences(finalText, references)
     onSend(finalText, attachments.length > 0 ? attachments : undefined)
+    shortcuts.close()
+    shortcuts.clearFeedback()
     setInput('')
+    setReferences([])
     setAttachments([])
     // 发送后立即清掉本会话的草稿(避免下次再误加载)
     storeSetDraft(draftKey, null)
@@ -427,6 +538,8 @@ export function ChatInput({
   const handleSendDebounced = useSingleFlight(handleSendInternal, [
     input,
     attachments,
+    references,
+    replyingTo,
     isLoading,
     compareMode,
     compareModels,
@@ -466,183 +579,43 @@ export function ChatInput({
   //   移动端(<sm)只外显 上传/思考/搜索,MCP/面具/对比全部收进 ⋯(390px 实测不溢出)。
   // MCP/面具是弹菜单型入口:桌面从各自钮弹出,移动端从 ⋯ 钮弹出(两端互斥渲染)。
   // 手机端 38px:与原型 tiny-btn 同档,单行胶囊里 4 个钮 + 输入区在 390px 下才不溢出
-  const iconBtnBase = 'flex items-center justify-center h-7 w-7 min-h-[38px] min-w-[38px] sm:min-h-0 sm:min-w-0 rounded-full transition-colors shrink-0'
+  const iconBtnBase = 'composer-tool flex items-center justify-center h-7 w-7 min-h-[38px] min-w-[38px] sm:min-h-0 sm:min-w-0 rounded-full transition-colors shrink-0'
   const pillIdle = 'bg-surface-muted hover:bg-surface-subtle text-content-secondary'
   const pillActive = 'bg-accent text-accent-foreground'
   const hasCompareEntry = compareModeAvailable && !!onCompareModeChange
   const currentModel = models.find((m) => m.id === selectedModel)
   const hasMcpEntry = mcpAvailable && !!onMcpEnabledChange
   const hasMaskEntry = !!onMaskChange
-  // ⋯ 钮:手机端恒显(深度思考/搜索/面具/MCP/对比全收在这里);
-  // 桌面端仅当有「对比模式」项时出现(面具/MCP 桌面已外显),用 hidden/max-sm:block 分端控制
-  // ⋯ 更多工具/面具/MCP 弹层(welcome 与 standard 两变体共用):
-  // 挂在 ⋯ 按钮自身的 wrapper 上,以按钮为锚居中向上弹出;
+  // ⋯ 更多工具(welcome 与 standard 两变体共用):
+  // 桌面端只剩「对比模式」(面具/MCP 桌面已外显),仍以 ⋯ 钮为锚向上弹小气泡;
+  // 手机端整套工具改走统一底部面板 MobileSheet(把手 / 居中标题 / 取消行 / 下滑关闭)。
   // 宽度钳制必须用视口单位(calc(100vw-2rem)):百分比 max-w 相对锚点 wrapper(仅 44px)解析,
-  // 会把弹层压瘪成竖条(曾实测 28px)。w-60/w-64 加视口钳制后任何屏宽不溢出视口。
+  // 会把弹层压瘪成竖条(曾实测 28px)。w-60 加视口钳制后任何屏宽不溢出视口。
   const moreMenus = (
     <>
-      {moreMenuOpen && (
+      {!isMobileViewport && hasCompareEntry && morePanel.rendered && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setMoreMenuOpen(false)} />
           <div
-            className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 w-60 max-w-[calc(100vw-2rem)]
-              rounded-xl border border-line bg-surface shadow-lg py-1.5
-              max-md:left-auto max-md:right-1 max-md:translate-x-0 max-md:w-[min(300px,calc(100vw-16px))]
-              max-md:rounded-2xl max-md:bg-surface/95 max-md:backdrop-blur-xl
-              max-md:max-h-[60vh] max-md:overflow-y-auto
-              max-md:shadow-[0_18px_50px_rgb(0_0_0_/_0.28)]"
+            className={cn('fixed inset-0 z-40', morePanel.closing && 'pointer-events-none')}
+            onClick={() => setMoreMenuOpen(false)}
+          />
+          <div
+            className="panel-motion absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-50 w-60 max-w-[calc(100vw-2rem)]
+              rounded-xl border border-line bg-surface shadow-lg p-1.5"
+            data-panel-state={morePanel.closing ? 'closed' : 'open'}
+            data-panel-kind="pop-soft"
+            data-panel-side="top"
             role="menu"
           >
-            {/* 内容组(仅手机端):附件与面具都不再占胶囊位,统一从 ⋯ 进入 */}
-            {isMobileViewport && (
-              <>
-                <div className="px-2.5 pt-2 pb-1 text-[10px] font-medium tracking-wider text-content-muted">内容</div>
-                <button
-                  className="flex items-center gap-2.5 w-full px-2.5 min-h-[44px] py-2 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors text-left"
-                  onClick={() => { setMoreMenuOpen(false); attachOpenRef.current?.() }}
-                >
-                  <Paperclip className="w-3.5 h-3.5 shrink-0" />
-                  <span className="flex-1 min-w-0">
-                    <span className="block font-medium">添加附件</span>
-                    <span className="block text-[10px] text-content-muted truncate">
-                      {attachments.length > 0 ? `已选 ${attachments.length} 个` : '图片 / 文本 / PDF'}
-                    </span>
-                  </span>
-                  <ChevronRight className="w-3 h-3 text-content-muted shrink-0" />
-                </button>
-                {hasMaskEntry && (
-                  <button
-                    className="flex items-center gap-2.5 w-full px-2.5 min-h-[44px] py-2 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors text-left"
-                    onClick={() => { setMoreMenuOpen(false); setMaskMenuOpen(true) }}
-                  >
-                    {mask ? (
-                      <span aria-hidden className="w-3.5 text-center text-[13px] leading-none shrink-0">{mask.avatar}</span>
-                    ) : (
-                      <Drama className="w-3.5 h-3.5 shrink-0" />
-                    )}
-                    <span className="flex-1 min-w-0">
-                      <span className="block font-medium">面具</span>
-                      <span className="block text-[10px] text-content-muted truncate">
-                        {mask ? `${mask.name}` : '未选，用默认人格'}
-                      </span>
-                    </span>
-                    <ChevronRight className="w-3 h-3 text-content-muted shrink-0" />
-                  </button>
-                )}
-                <div className="px-2.5 pt-2 pb-1 text-[10px] font-medium tracking-wider text-content-muted">模型</div>
-              </>
-            )}
-            {/* 模型(手机端专属):md 以下胶囊里撤掉了 ModelSelector,这里补一个入口,点了弹 iOS 半屏快切 */}
-            {!compareMode && (
-              <button
-                className="hidden max-md:flex items-center gap-2.5 w-full px-2.5 py-2 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors text-left"
-                onClick={() => { setMoreMenuOpen(false); setModelSheetOpen(true) }}
-              >
-                <span
-                  aria-hidden
-                  className={cn(
-                    'h-1.5 w-1.5 flex-none rounded-full',
-                    PROVIDER_DOT[currentModel?.provider ?? ''] ?? 'bg-content-muted'
-                  )}
-                />
-                <span className="flex-1 min-w-0">
-                  <span className="block font-medium">切换模型</span>
-                  <span className="block text-[10px] text-content-muted truncate">{currentModel?.name ?? selectedModel}</span>
-                </span>
-                <ChevronRight className="w-3 h-3 text-content-muted shrink-0" />
-              </button>
-            )}
-            {isMobileViewport && (
-              <div className="px-2.5 pt-2 pb-1 text-[10px] font-medium tracking-wider text-content-muted">工具</div>
-            )}
-            {/* 深度思考 / 智能搜索(仅移动端):胶囊里放不下第 4、5 个钮,收进 ⋯ 行内开关。
-                行本体必须是 div —— MiniSwitch 自身是 button,button 套 button 会被 HTML 解析降级并触发 hydration 报错 */}
-            <div className="flex sm:hidden items-center gap-2.5 w-full px-2.5 min-h-[44px] py-2 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors">
-              <button
-                className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
-                onClick={() => onDeepThinkChange(!deepThink)}
-                aria-pressed={deepThink}
-              >
-                <Brain className="w-3.5 h-3.5 shrink-0" />
-                <span className="flex-1 min-w-0">
-                  <span className="block font-medium">深度思考</span>
-                  <span className="block text-[10px] text-content-muted">回答前先展示推理过程</span>
-                </span>
-              </button>
-              <MiniSwitch on={deepThink} onClick={() => onDeepThinkChange(!deepThink)} />
-            </div>
-            {webSearchAvailable && onWebSearchChange && (
-              <div className="flex sm:hidden items-center gap-2.5 w-full px-2.5 min-h-[44px] py-2 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors">
-                <button
-                  className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
-                  onClick={() => onWebSearchChange(!webSearch)}
-                  aria-pressed={webSearch}
-                >
-                  <Globe className="w-3.5 h-3.5 shrink-0" />
-                  <span className="flex-1 min-w-0">
-                    <span className="block font-medium">智能搜索</span>
-                    <span className="block text-[10px] text-content-muted">联网检索后再答</span>
-                  </span>
-                </button>
-                <MiniSwitch on={webSearch} onClick={() => onWebSearchChange(!webSearch)} />
-              </div>
-            )}
-            {/* 平台定向(仅移动端): 联网开启才出,与桌面同一份 SEARCH_PLATFORMS 口径 */}
-            {webSearch && webSearchAvailable && onWebSearchChange && onSearchPlatformChange && (
-              <div className="flex sm:hidden flex-col gap-1.5 w-full px-2.5 pb-2">
-                <span className="text-[10px] leading-relaxed text-content-muted">
-                  平台定向（自动=模型按问题判断；查不到会自动回退全网）
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {SEARCH_PLATFORMS.map((p) => {
-                    const on = p.id === searchPlatform
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => onSearchPlatformChange(p.id)}
-                        aria-pressed={on}
-                        className={cn(
-                          'flex items-center gap-1 h-10 px-3 rounded-lg text-xs transition-colors',
-                          on
-                            ? 'bg-accent text-accent-foreground'
-                            : 'bg-surface-muted hover:bg-surface-subtle text-content-secondary'
-                        )}
-                      >
-                        {p.label}
-                        {on && <Check className="w-3 h-3" />}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-            {/* MCP 工具(仅移动端): 行内快速开关;点主体进管理菜单 */}
-            {hasMcpEntry && (
-              <div className="flex sm:hidden items-center gap-2.5 w-full px-2.5 min-h-[44px] py-2 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors">
-                <button
-                  className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
-                  onClick={() => { setMoreMenuOpen(false); setMcpMenuOpen(true) }}
-                >
-                  <Plug className="w-3.5 h-3.5 shrink-0" />
-                  <span className="flex-1 min-w-0">
-                    <span className="block font-medium">MCP 工具</span>
-                    <span className="block text-[10px] text-content-muted">{mcpEnabled ? '外部工具注入本会话' : '本会话已停用'}</span>
-                  </span>
-                </button>
-                <MiniSwitch on={mcpEnabled} onClick={() => onMcpEnabledChange(!mcpEnabled)} />
-              </div>
-            )}
-            {/* 对比模式(全端): 低频开关,开启后 textarea 下方出现多模型行 */}
             {hasCompareEntry && (
               <button
-                className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors text-left"
+                className="flex items-center gap-3 w-full px-2.5 py-2.5 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors text-left"
                 onClick={() => { onCompareModeChange(!compareMode); setMoreMenuOpen(false) }}
               >
                 <Columns2 className="w-3.5 h-3.5 shrink-0" />
                 <span className="flex-1 min-w-0">
                   <span className="block font-medium">对比模式</span>
-                  <span className="block text-[10px] text-content-muted">多模型同时回答</span>
+                  <span className="block mt-0.5 text-[10px] text-content-muted">多模型同时回答</span>
                 </span>
                 {compareMode && <Check className="w-3.5 h-3.5 shrink-0" />}
               </button>
@@ -650,35 +623,160 @@ export function ChatInput({
           </div>
         </>
       )}
+      {/* 手机端 ⋯ 全套工具:改走统一底部面板(此前是贴右缘浮卡,和面具/模型各写一套样式)。
+          行一律 SheetRow / SheetToggleRow:48~54 高、主文 14 / 副文 11.5、选中整行浅底、无分隔线 */}
+      {isMobileViewport && (
+        <MobileSheet open={moreMenuOpen} onClose={() => setMoreMenuOpen(false)} title="更多">
+          <SheetGroup>内容</SheetGroup>
+          <SheetRow
+            title="添加附件"
+            subtitle={attachments.length > 0 ? `已选 ${attachments.length} 个` : '图片 / 文本 / PDF'}
+            lead={<Paperclip aria-hidden />}
+            trailing={<ChevronRight className="h-4 w-4 shrink-0 text-content-muted" aria-hidden />}
+            onClick={() => { setMoreMenuOpen(false); attachOpenRef.current?.() }}
+          />
+          {hasMaskEntry && (
+            <SheetRow
+              title="面具"
+              subtitle={mask ? mask.name : '未选，用默认人格'}
+              lead={
+                mask ? (
+                  <span className="text-[18px] leading-none" aria-hidden>{mask.avatar}</span>
+                ) : (
+                  <Drama aria-hidden />
+                )
+              }
+              trailing={<ChevronRight className="h-4 w-4 shrink-0 text-content-muted" aria-hidden />}
+              onClick={() => { setMoreMenuOpen(false); setMaskMenuOpen(true) }}
+            />
+          )}
+          {/* 对比模式下模型由顶部多选行接管,这一项自然退场 */}
+          {!compareMode && (
+            <>
+              <SheetGroup>模型</SheetGroup>
+              <SheetRow
+                title="切换模型"
+                subtitle={currentModel?.name ?? selectedModel}
+                lead={
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      PROVIDER_DOT[currentModel?.provider ?? ''] ?? 'bg-content-muted'
+                    )}
+                  />
+                }
+                trailing={<ChevronRight className="h-4 w-4 shrink-0 text-content-muted" aria-hidden />}
+                onClick={() => { setMoreMenuOpen(false); setModelSheetOpen(true) }}
+              />
+            </>
+          )}
+          <SheetGroup>工具</SheetGroup>
+          <SheetToggleRow
+            title="深度思考"
+            subtitle="回答前先展示推理过程"
+            lead={<Brain aria-hidden />}
+            on={deepThink}
+            onToggle={() => onDeepThinkChange(!deepThink)}
+            trailing={<MiniSwitch on={deepThink} onClick={() => onDeepThinkChange(!deepThink)} />}
+          />
+          {webSearchAvailable && onWebSearchChange && (
+            <SheetToggleRow
+              title="智能搜索"
+              subtitle="联网找资料再回答"
+              lead={<Globe aria-hidden />}
+              on={webSearch}
+              onToggle={() => onWebSearchChange(!webSearch)}
+              trailing={<MiniSwitch on={webSearch} onClick={() => onWebSearchChange(!webSearch)} />}
+            />
+          )}
+          {/* 平台定向是「智能搜索」的从属项:左侧缩进到与其它行文字起点对齐(16 + 22 + 12 = 50) */}
+          {webSearch && webSearchAvailable && onWebSearchChange && onSearchPlatformChange && (
+            <div className="flex min-h-[46px] items-center gap-3 pb-1 pl-[50px] pr-4">
+              <span className="min-w-0 flex-1 truncate text-[13px] text-content-secondary">平台定向</span>
+              <div className="relative shrink-0">
+                <select
+                  value={searchPlatform}
+                  onChange={(e) => onSearchPlatformChange(e.target.value as SearchPlatformId)}
+                  aria-label="平台定向"
+                  className="h-8 w-[6rem] cursor-pointer appearance-none rounded-xl bg-surface-muted pl-3 pr-7
+                    text-[13px] text-content-primary outline-none transition-colors
+                    focus-visible:ring-2 focus-visible:ring-accent/40"
+                >
+                  {SEARCH_PLATFORMS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-content-muted" aria-hidden />
+              </div>
+            </div>
+          )}
+          {/* MCP:点左侧主体进管理菜单,右侧开关就地开关;行本体是 div,避免 button 套 button */}
+          {hasMcpEntry && (
+            <div className="flex min-h-[54px] w-full items-center gap-3 px-4 py-2.5" data-sheet-toggle>
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-3 text-left text-[14px] leading-[1.35] text-content-primary"
+                onClick={() => { setMoreMenuOpen(false); setMcpMenuOpen(true) }}
+              >
+                <span className="grid w-[22px] shrink-0 place-items-center text-content-secondary [&_svg]:h-[18px] [&_svg]:w-[18px]">
+                  <Plug aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">MCP 工具</span>
+                  <span className="mt-[3px] block truncate text-[11.5px] leading-[1.4] text-content-muted">
+                    {mcpEnabled ? '外部工具注入本会话' : '本会话已停用'}
+                  </span>
+                </span>
+              </button>
+              <MiniSwitch on={mcpEnabled} onClick={() => onMcpEnabledChange(!mcpEnabled)} />
+            </div>
+          )}
+          {/* 对比模式手机端只在「已处于对比模式」时露出,否则开了就没处关(2026-10-28 定案) */}
+          {hasCompareEntry && compareMode && (
+            <SheetRow
+              title="对比模式"
+              subtitle="多模型同时回答"
+              lead={<Columns2 aria-hidden />}
+              trailing={<Check className="h-4 w-4 shrink-0 text-accent" aria-hidden />}
+              onClick={() => { onCompareModeChange(!compareMode); setMoreMenuOpen(false) }}
+            />
+          )}
+        </MobileSheet>
+      )}
       {/* 移动端: MCP 管理菜单从 ⋯ 钮弹出(面具已外显成胶囊内独立钮,不再走 ⋯ 二级) */}
       <div className="sm:hidden">
-        {mcpMenuOpen && onMcpEnabledChange && (
+        {onMcpEnabledChange && (
           <McpToolMenu
+            open={mcpMenuOpen}
             mcpEnabled={mcpEnabled}
             onMcpEnabledChange={onMcpEnabledChange}
             onClose={() => setMcpMenuOpen(false)}
           />
         )}
       </div>
-      {/* 手机端面具列表:胶囊内不再有独立钮,从 ⋯「面具」进入后贴底浮层展示(与模型快切同构) */}
-      {hasMaskEntry && isMobileViewport && maskMenuOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setMaskMenuOpen(false)} />
-          <div
-            className="fixed inset-x-2 bottom-2 z-50 flex flex-col overflow-hidden rounded-2xl
-              border border-line bg-surface/95 glass-blur shadow-[0_18px_50px_rgb(0_0_0_/_0.28)]"
-            style={{ maxHeight: '55vh' }}
-            role="menu"
-          >
-            <MaskPickerMenu
-              activeMaskId={mask?.id ?? null}
-              userMasks={userMasks}
-              onSelect={(id) => { onMaskChange(id); setMaskMenuOpen(false) }}
-              onManage={() => { onManageMasks?.(); setMaskMenuOpen(false) }}
-              onClear={() => { onMaskChange(null); setMaskMenuOpen(false) }}
-            />
-          </div>
-        </>
+      {/* 手机端面具列表:从 ⋯「面具」进入,走统一底部面板 MobileSheet
+          (把手 + 居中标题 + 取消行 + 下滑关闭)。列表窗靠 flex-auto 自滚,
+          所以 bodyClassName 必须给 flex flex-col,否则撑不开只剩一屏外露。 */}
+      {hasMaskEntry && isMobileViewport && (
+        <MobileSheet
+          open={maskMenuOpen}
+          onClose={() => setMaskMenuOpen(false)}
+          title="选择面具"
+          bodyClassName="flex flex-col"
+        >
+          <MaskPickerMenu
+            variant="sheet"
+            activeMaskId={mask?.id ?? null}
+            userMasks={userMasks}
+            installedMasks={installedMasks}
+            onSelect={(id) => { onMaskChange(id); setMaskMenuOpen(false) }}
+            onManage={() => { onManageMasks?.(); setMaskMenuOpen(false) }}
+            onClear={() => { onMaskChange(null); setMaskMenuOpen(false) }}
+          />
+        </MobileSheet>
       )}
       {/* 手机端模型半屏快切(portal 到 body,与欢迎页 hero 胶囊同一条 onModelChange 链路) */}
       <ModelQuickSheet
@@ -699,10 +797,29 @@ export function ChatInput({
   // 2026-10-08 真机多行改版定案(预览页里的「零抖动」那条;注意本文件另一处"方案 C"
   // 是 10-06 悬浮胶囊改版的旧代号,与本次无关):原门槛 mobileLines > 2 让第 2 行停在
   // 9999 圆角的胖胶囊上(D1)。换挡改到 0→1 次,打字全程不再变形;代价由用户点名接受
-  const mobileCard = isMobileViewport && (!!input.trim() || attachments.length > 0)
+  const mobileCard = isMobileViewport && (hasSendContent || shortcuts.pending)
   const mobileLong = isMobileViewport && mobileLines > 6
   const mobileWide = longTextMode || mobileLong
   const mobileStack = mobileCard || mobileWide
+
+  const imageAtts = attachments.filter((att) => att.type.startsWith('image/'))
+
+  // 附件被移除或发送清空后,预览下标可能越界/悬空,及时收口
+  useEffect(() => {
+    if (previewImageIndex == null) return
+    if (imageAtts.length === 0) setPreviewImageIndex(null)
+    else if (previewImageIndex > imageAtts.length - 1) setPreviewImageIndex(imageAtts.length - 1)
+  }, [imageAtts.length, previewImageIndex])
+
+  const imageLightbox =
+    previewImageIndex != null && imageAtts.length > 0 ? (
+      <ChatImageLightbox
+        images={imageAtts}
+        index={Math.min(previewImageIndex, imageAtts.length - 1)}
+        onClose={() => setPreviewImageIndex(null)}
+        onIndexChange={setPreviewImageIndex}
+      />
+    ) : null
 
   const toolPills = (
     <>
@@ -715,6 +832,10 @@ export function ChatInput({
                 hideAttachmentsPreview
                 variant="pill"
                 pillClassName={cn(iconBtnBase, pillIdle, 'border-0')}
+                openRef={attachOpenRef}
+                filesRef={attachFilesRef}
+                hideUploads
+                onUploadingFilesChange={setUploadingFiles}
               />
             )}
             {/* 推理强度(触发胶囊+滑杆面板): 桌面外显;与 deepThink 同源,2 段=标准/深度思考。
@@ -725,6 +846,33 @@ export function ChatInput({
               modelName={currentModel?.name}
               disabled={isLoading}
             />
+            {/* MCP 工具(桌面外显): 点击弹出管理菜单;移动端收纳进 ⋯(2026-10-26 调序:能力开关连排) */}
+            {hasMcpEntry && (
+              <div className="relative hidden sm:block">
+                <button
+                  onClick={() => setMcpMenuOpen((v) => !v)}
+                  disabled={isLoading}
+                  className={cn(
+                    iconBtnBase,
+                    mcpEnabled ? pillActive : pillIdle,
+                    isLoading && 'opacity-50 cursor-not-allowed'
+                  )}
+                  title="MCP 外部工具(点击管理工具开关)"
+                  aria-label="MCP 工具"
+                  aria-haspopup="menu"
+                  aria-expanded={mcpMenuOpen}
+                  aria-pressed={mcpEnabled}
+                >
+                  <Plug className="w-3.5 h-3.5" />
+                </button>
+                <McpToolMenu
+                  open={mcpMenuOpen}
+                  mcpEnabled={mcpEnabled}
+                  onMcpEnabledChange={onMcpEnabledChange}
+                  onClose={() => setMcpMenuOpen(false)}
+                />
+              </div>
+            )}
             {/* 智能搜索开关(图标钮): 联网搜索不可用时隐藏(与模型选择器菜单逻辑一致) */}
             {webSearchAvailable && onWebSearchChange && (
               <button
@@ -764,8 +912,12 @@ export function ChatInput({
                   <span className="max-w-[5rem] truncate">{getSearchPlatform(searchPlatform).label}</span>
                   <ChevronDown className="w-3 h-3 opacity-70" />
                 </button>
-                {platformMenuOpen && (
-                  <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 w-[236px] rounded-xl border border-line bg-surface shadow-lg p-2">
+                {platformPanel.rendered && (
+                  <div
+                    className="panel-motion absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 w-[236px] rounded-xl border border-line bg-surface shadow-lg p-2"
+                    data-panel-state={platformPanel.closing ? 'closed' : 'open'}
+                    data-panel-side="top"
+                  >
                     <p className="px-1 pb-1.5 text-[10px] leading-relaxed text-content-muted">
                       限定检索站点。站内索引比全网稀薄，查不到时会自动回退全网并说明。
                     </p>
@@ -797,34 +949,6 @@ export function ChatInput({
                 )}
               </div>
             )}
-            {/* MCP 工具(桌面外显): 点击弹出管理菜单;移动端收纳进 ⋯ */}
-            {hasMcpEntry && (
-              <div className="relative hidden sm:block">
-                <button
-                  onClick={() => setMcpMenuOpen((v) => !v)}
-                  disabled={isLoading}
-                  className={cn(
-                    iconBtnBase,
-                    mcpEnabled ? pillActive : pillIdle,
-                    isLoading && 'opacity-50 cursor-not-allowed'
-                  )}
-                  title="MCP 外部工具(点击管理工具开关)"
-                  aria-label="MCP 工具"
-                  aria-haspopup="menu"
-                  aria-expanded={mcpMenuOpen}
-                  aria-pressed={mcpEnabled}
-                >
-                  <Plug className="w-3.5 h-3.5" />
-                </button>
-                {mcpMenuOpen && (
-                  <McpToolMenu
-                    mcpEnabled={mcpEnabled}
-                    onMcpEnabledChange={onMcpEnabledChange}
-                    onClose={() => setMcpMenuOpen(false)}
-                  />
-                )}
-              </div>
-            )}
             {/* 面具钮:桌面(欢迎页胶囊)外显;手机端改由 ⋯ 面板进入,列表用贴底浮层展示。
                 会话页桌面端仍由 ChatPanel 顶部面具 chip 承担,故 standard 变体桌面隐藏 */}
             {hasMaskEntry && !isMobileViewport && (
@@ -844,17 +968,23 @@ export function ChatInput({
                     <Drama className="w-3.5 h-3.5" aria-hidden />
                   )}
                 </button>
-                {maskMenuOpen && (
+                {maskPanel.rendered && (
                   <>
-                    <div className="fixed inset-0 z-40" onClick={() => setMaskMenuOpen(false)} />
                     <div
-                      className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 w-64 max-md:w-[min(300px,calc(100vw-16px))] max-md:left-auto max-md:right-0 max-md:translate-x-0 max-md:top-auto max-md:bottom-full max-md:mt-0 max-md:mb-1.5 flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-lg"
+                      className={cn('fixed inset-0 z-40', maskPanel.closing && 'pointer-events-none')}
+                      onClick={() => setMaskMenuOpen(false)}
+                    />
+                    <div
+                      className="panel-motion absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 w-64 max-md:w-[min(300px,calc(100vw-16px))] max-md:left-auto max-md:right-0 max-md:translate-x-0 max-md:top-auto max-md:bottom-full max-md:mt-0 max-md:mb-1.5 flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-lg"
+                      data-panel-state={maskPanel.closing ? 'closed' : 'open'}
+                      data-panel-side="bottom"
                       style={{ maxHeight: maskMenu.maxHeight }}
                       role="menu"
                     >
                       <MaskPickerMenu
                         activeMaskId={mask?.id ?? null}
                         userMasks={userMasks}
+                        installedMasks={installedMasks}
                         onSelect={(id) => { onMaskChange(id); setMaskMenuOpen(false) }}
                         onManage={() => { onManageMasks?.(); setMaskMenuOpen(false) }}
                         onClear={() => { onMaskChange(null); setMaskMenuOpen(false) }}
@@ -895,6 +1025,9 @@ export function ChatInput({
       hideAttachmentsPreview
       hideTrigger
       openRef={attachOpenRef}
+      filesRef={attachFilesRef}
+      hideUploads
+      onUploadingFilesChange={setUploadingFiles}
     />
   ) : null
 
@@ -968,24 +1101,15 @@ export function ChatInput({
       // -webkit-app-region,子元素不继承拖拽区,卡片内控件点击/选词照旧。
       <div
         data-tauri-drag-region=""
-        className={cn('relative flex-1 w-full flex flex-col justify-center max-md:justify-start px-4', className)}
+        className={cn('relative flex-1 w-full flex flex-col justify-center max-md:justify-start px-4 max-md:px-6', className)}
         style={{
           // 键盘弹出时让内容贴底(否则依旧被键盘遮住);
           // 没键盘时桌面/移动都垂直居中(只加 paddingBottom 占键盘)。
           // --m-input-pad: 手机端胶囊底距(globals.css 断点定义,桌面 0)
-          paddingBottom: 'calc(var(--m-input-pad, 0px) + max(var(--keyboard-height, 0px), var(--sab, 0px)))',
+          // --m-safe-bottom: 手机端兜底手势条(24px);桌面回落到 sab,保持原间距
+          paddingBottom: 'calc(var(--m-input-pad, 0px) + max(var(--keyboard-height, 0px), var(--m-safe-bottom, var(--sab, 0px))))',
         }}
       >
-        {/* 壁纸图与可读性蒙版都合成在 shell 层(WelcomeWallpaperLayer);
-            这里只在壁纸关闭时渲染点阵/月盘/光效装饰 —— 开图后纹理会与它们打架 */}
-        {!wallpaperOn && (
-          <>
-        {/* 点阵背景: 中心(内容区)淡出、四周渐显,纯装饰 */}
-        <div className="dot-grid" aria-hidden="true" />
-
-        {/* 月夜层(仅配色=月白·桂花金, 见 globals.css 的 .fest-night 门控):
-            右上角月盘。该配色只有深色一态,故与白天语境不冲突 */}
-        <div className="fest-night moon-corner" aria-hidden="true" />
         {/* 晨光-格子(配色=格子 且 光态=日出, 见 .grid-dawn 门控):
             一天的第一缕光 —— 光在右上画外低角(蜜桃粉光斑从右上溢入) + 全屏薄雾,
             窗棂格影朝**左下**,与暮色"光在左下/影朝右上"成镜像。不画天体 */}
@@ -1028,8 +1152,6 @@ export function ChatInput({
             <i key={`${x}-${y}`} style={{ left: `${x}%`, top: `${y}%` }} />
           ))}
         </div>
-          </>
-        )}
 
         {/* 方案 C 手机端:h-full + flex-col,hero 由 my-auto 在自由空间垂直居中,
             输入卡与横滑卡贴底 —— 复刻原型「标语居中/卡片沉底」结构 */}
@@ -1043,13 +1165,14 @@ export function ChatInput({
               与 BottomDock 同一处置口径 */}
 
           {/* 草稿已恢复提示 —— 仅在有草稿时短暂出现 */}
-          {draftRestored && input.trim() && (
+          {draftRestored && (input.trim() || references.length > 0) && (
             <div className="flex items-center gap-1.5 mb-2 mx-2 text-content-muted">
               <FileText className="w-3.5 h-3.5 shrink-0" />
               <span className="text-[11px] flex-1 min-w-0">已恢复上次未发送的内容</span>
               <button
                 onClick={() => {
                   setInput('')
+                  setReferences([])
                   setDraftRestored(false)
                 }}
                 className="shrink-0 text-[11px] text-content-secondary hover:text-content-primary underline-offset-2 hover:underline"
@@ -1076,12 +1199,17 @@ export function ChatInput({
           )}
 
           {welcomeBanner}
+          {!shortcuts.open && shortcuts.feedback}
 
           {/* 输入框容器: 自适应高度 = 附件预览(可选) + textarea + 底部工具行(与 standard 同构);relative 供 ⋯ 弹层锚定
               方案 C 手机端:胶囊化(26px 圆角+白玻璃+柔投影,原型 pill-input 材质) */}
           <div
+            ref={shortcuts.anchorRef}
+            data-composer-anchor=""
             className={cn(
               'relative rounded-xl border border-line bg-surface shadow-sm',
+              // composer-card: 样式维度钩子(html[data-style="bigsur"] 换玻璃岛材质,globals.css)
+              'composer-card',
               'focus-within:border-line-strong focus-within:shadow-md',
               'transition-[border-color,box-shadow] duration-200',
               'max-md:flex max-md:flex-wrap max-md:items-end max-md:gap-1 max-md:p-1.5 max-md:pl-4',
@@ -1090,62 +1218,49 @@ export function ChatInput({
               'dark:max-md:border-line/90',
               'max-md:shadow-[0_8px_26px_rgb(0_0_0_/_0.14)]',
               // 手机端有内容即卡片:圆角从 9999 收回 24px,单行胶囊只留给空态
-              mobileCard && 'max-md:rounded-3xl'
+              mobileCard && 'max-md:rounded-3xl',
+              shortcuts.anchorClassName
             )}
           >
+            {shortcuts.panel}
+            {shortcuts.referenceChips}
             {mobileFileUploadHost}
             {longTextHeader}
-            {/* 附件预览(放在 textarea 上方,与 standard 变体一致);手机端整行占满胶囊上方 */}
-            {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-2 px-4 pt-3 max-md:w-full max-md:px-1 max-md:pt-1">
+            {/* 附件预览(放在 textarea 上方,与 standard 变体一致);手机端整行占满胶囊上方。
+                上传中与已上传排同一行:粘贴后先看到进度卡,完成后原地换成附件卡,位置不跳 */}
+            {(attachments.length > 0 || uploadingFiles.length > 0) && (
+              <div className="flex flex-wrap gap-2 px-4 pt-3 max-md:w-full max-md:px-2 max-md:pt-2">
+                {uploadingFiles.map((u) => (
+                  <UploadingChip key={u.id} item={u} />
+                ))}
                 {attachments.map((att, idx) => (
-                  <div
+                  <AttachmentChip
                     key={att.url + idx}
-                    className={cn(
-                      'group flex items-center gap-2 rounded-lg border',
-                      'border-line bg-surface-muted',
-                      'px-2 py-1.5 w-full sm:max-w-[200px] sm:w-auto'
-                    )}
-                  >
-                    {att.type.startsWith('image/') ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={att.url}
-                        alt={att.name}
-                        className="w-5 h-5 rounded object-cover shrink-0"
-                      />
-                    ) : (
-                      <div className="w-5 h-5 rounded bg-surface-subtle flex items-center justify-center shrink-0 text-[8px] text-content-secondary">
-                        {/* 用扩展名而非 MIME 子类型:xlsx/docx 的 MIME 是长串 vnd.openxmlformats,截前 3 字符会显示 VND */}
-                        {att.name.split('.').pop()?.toUpperCase().slice(0, 3) || 'FILE'}
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] text-content-primary truncate">
-                        {att.name}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const removed = attachments[idx]
-                        setAttachments((prev) => prev.filter((_, i) => i !== idx))
-                        // 移除未发送的附件时同步删除服务端文件
-                        if (removed) deleteUploadedFile(removed.url)
-                      }}
-                      className="shrink-0 p-0.5 rounded-md opacity-0 show-on-touch group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-500 transition-opacity"
-                      aria-label="移除"
-                    >
-                      <X className="w-2.5 h-2.5" />
-                    </button>
-                  </div>
+                    att={att}
+                    onPreview={() =>
+                      setPreviewImageIndex(
+                        attachments
+                          .slice(0, idx)
+                          .filter((a) => a.type.startsWith('image/')).length
+                      )
+                    }
+                    onRemove={() => {
+                      const removed = attachments[idx]
+                      setAttachments((prev) => prev.filter((_, i) => i !== idx))
+                      // 移除未发送的附件时同步删除服务端文件
+                      if (removed) deleteUploadedFile(removed.url)
+                    }}
+                  />
                 ))}
               </div>
             )}
             <textarea
               ref={textareaRef}
+              {...shortcuts.textareaProps}
               value={input}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               onContextMenu={handleInputContextMenu}
               placeholder="输入问题..."
               rows={1}
@@ -1189,14 +1304,14 @@ export function ChatInput({
                 )}
                 <button
                   onClick={handleSendDebounced}
-                  disabled={(!input.trim() && attachments.length === 0) || isLoading}
+                  disabled={!hasSendContent || sendBlocked}
                   aria-label="发送"
                   className={cn(
                     // 手机端 38px 圆钮(原型 tiny-btn 档);桌面 36px;窄屏 44px 触控
                     'shrink-0 flex items-center justify-center w-11 h-11 sm:w-9 sm:h-9 rounded-full transition-colors',
                     'max-md:w-[38px] max-md:h-[38px]',
                     'active:scale-95 touch-manipulation',
-                    (input.trim() || attachments.length > 0) && !isLoading
+                    (hasSendContent && !sendBlocked) && !isLoading
                       ? 'bg-accent text-accent-foreground hover:bg-accent/90 animate-pop-in'
                       : 'bg-surface-subtle text-content-muted cursor-not-allowed'
                   )}
@@ -1215,6 +1330,7 @@ export function ChatInput({
           {/* 「最近对话」快捷区已于 2026-10-07 应用户要求整体下线(同 WelcomeCarousel/BottomDock 口径:
               只撤 UI 不删组件,RelativeTime 仍被 MobileDrawer 引用;要回挂在原位重新 import 渲染即可) */}
         </div>
+        {imageLightbox}
       </div>
     )
   }
@@ -1229,10 +1345,10 @@ export function ChatInput({
     <div
     // 层级必须高于消息区的错误横幅浮层(z-40):⋯ 面板从胶囊向上弹到 60vh,
     // 若沿用 z-20 会被横幅吃掉点击(实测 390×844 有横幅时「切换模型」点不动)
-      className={cn('relative z-[42] px-3 pt-1', className)}
+      className={cn('relative z-[42] px-3 max-md:px-6 pt-1', className)}
       style={{
         // --m-input-pad: 手机端胶囊底距(globals.css 断点定义,桌面 0.5rem)
-        paddingBottom: 'calc(var(--m-input-pad, 0.5rem) + max(var(--keyboard-height, 0px), var(--sab, 0px)))',
+        paddingBottom: 'calc(var(--m-input-pad, 0.5rem) + max(var(--keyboard-height, 0px), var(--m-safe-bottom, var(--sab, 0px))))',
       }}
     >
       <div className="max-w-2xl mx-auto">
@@ -1302,7 +1418,10 @@ export function ChatInput({
         </div>
       )}
 
+      {!shortcuts.open && shortcuts.feedback}
       <div
+        ref={shortcuts.anchorRef}
+        data-composer-anchor=""
         className={cn(
           'relative flex flex-col rounded-xl border z-20',
           'border-line/60',
@@ -1319,47 +1438,38 @@ export function ChatInput({
           'max-md:shadow-[0_8px_26px_rgb(0_0_0_/_0.14)]',
           // 手机端有内容即卡片:圆角从 9999 收回 24px,单行胶囊只留给空态
           // (写 rounded-3xl 会被 cn 的 tailwind-merge 判为覆盖 rounded-full,四角一起收,正合此形态)
-          mobileCard && 'max-md:rounded-3xl'
+          mobileCard && 'max-md:rounded-3xl',
+          shortcuts.anchorClassName
         )}
       >
+          {shortcuts.panel}
+          {shortcuts.referenceChips}
           {mobileFileUploadHost}
           {longTextHeader}
-          {/* Attachments preview row */}
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-4 pt-3 max-md:w-full max-md:px-1 max-md:pt-1">
+          {/* Attachments preview row(上传中 + 已上传同排,见 welcome 变体同段注释) */}
+          {(attachments.length > 0 || uploadingFiles.length > 0) && (
+            <div className="flex flex-wrap gap-2 px-4 pt-3 max-md:w-full max-md:px-2 max-md:pt-2">
+              {uploadingFiles.map((u) => (
+                <UploadingChip key={u.id} item={u} />
+              ))}
               {attachments.map((att, idx) => (
-                <div
+                <AttachmentChip
                   key={att.url + idx}
-                  className={cn(
-                    'group flex items-center gap-2 rounded-lg border',
-                    'border-line bg-surface-muted',
-                    'px-2 py-1.5 w-full sm:max-w-[200px] sm:w-auto'
-                  )}
-                >
-                  {att.type.startsWith('image/') ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={att.url} alt={att.name} className="w-5 h-5 rounded object-cover shrink-0" />
-                  ) : (
-                    <div className="w-5 h-5 rounded bg-surface-subtle flex items-center justify-center shrink-0 text-[8px] text-content-secondary">
-                      {att.type.split('/')[1]?.toUpperCase().slice(0, 3) || 'FILE'}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] text-content-primary truncate">{att.name}</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      const removed = attachments[idx]
-                      setAttachments((prev) => prev.filter((_, i) => i !== idx))
-                      // 移除未发送的附件时同步删除服务端文件
-                      if (removed) deleteUploadedFile(removed.url)
-                    }}
-                    className="shrink-0 p-0.5 rounded-md opacity-0 show-on-touch group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-500 transition-opacity"
-                    aria-label="移除"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </div>
+                  att={att}
+                  onPreview={() =>
+                    setPreviewImageIndex(
+                      attachments
+                        .slice(0, idx)
+                        .filter((a) => a.type.startsWith('image/')).length
+                    )
+                  }
+                  onRemove={() => {
+                    const removed = attachments[idx]
+                    setAttachments((prev) => prev.filter((_, i) => i !== idx))
+                    // 移除未发送的附件时同步删除服务端文件
+                    if (removed) deleteUploadedFile(removed.url)
+                  }}
+                />
               ))}
             </div>
           )}
@@ -1380,13 +1490,14 @@ export function ChatInput({
           )}
 
           {/* 草稿已恢复提示 —— 进入会话时短暂浮现,可手动关闭 */}
-          {draftRestored && input.trim() && (
+          {draftRestored && (input.trim() || references.length > 0) && (
             <div className="flex items-center gap-1.5 px-4 pt-2 text-content-muted max-md:w-full max-md:px-1">
               <FileText className="w-3.5 h-3.5 shrink-0" />
               <span className="text-[11px] flex-1 min-w-0">已恢复上次未发送的内容</span>
               <button
                 onClick={() => {
                   setInput('')
+                  setReferences([])
                   setDraftRestored(false)
                 }}
                 className="shrink-0 text-[11px] text-content-secondary hover:text-content-primary underline-offset-2 hover:underline"
@@ -1401,9 +1512,11 @@ export function ChatInput({
           <div className="px-4 pt-3 max-md:contents">
             <textarea
               ref={textareaRef}
+              {...shortcuts.textareaProps}
               value={input}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               onContextMenu={handleInputContextMenu}
               placeholder="输入消息..."
               disabled={isLoading}
@@ -1463,25 +1576,142 @@ export function ChatInput({
               ) : (
                 <button
                   onClick={handleSendDebounced}
-                  disabled={!input.trim() && attachments.length === 0}
+                  disabled={!hasSendContent || sendBlocked}
                   className={cn(
                     'h-7 w-7 min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center rounded-full transition-colors shrink-0',
                     'max-md:min-h-0 max-md:min-w-0 max-md:h-[38px] max-md:w-[38px]',
                     'active:scale-95 touch-manipulation',
-                    (input.trim() || attachments.length > 0)
+                    (hasSendContent && !sendBlocked)
                       ? 'bg-accent text-accent-foreground hover:bg-accent-hover'
                       : 'bg-surface-muted text-content-muted cursor-not-allowed'
                   )}
                   aria-label="发送消息"
                   style={{ WebkitTapHighlightColor: 'transparent' }}
                 >
-                  <Send className="w-3.5 h-3.5" />
+                  {/* 方案 A:手机端统一 ↑(与欢迎页输入同语义),桌面保留纸飞机 */}
+                  <Send className="w-3.5 h-3.5 max-md:hidden" />
+                  <ArrowUp className="hidden max-md:block w-[18px] h-[18px]" />
                 </button>
               )}
             </div>
           </div>
         </div>
       </div>
+      {imageLightbox}
+    </div>
+  )
+}
+
+/**
+ * 待发送附件卡片(手机/桌面两个变体共用)。
+ * 图片附件整卡可点开大图查看;非图片只展示文件名/扩展名。
+ * 2026-10-27 改版:由「20px 图标 + 单行文件名」的紧凑条升级为缩略图卡(40px 图/扩展名块 + 文件名 + 体积/解析信息),
+ * 移除钮由 hover 才出现改为常显 —— 粘贴进来的附件多了以后,原来的小叉几乎点不到。
+ */
+function formatAttachmentBytes(bytes: number): string {
+  if (!bytes) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** 附件副标题:解析型附件报页数/字数,图片与普通文件报体积 */
+function attachmentMeta(att: Attachment): { text: string; failed: boolean } {
+  if (att.parseStatus === 'failed') return { text: '解析失败', failed: true }
+  const chars =
+    att.charCount == null
+      ? ''
+      : att.charCount < 1000
+        ? `${att.charCount} 字`
+        : `${(att.charCount / 1000).toFixed(1)}k 字`
+  if (att.pageCount != null) {
+    return { text: chars ? `${att.pageCount} 页 · ${chars}` : `${att.pageCount} 页`, failed: false }
+  }
+  if (chars) return { text: chars, failed: false }
+  return { text: formatAttachmentBytes(att.size), failed: false }
+}
+
+function AttachmentChip({
+  att,
+  onPreview,
+  onRemove,
+}: {
+  att: Attachment
+  onPreview: () => void
+  onRemove: () => void
+}) {
+  const isImage = att.type.startsWith('image/')
+  const meta = attachmentMeta(att)
+  // 用扩展名而非 MIME 子类型:xlsx/docx 的 MIME 是长串 vnd.openxmlformats,截前 3 字符会显示 VND
+  const ext = att.name.split('.').pop()?.toUpperCase().slice(0, 4) || 'FILE'
+  return (
+    <div
+      role={isImage ? 'button' : undefined}
+      tabIndex={isImage ? 0 : undefined}
+      aria-label={isImage ? `查看图片:${att.name}` : undefined}
+      title={att.name}
+      onClick={isImage ? onPreview : undefined}
+      onKeyDown={
+        isImage
+          ? (e) => {
+              if (e.target !== e.currentTarget) return
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onPreview()
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        'group flex items-center gap-2.5 rounded-xl border p-1.5 pr-2',
+        'border-line bg-surface-muted/70',
+        'w-full sm:w-auto sm:max-w-[228px]',
+        'transition-colors',
+        isImage && 'cursor-zoom-in hover:border-line-strong hover:bg-surface-muted'
+      )}
+    >
+      {isImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={att.url}
+          alt={att.name}
+          className={cn(
+            'h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-black/5 dark:ring-white/10',
+            'transition-transform duration-200 group-hover:scale-[1.04]'
+          )}
+        />
+      ) : (
+        <span
+          aria-hidden
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-subtle
+            text-[9px] font-semibold tracking-wide text-content-secondary"
+        >
+          {ext}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[11px] font-medium leading-tight text-content-primary">{att.name}</p>
+        <p
+          className={cn(
+            'mt-1 truncate text-[10px] leading-none',
+            meta.failed ? 'text-red-500' : 'text-content-muted'
+          )}
+        >
+          {meta.text}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onRemove()
+        }}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-colors
+          text-content-muted/70 hover:bg-red-100 hover:text-red-500 dark:hover:bg-red-900/30"
+        aria-label="移除"
+      >
+        <X className="w-3 h-3" />
+      </button>
     </div>
   )
 }

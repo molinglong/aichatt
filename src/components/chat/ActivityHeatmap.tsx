@@ -84,7 +84,7 @@ export function ActivityHeatmap({ weeks = 52 }: ActivityGridProps) {
     return (
       <div className="flex justify-center" role="status" aria-live="off">
         {/* 与玻璃卡成品等高(网格 96 + 底行 14 + 间距 8 + 内边距 24),避免加载完成时跳动 */}
-        <div className="h-[142px] w-full rounded-2xl border border-line/60 bg-surface-glass glass-blur animate-pulse" />
+        <div className="heatmap-card h-[142px] w-full rounded-2xl border border-line/60 bg-surface-glass glass-blur animate-pulse" />
       </div>
     )
   }
@@ -136,7 +136,7 @@ export function ActivityHeatmap({ weeks = 52 }: ActivityGridProps) {
   return (
     <div className="w-full">
       {/* 玻璃承托卡(方案A,定稿自 preview-heatmap-wallpaper): 与输入框同一套玻璃语言,不再裸压壁纸 */}
-      <div className="flex w-full flex-col gap-2 px-4 py-3 rounded-2xl border border-line/60 bg-surface-glass glass-blur shadow-[0_8px_28px_rgb(0_0_0_/_9%)]">
+      <div className="heatmap-card flex w-full flex-col gap-2 px-4 py-3 rounded-2xl border border-line/60 bg-surface-glass glass-blur shadow-[0_8px_28px_rgb(0_0_0_/_9%)]">
         {/* 满宽铺满欢迎页栏;极窄屏格子已随宽收缩,仍溢出时横向滚动(滚动条隐藏) */}
         <div ref={scrollRef} className="overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex items-start gap-1">

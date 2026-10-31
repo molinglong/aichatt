@@ -177,6 +177,12 @@ export function ComparePanel({
   )
 
   const handleStop = useCallback(() => {
+    // 生成已与客户端连接解耦:断连不再等于停止,必须显式通知服务端中止,
+    // 否则各泳道会在后台继续跑完并落库(对比模式一次会停掉该会话的所有在途流)。
+    const convId = conversationIdRef.current
+    if (convId) {
+      fetch(`/api/conversations/${convId}/finalize-draft`, { method: 'POST' }).catch(() => {})
+    }
     laneApis.current.forEach((api) => api.stop())
   }, [])
 

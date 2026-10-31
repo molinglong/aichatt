@@ -23,14 +23,14 @@ export function MiniSwitch({
       disabled={disabled}
       aria-pressed={on}
       className={cn(
-        'relative h-[18px] w-8 shrink-0 rounded-full transition-colors',
+        'relative h-[18px] w-8 shrink-0 rounded-full transition-colors duration-base ease-standard',
         on ? 'bg-accent' : 'bg-line-strong/60',
         disabled && 'cursor-not-allowed opacity-50'
       )}
     >
       <span
         className={cn(
-          'absolute top-[2px] h-[14px] w-[14px] rounded-full shadow transition-all',
+          'absolute top-[2px] h-[14px] w-[14px] rounded-full shadow transition-[left,background-color] duration-base ease-standard',
           on ? 'left-[16px] bg-accent-foreground' : 'left-[2px] bg-white'
         )}
       />

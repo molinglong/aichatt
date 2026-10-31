@@ -51,6 +51,8 @@ interface ModelSelectorProps {
   onModelChange: (modelId: string) => void
   className?: string
   compact?: boolean
+  /** 触发按钮追加样式:学习模式讲题模型行需要与旁边的胶囊按钮同款描边 */
+  triggerClassName?: string
 }
 
 export function ModelSelector({
@@ -59,6 +61,7 @@ export function ModelSelector({
   onModelChange,
   className,
   compact = false,
+  triggerClassName,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
   // 方案 C 手机端:≤md 走 iOS 半屏快切(替代桌面 portal 下拉);服务端首帧 false → 桌面下拉
@@ -353,7 +356,8 @@ export function ModelSelector({
             // 触屏 ≥44px 触控目标;桌面端保持 28px 紧凑
             ? 'flex items-center gap-1.5 h-7 min-h-[44px] sm:min-h-0 px-2.5 rounded-full text-[11px] font-medium bg-surface-muted hover:bg-surface-subtle text-content-secondary'
             : 'flex items-center gap-1.5 min-h-[44px] sm:min-h-0 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-surface-subtle text-content-secondary',
-          'transition-colors'
+          'transition-colors',
+          triggerClassName
         )}
       >
         {selected && (

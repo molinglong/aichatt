@@ -28,6 +28,7 @@ import { ClientOnly } from '@/components/ClientOnly'
 import { queryKeys, STALE, IMAGES_PAGE_SIZE as PAGE_SIZE } from '@/lib/query/keys'
 import { fetchJson } from '@/lib/query/fetcher'
 import { deleteUploadedFile } from '@/components/chat/FileUpload'
+import { ChatImageLightbox } from '@/components/chat/ChatImageLightbox'
 import { confirmDialog } from '@/components/ui/ConfirmDialog'
 import { toast } from '@/lib/toast'
 
@@ -871,6 +872,7 @@ function ReferenceImageDropZone({
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault()
@@ -882,19 +884,43 @@ function ReferenceImageDropZone({
 
   if (image) {
     return (
-      <div className="relative w-full aspect-[3/2] rounded-lg overflow-hidden border border-line/60 bg-surface-muted group">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={image.url}
-          alt={image.name}
-          className="w-full h-full object-contain"
-        />
-        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-gradient-to-t from-black/70 to-transparent">
-          <div className="text-[11px] text-white truncate" title={image.name}>
-            {image.name}
+      <>
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={`查看参考图:${image.name}`}
+          onClick={() => setPreviewOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setPreviewOpen(true)
+            }
+          }}
+          className="relative w-full aspect-[3/2] rounded-lg overflow-hidden border border-line/60 bg-surface-muted group cursor-zoom-in"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={image.url}
+            alt={image.name}
+            className="w-full h-full object-contain"
+          />
+          <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-gradient-to-t from-black/70 to-transparent">
+            <div className="text-[11px] text-white truncate" title={image.name}>
+              {image.name}
+            </div>
           </div>
         </div>
-      </div>
+        {previewOpen && (
+          <ChatImageLightbox
+            images={[
+              { url: image.url, name: image.name, type: 'image/*', size: image.size },
+            ]}
+            index={0}
+            onClose={() => setPreviewOpen(false)}
+            onIndexChange={() => {}}
+          />
+        )}
+      </>
     )
   }
 

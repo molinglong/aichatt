@@ -15,6 +15,8 @@ import {
   Code2,
   Reply,
   BookmarkPlus,
+  Star,
+  MoreHorizontal,
   CheckCircle2,
   History,
   Loader2,
@@ -29,6 +31,8 @@ import { ChatImageLightbox } from './ChatImageLightbox'
 import { ToolCallCard, extractToolCallViews, extractInlineImages } from './ToolCallCard'
 import { TurnFileSummary } from './TurnFileSummary'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
+import { useQueryClient } from '@tanstack/react-query'
+import { isAndroidTauriShell } from '@/lib/tauri'
 import { toast } from '@/lib/toast'
 import { useChatStore } from '@/store/chat-store'
 import { useContextMenuStore, type ContextMenuItem } from '@/store/contextMenuStore'
@@ -178,6 +182,12 @@ interface MessageBubbleProps {
   wrapperRef?: (el: HTMLDivElement | null) => void
   /** 前一条用户消息的文本(存错题本时,assistant 消息用它配对题干;null/undefined = 无) */
   prevUserContent?: string | null
+  /** 前一条用户消息的附件(assistant 消息存错题本时带上题目截图) */
+  prevUserAttachments?: Attachment[] | null
+  /** 收藏状态:已收藏为 Favorite.id;null/undefined = 未收藏 */
+  favoriteId?: string | null
+  /** 收藏状态变化回写父级消息数组(虚拟列表重挂载后星标不丢) */
+  onFavoriteChange?: (messageId: string, favoriteId: string | null) => void
   /** 澄清问答:提交回答文本(透传给 ToolCallCard 内的 ClarifyCard) */
   onClarifySubmit?: (answersText: string) => void
   /** local_file:决策(批准/拒绝),透传给 ToolCallCard 内的 LocalFileCard */
@@ -210,6 +220,9 @@ function MessageBubbleInner({
   isFocused,
   wrapperRef,
   prevUserContent,
+  prevUserAttachments,
+  favoriteId: favoriteIdProp,
+  onFavoriteChange,
   onClarifySubmit,
   onLocalFileDecision,
   onOpenEditor,
@@ -388,7 +401,9 @@ function MessageBubbleInner({
     if (studySaveState !== 'idle') return
     const questionText = isUser ? bodyText : (prevUserContent ?? '')
     const analysisText = isAssistant ? bodyText : ''
-    if (!questionText.trim() && !analysisText.trim()) {
+    const sourceAttachments = isUser ? attachments : (prevUserAttachments ?? [])
+    const imageUrl = sourceAttachments.find((a) => a.type.startsWith('image/'))?.url
+    if (!questionText.trim() && !analysisText.trim() && !imageUrl) {
       toast.error('未找到可保存的题干', { title: '错题本' })
       return
     }
@@ -397,7 +412,12 @@ function MessageBubbleInner({
       const res = await fetch('/api/study/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceMessageId: message.id, questionText, analysisText }),
+        body: JSON.stringify({
+          sourceMessageId: message.id,
+          questionText,
+          analysisText,
+          ...(imageUrl ? { imageUrl } : {}),
+        }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setStudySaveState('saved')
@@ -407,7 +427,78 @@ function MessageBubbleInner({
       setStudySaveState('idle')
       toast.error('存入失败,请重试', { title: '错题本' })
     }
-  }, [studySaveState, isUser, isAssistant, bodyText, prevUserContent, message.id])
+  }, [
+    studySaveState,
+    isUser,
+    isAssistant,
+    bodyText,
+    prevUserContent,
+    prevUserAttachments,
+    attachments,
+    message.id,
+  ])
+
+  // ── 收藏(消息快照)──────────────────────────────────────────
+  // 与错题本彻底分家:收藏只归档消息,不进今日复习、无 FSRS 状态。
+  // 服务端只收 sourceMessageId,正文/附件/会话标题由服务端快照。
+  const [favId, setFavId] = useState<string | null>(favoriteIdProp ?? null)
+  const [favBusy, setFavBusy] = useState(false)
+  const queryClient = useQueryClient()
+  // 用户亲手切过收藏后,不再让服务端回填覆盖本地结果(避免慢一拍的前台同步把星标打回原点)
+  const favTouchedRef = useRef(false)
+  useEffect(() => {
+    if (favTouchedRef.current) return
+    setFavId(favoriteIdProp ?? null)
+  }, [favoriteIdProp])
+  const handleToggleFavorite = useCallback(async () => {
+    if (favBusy) return
+    favTouchedRef.current = true
+    setFavBusy(true)
+    const wasFavorited = !!favId
+    try {
+      if (wasFavorited) {
+        const res = await fetch(`/api/favorites/${favId}`, { method: 'DELETE' })
+        if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+        setFavId(null)
+        onFavoriteChange?.(message.id, null)
+        void queryClient.invalidateQueries({ queryKey: ['favorites', 'count'] })
+        toast.hint('已取消收藏')
+      } else {
+        const res = await fetch('/api/favorites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceMessageId: message.id }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = (await res.json()) as { id?: unknown }
+        const nextId = typeof data.id === 'string' ? data.id : null
+        setFavId(nextId)
+        onFavoriteChange?.(message.id, nextId)
+        void queryClient.invalidateQueries({ queryKey: ['favorites', 'count'] })
+        toast.success('已收藏')
+      }
+    } catch (err) {
+      console.error('[MessageBubble] toggle favorite failed:', err)
+      toast.error(wasFavorited ? '取消收藏失败' : '收藏失败,请重试')
+    } finally {
+      setFavBusy(false)
+    }
+  }, [favBusy, favId, message.id, onFavoriteChange, queryClient])
+
+  // 触屏设备没有自定义右键菜单:操作栏提供「⋯」把错题本等次要动作收进菜单,
+  // 保证手机端仍有存错题入口,同时操作栏不额外增宽。
+  // 安卓壳已有原生长按菜单承载同一批动作,不再重复渲染「⋯」。
+  const [coarsePointer, setCoarsePointer] = useState(false)
+  const [hasNativeMenu, setHasNativeMenu] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse)')
+    const update = () => setCoarsePointer(mq.matches)
+    update()
+    setHasNativeMenu(isAndroidTauriShell())
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+
   // 去噪：剥离思考开头对用户原话的复述（见 stripLeadingEcho）
   const displayReasoningText = stripLeadingEcho(
     bodySplit ? bodySplit.head : reasoningText,
@@ -447,9 +538,9 @@ function MessageBubbleInner({
   // 打字机喂原始 reasoningText(单调增长):displayReasoningText 会被 stripLeadingEcho
   // 中途剥掉复述前缀而缩短,触发打字机"重置从头回放"的换轮次语义,窗内容塌一下;
   // 剥回声挪到输出侧逐帧做(思考期内 displayReasoningText 本就等价于这条链)。
-  // 速度钳到 420 字/秒:推理流常年超过默认上限 1500 字/秒,稳态贴顶时每帧推进
-  // ~25 字(半行),行粒度的位移就是用户说的"字一跳一跳";420 ≈ 每帧 7 字/3.4px,
-  // 窗内是连续滚带。思考完毕本来就塌成胶囊,慢半拍无残留
+  // 速度钳到 420 字/秒(正文默认 320):推理窗窄且贴底滚动,上限略高减少思考结束后的尾巴。
+  // 两者都按屏上节奏定速,不再用 1500 字/秒追上游带宽。思考完毕本来就塌成胶囊,
+  // 慢半拍无残留。
   const { displayText: typedReasoningRaw } = useTypewriter(reasoningText, isThinkingActive, 420)
   const typedReasoning = stripLeadingEcho(typedReasoningRaw, prevUserContent)
   const REASON_TAIL = 600
@@ -498,17 +589,14 @@ function MessageBubbleInner({
     if (el && isThinkingActive && reasonWinFollowRef.current) el.scrollTop = el.scrollHeight
   }, [liveReasoningText, isThinkingActive])
 
-  // Typewriter effect: only for live streaming, not for historical messages
-  // Skip typewriter when message is already complete (streaming ended) to avoid
-  // performance issues with long messages on page refresh
-  const { displayText: typedText, isTyping } = useTypewriter(
+  // 上游结束不等于屏上尾文已打完。正文续打到追平才切富渲染;
+  // 历史消息首次挂载由 hook 同步返回全文,避免虚拟列表量到空壳高度。
+  const { displayText, isTyping } = useTypewriter(
     bodyText,
-    Boolean(isAssistant && isCurrentlyStreaming) // Only enable during active stream
+    Boolean(isAssistant && isCurrentlyStreaming),
+    undefined,
+    true
   )
-  // 非生成中直接用原文:useTypewriter 首次挂载先返回空串(store 为空,effect 后才揭示),
-  // 虚拟化会在那一帧量到“空壳”高度(实测 73px),随后正文撑回 1156px —— 冷启动长会话
-  // 因此整轨收缩/回长上千 px。生成结束时的原行为也是一次性显示全文,观感不变。
-  const displayText = isCurrentlyStreaming ? typedText : bodyText
 
   // Show cursor while AI is streaming OR typewriter is still catching up
   const showCursor = isCurrentlyStreaming || isTyping
@@ -745,6 +833,50 @@ function MessageBubbleInner({
     }
   }, [onRegenerate])
 
+  // ── 安卓原生长按菜单 → 消息动作桥 ──
+  // 壳里点「引用回复 / 收藏 / 存为错题 / 编辑 / 重新生成」后派发该事件,detail 带长按位置
+  // 所属消息 id 与选中文字。复用操作栏同一批 handler,保证两处行为一致。
+  useEffect(() => {
+    const onNativeAction = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ action?: string; messageId?: string | null; selection?: string }>
+      ).detail
+      if (!detail || detail.messageId !== message.id) return
+      switch (detail.action) {
+        case 'quote': {
+          const selected = detail.selection?.trim()
+          useChatStore.getState().setReplyingTo({
+            id: message.id,
+            role: message.role,
+            // 有选区就引用选区(手机端长按的精度价值所在),否则退回整条消息前 120 字
+            text: (selected || bodyText.slice(0, 120)).slice(0, 500),
+          })
+          break
+        }
+        case 'study':
+          void handleSaveToStudy()
+          break
+        case 'favorite':
+          void handleToggleFavorite()
+          break
+        case 'edit':
+          if (isUser && canEdit && onEdit) beginEdit()
+          break
+        case 'regenerate':
+          if (isAssistant && isLastAssistant && canRegenerate && onRegenerate) {
+            handleRegenerateDebounced()
+          }
+          break
+      }
+    }
+    window.addEventListener('aichatt:longpress-action', onNativeAction)
+    return () => window.removeEventListener('aichatt:longpress-action', onNativeAction)
+  }, [
+    message.id, message.role, bodyText, isUser, isAssistant, isLastAssistant,
+    canEdit, onEdit, canRegenerate, onRegenerate, beginEdit, handleRegenerateDebounced,
+    handleSaveToStudy, handleToggleFavorite,
+  ])
+
   const startEditingDebounced = useSingleFlight(startEditing, [text])
 
   // ── 右键菜单:把操作栏的 hover 按钮集合升格为右键菜单(桌面端习惯) ──
@@ -790,8 +922,14 @@ function MessageBubbleInner({
         },
       },
       !isStreaming && (isUser || isAssistant) && {
+        id: 'favorite',
+        label: favId ? '取消收藏' : '收藏',
+        icon: <Star className={cn('w-3.5 h-3.5', favId && 'fill-current text-accent')} />,
+        onSelect: handleToggleFavorite,
+      },
+      !isStreaming && (isUser || isAssistant) && {
         id: 'study',
-        label: studySaveState === 'saved' ? '已存入错题本' : '存入错题本',
+        label: studySaveState === 'saved' ? '已存入错题本' : '存为错题',
         icon: studySaveState === 'saved' ? <CheckCircle2 className="w-3.5 h-3.5 text-accent" /> : <BookmarkPlus className="w-3.5 h-3.5" />,
         disabled: studySaveState !== 'idle',
         onSelect: handleSaveToStudy,
@@ -806,6 +944,7 @@ function MessageBubbleInner({
     bodyText, isUser, isAssistant, canEdit, onEdit, isLastAssistant, canRegenerate,
     onRegenerate, beginEdit, copyPayload,
     handleRegenerateDebounced, handleSaveToStudy, studySaveState, isStreaming,
+    handleToggleFavorite, favId,
     message.id, message.role,
   ])
 
@@ -813,7 +952,7 @@ function MessageBubbleInner({
     (e: React.MouseEvent) => {
       // 触屏(手机):交还浏览器原生文本选择菜单(复制/全选/搜索)。复制是手机端主力动作,
       // 原生可拖选中间一段、精确到选区;自定义菜单在安卓上引发的"先于选区建立""压住
-      // 选区手柄"两个真机坑一并消失。消息操作栏已常驻复制/编辑/引用/重新生成/错题本,
+      // 选区手柄"两个真机坑一并消失。消息操作栏已常驻复制/编辑/引用/重新生成/收藏,
       // 长按不再是唯一入口,不存在功能缺口。
       if (window.matchMedia('(pointer: coarse)').matches) return
       if (assembleAndOpenMenu(e.clientX, e.clientY)) e.preventDefault()
@@ -892,6 +1031,11 @@ function MessageBubbleInner({
       ref={setWrapperRef}
       style={wrapperStyle}
       data-message-id={message.id}
+      data-message-role={message.role}
+      data-can-edit={isUser && canEdit && onEdit ? '1' : undefined}
+      data-can-regenerate={isAssistant && isLastAssistant && canRegenerate && onRegenerate ? '1' : undefined}
+      data-can-study={!isStreaming && (isUser || isAssistant) && studySaveState === 'idle' ? '1' : undefined}
+      data-can-favorite={!isStreaming && (isUser || isAssistant) ? '1' : undefined}
       onContextMenu={handleMessageContextMenu}
       className={cn(
         // 手机端 15px:真机对比定稿(8px 贴边显胖 → 12px 仍偏窄,用户拍板 15px;胶囊自身内距 12px 略窄于正文轴)
@@ -902,7 +1046,7 @@ function MessageBubbleInner({
     >
       {/* Avatar - only for AI; 手机端让位给正文(头像+间距白吃 34px 屏宽) */}
       {!isUser && (
-        <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-accent text-accent-foreground mt-0.5 max-md:hidden">
+        <div className="msg-avatar flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-accent text-accent-foreground mt-0.5 max-md:hidden">
           <Bot className="w-3 h-3" />
         </div>
       )}
@@ -1092,7 +1236,7 @@ function MessageBubbleInner({
                 导入时未迁移 {importSkipped.count} 个附件
               </div>
             )}
-            <div className="rounded-2xl rounded-br-[6px] bg-accent px-4 py-2.5">
+            <div className="user-bubble rounded-2xl bg-accent px-4 py-2.5">
               <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.75] text-accent-foreground">{text}</p>
             </div>
             {/* 应用内图片浏览器: portal 到 body,点缩略图开 */}
@@ -1278,21 +1422,34 @@ function MessageBubbleInner({
             >
               <Reply className="w-3.5 h-3.5" />
             </button>
-            {/* 存错题本:流式结束才可点;已存过显示 ✓ */}
+            {/* 收藏:消息快照归档,与错题本完全独立;再点一次取消收藏 */}
             {!isStreaming && (isUser || isAssistant) && (
               <button
-                onClick={handleSaveToStudy}
-                disabled={studySaveState === 'saving'}
+                onClick={() => void handleToggleFavorite()}
+                disabled={favBusy}
                 className="p-1 rounded-md text-content-muted hover:text-content-primary hover:bg-surface-subtle transition-colors active:scale-95 touch-manipulation"
-                title="存入错题本"
-                aria-label="存入错题本"
+                title={favId ? '取消收藏' : '收藏'}
+                aria-label={favId ? '取消收藏' : '收藏'}
+                aria-pressed={!!favId}
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
-                {studySaveState === 'saved' ? (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-accent" />
-                ) : (
-                  <BookmarkPlus className="w-3.5 h-3.5" />
-                )}
+                <Star className={cn('w-3.5 h-3.5', favId && 'fill-current text-accent')} />
+              </button>
+            )}
+            {/* 触屏补充入口:手机没有自定义右键菜单,用「⋯」承载存错题等次要动作 */}
+            {coarsePointer && !hasNativeMenu && !isStreaming && (isUser || isAssistant) && (
+              <button
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  assembleAndOpenMenu(rect.left, rect.bottom + 4)
+                }}
+                className="p-1 rounded-md text-content-muted hover:text-content-primary hover:bg-surface-subtle transition-colors active:scale-95 touch-manipulation"
+                title="更多操作"
+                aria-label="更多操作"
+                aria-haspopup="menu"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
+              >
+                <MoreHorizontal className="w-3.5 h-3.5" />
               </button>
             )}
             </>
@@ -1354,8 +1511,10 @@ function areMessageBubblePropsEqual(
   if (prev.canEdit !== next.canEdit) return false
   if (prev.onRegenerate !== next.onRegenerate) return false
   if (prev.onEdit !== next.onEdit) return false
+  if (prev.onFavoriteChange !== next.onFavoriteChange) return false
   if (prev.isFocused !== next.isFocused) return false
   if (prev.prevUserContent !== next.prevUserContent) return false
+  if (prev.favoriteId !== next.favoriteId) return false
   if (prev.contentVisibilityOff !== next.contentVisibilityOff) return false
   // wrapperRef 不必比较(它只用来滚动,变化不影响渲染结果)
 

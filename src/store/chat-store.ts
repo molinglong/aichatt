@@ -23,29 +23,6 @@ const MAX_RECENT_MODELS = 10
  *  新对话默认不带面具(上次的面具总忘记关),只有这里的显式选择才会带入。 */
 export const NEW_CHAT_MASK_SIGNAL_KEY = 'chat:newChatMaskSignal'
 
-/** 背景模式(设置 → 通用 → 背景):
- *  - off      纯色界面
- *  - image    新对话欢迎页铺内置壁纸(仅欢迎页) */
-export type BackdropMode = 'off' | 'image'
-
-const BACKDROP_MODE_KEY = 'chat:backdropMode'
-
-/** 读背景模式,并把旧壁纸开关(chat:welcomeWallpaper = 'true')一次性迁移成 image 回写 */
-export function readBackdropMode(): BackdropMode {
-  try {
-    const saved = localStorage.getItem(BACKDROP_MODE_KEY)
-    if (saved === 'off' || saved === 'image') return saved
-    let mode: BackdropMode = 'off'
-    if (localStorage.getItem('chat:welcomeWallpaper') === 'true') {
-      mode = 'image'
-    }
-    localStorage.setItem(BACKDROP_MODE_KEY, mode)
-    return mode
-  } catch {
-    return 'off'
-  }
-}
-
 /** 从 localStorage 读取字符串数组,失败/缺失返回 fallback */
 function loadStringArray(key: string, fallback: string[] = []): string[] {
   if (typeof window === 'undefined') return fallback
@@ -79,6 +56,9 @@ interface ChatState {
   setConversationTitle: (title: string | null) => void
   settingsOpen: boolean
   setSettingsOpen: (open: boolean) => void
+  /** 搜索会话弹层：顶栏搜索框与侧栏搜索钮共用同一个开关 */
+  searchDialogOpen: boolean
+  setSearchDialogOpen: (open: boolean) => void
   /** 打开设置弹窗时指定的目标 section（如 'masks'）；消费后置 null */
   settingsSection: string | null
   setSettingsSection: (section: string | null) => void
@@ -123,14 +103,6 @@ interface ChatState {
   /** 思考框自动折叠:思考完毕后自动收起思考框(可在设置中关闭)。持久化到 localStorage */
   autoCollapseReasoning: boolean
   setAutoCollapseReasoning: (v: boolean) => void
-  /** 背景模式:off=纯色 / image=新对话欢迎页内置壁纸。
-      纯本地偏好,持久化到 localStorage('chat:backdropMode');旧壁纸开关偏好在读取时自动迁移 */
-  backdropMode: BackdropMode
-  setBackdropMode: (v: BackdropMode) => void
-  /** 壁纸激活态(运行时信号,不持久化):当前渲染的是新对话欢迎页。
-      shell 层壁纸层与侧栏/内容列的半透明化都以此为开关 */
-  chatWelcomeActive: boolean
-  setChatWelcomeActive: (v: boolean) => void
   /** 输入草稿:按会话 key 索引. SSR 期间为空,客户端 hydrate 后从 localStorage 灌入 */
   drafts: DraftsMap
   /** 设置某个会话的草稿(null 表示删除) */
@@ -149,6 +121,9 @@ interface ChatState {
   /** 把指定会话标为"已读当下",写入 store + localStorage.
    *  debounced 防抖由调用方负责(避免快速切换闪烁). */
   markConversationRead: (conversationId: string) => void
+  /** 把指定会话标回"未读":已读时间推回纪元哨兵,isUnread 随即成立(抽屉蓝点复现)。
+   *  与 markConversationRead 同一份 localStorage,纯本地语义。 */
+  markConversationUnread: (conversationId: string) => void
   /** 删除会话时同步清理已读记录 */
   removeConversationRead: (conversationId: string) => void
   /** 聊天内嵌写作画布面板:当前打开的文档 id,null=关闭(豆包式右侧滑出,不跳转页面)。
@@ -295,6 +270,8 @@ const storeInitializer: StateCreator<ChatState> = (set) => ({
   // 要求回退;子窗口基础设施(tauri.openSettings/show_settings_window/settings-window
   // 路由)保留未拆,后续需要时可再启用。
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  searchDialogOpen: false,
+  setSearchDialogOpen: (open) => set({ searchDialogOpen: open }),
   settingsSection: null,
   setSettingsSection: (section) => set({ settingsSection: section }),
   previewCode: null,
@@ -360,17 +337,6 @@ const storeInitializer: StateCreator<ChatState> = (set) => ({
     localStorage.setItem('chat:autoCollapseReasoning', String(v))
     set({ autoCollapseReasoning: v })
   },
-  // 背景模式:读取时自动迁移旧壁纸开关偏好(见 readBackdropMode);
-  // SSR 期间恒为 off,客户端 hydration 后从 localStorage 灌入
-  backdropMode: typeof window !== 'undefined' ? readBackdropMode() : 'off',
-  setBackdropMode: (v) => {
-    try {
-      localStorage.setItem(BACKDROP_MODE_KEY, v)
-    } catch {}
-    set({ backdropMode: v })
-  },
-  chatWelcomeActive: false,
-  setChatWelcomeActive: (v) => set({ chatWelcomeActive: v }),
   drafts: typeof window !== 'undefined' ? loadDrafts() : {},
   setDraft: (convKey, entry) =>
     set((state) => {
@@ -389,6 +355,16 @@ const storeInitializer: StateCreator<ChatState> = (set) => ({
   markConversationRead: (conversationId) => {
     if (!conversationId) return
     const ts = Date.now()
+    persistLastReadAt(conversationId, ts)
+    set((state) => ({
+      lastReadAt: { ...state.lastReadAt, [conversationId]: ts },
+    }))
+  },
+  markConversationUnread: (conversationId) => {
+    if (!conversationId) return
+    // 哨兵值 1(1970-01-01)而不是 0:loadLastReadAt 会清洗掉 <=0 的脏值,
+    // 写成 0 等于"从未读过"(保护期),蓝点反而不出现。
+    const ts = 1
     persistLastReadAt(conversationId, ts)
     set((state) => ({
       lastReadAt: { ...state.lastReadAt, [conversationId]: ts },

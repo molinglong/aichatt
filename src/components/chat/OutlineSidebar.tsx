@@ -13,6 +13,8 @@ interface OutlineSidebarProps {
   className?: string
   /** 右墙被别的面板(对话资料)占住时的让位宽度,整列随之左移 */
   rightOffset?: number
+  /** 点击大纲属于主动阅读导航,先释放贴底控制权。 */
+  onNavigate?: () => void
 }
 
 type Tick = {
@@ -80,6 +82,7 @@ export function OutlineSidebar({
   scrollContainer,
   className,
   rightOffset = 0,
+  onNavigate,
 }: OutlineSidebarProps) {
   const ticks = useMemo<Tick[]>(() => {
     const list: Tick[] = []
@@ -198,6 +201,7 @@ export function OutlineSidebar({
     if (!scrollContainer) return
     const tick = ticks[idx]
     if (!tick) return
+    onNavigate?.()
     // 虚拟化模式:屏外消息节点不存在,由 facade 经虚拟化测量数据跳转
     if (getListScrollFacade()?.jumpToMessage(tick.messageId)) {
       setActiveIndex(idx)

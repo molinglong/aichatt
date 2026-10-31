@@ -3,17 +3,20 @@
 /**
  * 设置 → 面具管理：
  * - 自定义面具 CRUD（列表 / 新增 / 编辑 / 删除，删除时自动清引用会话）
- * - 内置面具只读展示 + 一键「复制为自定义」再改
+ * - 面具面板：新面具 / 面具库长尾需下载后才出现在选择器，可卸载
+ * - 精选内置面具只读展示 + 一键「复制为自定义」再改
  * 数据源：GET/POST /api/masks + PATCH/DELETE /api/masks/[id]
+ *        + GET/POST /api/masks/installed + DELETE /api/masks/installed?maskId=
  */
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Copy, Loader2, VenetianMask, AlertCircle, ArrowLeft, MessageSquarePlus, User } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Loader2, VenetianMask, AlertCircle, ArrowLeft, MessageSquarePlus, User, Download, Check, Search } from 'lucide-react'
 import { fetchJson, HttpError } from '@/lib/query/fetcher'
 import { queryKeys, STALE } from '@/lib/query/keys'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { BUILTIN_MASKS } from '@/lib/ai/builtin-masks'
+import { BUILTIN_MASK_STORE, DOWNLOADABLE_MASKS } from '@/lib/ai/builtin-masks-store'
 import { STYLE_PRESETS } from '@/lib/ai/style-presets'
 import { maskInputSchema, type MaskDTO, type MaskFewShotTurn } from '@/lib/ai/mask-types'
 import { confirmDialog } from '@/components/ui/ConfirmDialog'
@@ -37,6 +40,9 @@ const EMPTY_FORM: MaskFormState = {
   fewShot: [],
   stylePreset: '',
 }
+
+/** 新面具（BUILTIN_MASK_STORE）在面板里打「新」标；其余可下载项来自早期面具库 */
+const STORE_IDS = new Set(BUILTIN_MASK_STORE.map((m) => m.id))
 
 const INPUT_CLS = cn(
   'w-full rounded-lg border px-2.5 py-1.5 text-xs',
@@ -74,8 +80,64 @@ export default function MasksSettings() {
     staleTime: STALE.masks,
   })
 
+  // 面具面板：已下载的内置面具 id
+  const { data: installedData, isLoading: installedLoading, error: installedError } = useQuery({
+    queryKey: queryKeys.masks.installed(),
+    queryFn: () => fetchJson<{ maskIds: string[] }>('/api/masks/installed'),
+    staleTime: STALE.masks,
+  })
+  const installedSet = new Set(installedData?.maskIds ?? [])
+  const [catalogQuery, setCatalogQuery] = useState('')
+  const [installingId, setInstallingId] = useState<string | null>(null)
+  const [uninstallingId, setUninstallingId] = useState<string | null>(null)
+
   async function invalidate() {
     await queryClient.invalidateQueries({ queryKey: queryKeys.masks.list() })
+  }
+
+  async function invalidateInstalled() {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.masks.installed() })
+  }
+
+  async function handleInstall(maskId: string, name: string) {
+    setInstallingId(maskId)
+    try {
+      await fetchJson<{ ok: boolean }>('/api/masks/installed', {
+        method: 'POST',
+        json: { maskId },
+      })
+      toast.success(`已下载「${name}」，可在聊天选择器中选用`)
+      await invalidateInstalled()
+    } catch (e) {
+      toast.error(errText(e))
+    } finally {
+      setInstallingId(null)
+    }
+  }
+
+  async function handleUninstall(maskId: string, name: string) {
+    if (
+      !(await confirmDialog({
+        title: '卸载面具',
+        message: `确定从面具面板卸载「${name}」吗？`,
+        detail: '卸载后聊天选择器里不再显示；已经使用它的对话仍可正常继续。',
+        danger: true,
+        okText: '卸载',
+      }))
+    )
+      return
+    setUninstallingId(maskId)
+    try {
+      await fetchJson<{ ok: boolean }>(`/api/masks/installed?maskId=${encodeURIComponent(maskId)}`, {
+        method: 'DELETE',
+      })
+      toast.hint(`已卸载「${name}」`)
+      await invalidateInstalled()
+    } catch (e) {
+      toast.error(errText(e))
+    } finally {
+      setUninstallingId(null)
+    }
   }
 
   async function handleSave() {
@@ -305,6 +367,16 @@ export default function MasksSettings() {
   }
 
   /* ---------------- 列表视图 ---------------- */
+  const catalogQ = catalogQuery.trim().toLowerCase()
+  const catalogRows = catalogQ
+    ? DOWNLOADABLE_MASKS.filter(
+        (m) =>
+          m.name.toLowerCase().includes(catalogQ) ||
+          m.description.toLowerCase().includes(catalogQ)
+      )
+    : DOWNLOADABLE_MASKS
+  const installedCount = DOWNLOADABLE_MASKS.filter((m) => installedSet.has(m.id)).length
+
   return (
     <div className="space-y-3">
       {/* 自定义面具 */}
@@ -340,12 +412,12 @@ export default function MasksSettings() {
         {!isLoading && !error && (masks?.length ?? 0) === 0 && (
           <div className="rounded-xl border border-dashed border-line/60 bg-surface p-6 text-center">
             <VenetianMask className="w-6 h-6 mx-auto text-content-muted mb-2" />
-            <p className="text-xs text-content-muted">还没有自定义面具。点击「新增面具」创建，或从下方内置面具复制一份来改。</p>
+            <p className="text-xs text-content-muted">还没有自定义面具。点击「新增面具」创建，或从下方面具面板下载、从内置面具复制一份来改。</p>
           </div>
         )}
         <div className="space-y-2">
           {(masks ?? []).map((m) => (
-            <div key={m.id} className="animate-in fade-in slide-in-from-top-2 duration-300">
+            <div key={m.id} className="enter-pop">
               <div className="flex items-center gap-3 rounded-xl border border-line/60 bg-surface p-3">
                 <span className="text-2xl leading-none shrink-0" aria-hidden>
                   {m.avatar}
@@ -388,6 +460,107 @@ export default function MasksSettings() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* 面具面板：新面具 / 面具库需下载后才会出现在聊天选择器 */}
+      <div className="space-y-1.5 pt-1">
+        <div className="flex items-center justify-between gap-2 px-0.5 py-1">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[11px] font-medium text-content-secondary">面具面板</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-subtle/80 text-content-muted font-mono shrink-0">
+              已下载 {installedCount}/{DOWNLOADABLE_MASKS.length}
+            </span>
+          </div>
+        </div>
+        <p className="px-0.5 text-[10px] text-content-muted leading-relaxed">
+          新面具先在这里下载，之后才会出现在聊天选择器；下载的内置面具随版本更新，无需重复下载。
+        </p>
+        <div className="relative">
+          <Search
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-content-muted pointer-events-none"
+            aria-hidden
+          />
+          <input
+            value={catalogQuery}
+            onChange={(e) => setCatalogQuery(e.target.value)}
+            placeholder="搜索面具面板..."
+            className={cn(INPUT_CLS, 'pl-8')}
+            aria-label="搜索面具面板"
+          />
+        </div>
+
+        {installedError && (
+          <div className="flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-600 dark:text-red-400">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            下载状态加载失败：{errText(installedError)}
+          </div>
+        )}
+        {installedLoading && (
+          <div className="flex items-center gap-2 rounded-xl border border-line/60 bg-surface p-4 text-xs text-content-muted">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            加载面具面板…
+          </div>
+        )}
+        {!installedLoading && !installedError && catalogRows.length === 0 && (
+          <div className="rounded-xl border border-dashed border-line/60 bg-surface p-5 text-center text-xs text-content-muted">
+            没有匹配的面具
+          </div>
+        )}
+        {!installedLoading && !installedError && catalogRows.length > 0 && (
+          <div className="space-y-2">
+            {catalogRows.map((m) => {
+              const installed = installedSet.has(m.id)
+              const busy = installingId === m.id || uninstallingId === m.id
+              return (
+                <div
+                  key={m.id}
+                  data-mask-id={m.id}
+                  data-installed={installed ? '1' : '0'}
+                  className="flex items-center gap-3 rounded-xl border border-line/60 bg-surface p-3"
+                >
+                  <span className="text-2xl leading-none shrink-0" aria-hidden>
+                    {m.avatar}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-medium text-content-primary truncate">{m.name}</span>
+                      {STORE_IDS.has(m.id) ? (
+                        <span className="shrink-0 rounded-full bg-accent/10 px-1.5 py-0.5 text-[9px] font-medium text-accent">
+                          新
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded-full bg-surface-subtle/80 px-1.5 py-0.5 text-[9px] text-content-muted">
+                          面具库
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-content-muted truncate">{m.description}</p>
+                  </div>
+                  {installed ? (
+                    <button
+                      onClick={() => handleUninstall(m.id, m.name)}
+                      disabled={busy}
+                      className="flex items-center gap-1 shrink-0 rounded-lg border border-line/60 px-2 py-1 text-[11px] text-content-secondary transition-colors hover:border-red-500/30 hover:text-red-500 disabled:opacity-50"
+                      title="点击卸载"
+                    >
+                      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                      已下载
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleInstall(m.id, m.name)}
+                      disabled={busy}
+                      className="flex items-center gap-1 shrink-0 rounded-lg bg-accent px-2.5 py-1 text-[11px] font-medium text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                    >
+                      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                      下载
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* 内置面具（只读 + 复制） */}

@@ -267,7 +267,7 @@ export default function BuddyDesktopPage() {
         {bubbles.map((bubble) => (
           <div
             key={bubble.id}
-            className="absolute -top-10 left-full ml-3 animate-in fade-in slide-in-from-left-2 duration-300"
+            className="absolute -top-10 left-full ml-3 slide-in-left"
           >
             <div 
               className="relative rounded-lg px-3 py-1.5 shadow-md max-w-[180px]"

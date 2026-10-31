@@ -1,282 +1,267 @@
 'use client'
 
-import { useSyncExternalStore, useRef, useEffect } from 'react'
+import { useSyncExternalStore, useRef, useEffect, useMemo, useCallback } from 'react'
 
 /**
- * useTypewriter —— 逐字符显示 hook (彻底根治 "Maximum update depth exceeded")
- *
- * 旧实现的死循环源头:
- *   - 用 useState 维护 revealedLength
- *   - setRevealedLength(updater) 的 updater 函数在 React 18 并发模式下可能被反复调用
- *   - 闭包变量 nextReachedTarget 在反复调用间状态不可靠
- *   - 一旦 updater 没设 nextReachedTarget,tick 函数体外就会调度下一帧 → setState 再来
- *   - 50 帧内就触发 React 的 update depth 兜底
- *
- * 新实现的关键设计 (useSyncExternalStore 模式):
- *
- *   1. **完全不依赖 useState** —— revealedLength 存在 module-level store 的 ref 里
- *   2. **useSyncExternalStore 订阅 store** —— React 只在 commit 阶段读 snapshot,
- *      snapshot 返回字符串。React 用 Object.is 比较新旧 snapshot,
- *      字符串内容相同时就 bail out, 不触发渲染
- *   3. **所有 entry 修改都在 RAF / useEffect 里, 不在 render 函数里**:
- *      - render 函数只读 entry, 调 getSnapshot 拿 displayText
- *      - useEffect 检测 fullText / enabled 变化, 改 entry 字段 (必要时 kick)
- *      - RAF tick 推进 revealedLength, 调用 store listeners (通知 React)
- *   4. **跨实例隔离** —— 每个 useTypewriter 调用分配独立 token (WeakMap 存 entry)
- *   5. **enabled = false 时一次性显示** —— 直接设置 revealedLength = fullText.length 并 notify
- *
- * 此实现保证:
- *   - 不在 render 函数里调用任何 setState / listener
- *   - 不在 effect 里调用 setState (只调用 store listener, 走 useSyncExternalStore)
- *   - 不通过闭包变量跨调用追踪状态
- *
- * @param fullText  完整文本
- * @param enabled   是否启用逐字符 (false 时一次性显示完整)
+ * Per-instance external store: render only derives immutable text boundaries;
+ * effects/RAF commit progress. String snapshots remain stable between reveals,
+ * including interrupted React renders and StrictMode effect replays.
  */
-
-/* ── Store ─────────────────────────────────────────────────────────────── */
-
-interface StoreEntry {
-  /** 完整文本(由 useEffect 同步, render 不读) */
+interface TextState {
   fullText: string
-  /** 当前已揭示长度 */
+  /** UTF-16 offsets after each complete reveal unit (normally one grapheme). */
+  ends: number[]
+}
+
+interface StoreEntry extends TextState {
   revealedLength: number
-  /** 揭示位置的小数累加器: 低速帧位移不足 1 字符时不丢量, 否则慢速档会被 floor 吃停 */
+  /** Fractional position in graphemes, not UTF-16 code units. */
   revealedPos: number
-  /** 平滑后的瞬时速度(字符/秒) */
   rate: number
-  /** 本实例速度上限(字符/秒)。默认 RATE_MAX;推理小窗等"永不追平"的流用它压低
-   *  稳态速度:RATE_MAX 下每帧推进 ~25 字(半行),行粒度位移观感就是"一跳一跳" */
   rateCap: number
-  /** 上一帧时间戳(ms), 用于把推进量换算成时间基 */
   lastTs: number
-  /** 监听器列表 (useSyncExternalStore 的 subscribe 回调) */
   listeners: Set<() => void>
-  /** 当前 RAF id */
   rafId: number | null
-  /** tick 链是否还活着 */
   alive: boolean
+  enabled?: boolean
+  draining?: boolean
 }
 
 const stores = new WeakMap<object, StoreEntry>()
 
-/* ── 时间基推进参数 ─────────────────────────────────────────────────────
- * 旧实现是帧基: step = max(1, min(24, gap/12)) —— 速度是「剩余差距」的阶跃函数,
- * 而差距由上游 chunk 到达节奏决定, 于是屏上速度在 60 与 1440 字符/秒之间硬切,
- * 观感就是"爬一段、爆一下、再爬"。
- * 新实现: 目标速度仍是差距的函数但连续, 实际速度用指数平滑跟踪, 位移对时间积分
- * —— 上游再怎么抖, 屏上推进速度都是条平滑曲线, 且与屏幕刷新率无关。 */
-const RATE_MIN = 60 // 字符/秒下限(旧版 1 字符/帧@60Hz 的量级, 保证不更慢)
-const RATE_MAX = 1500 // 字符/秒上限(旧版 24 字符/帧@60Hz≈1440, 同档兜住远程轮询整段补进)
-const RATE_GAIN = 3.2 // 差距→目标速度的斜率
-const TAU_MS = 240 // 平滑时间常数: 越小越跟手, 越大越顺滑
-// 后台标签页里 RAF 被节流到 ~1 帧/秒, dt 不钳一次就跳几百字符
+// Normal input tracks a 140ms backlog. Large bursts get up to 500ms of
+// smoothing budget, not a fixed characters/second ceiling. This is a feedback
+// time constant, not a promise to reveal an entire burst in 500ms: the backlog
+// decays over several budgets. A 6000-grapheme burst should drain within 3s.
+const LATENCY_MS = 140
+const BURST_EXTRA_MS = 360
+const RATE_MIN = 12
+const TAU_MS = 80
+// A throttled/background RAF must not spend seconds of accumulated credit.
 const MAX_DT_MS = 48
 
-function targetRate(gap: number, cap: number): number {
-  return Math.min(cap, RATE_MIN + gap * RATE_GAIN)
+// Structural type keeps this usable with TS libs predating Intl.Segmenter.
+type GraphemeSegmenter = { segment(text: string): Iterable<{ index: number; segment: string }> }
+const Segmenter = (Intl as typeof Intl & {
+  Segmenter?: new (locale?: string, options?: { granularity: 'grapheme' }) => GraphemeSegmenter
+}).Segmenter
+const segmenter = Segmenter ? new Segmenter(undefined, { granularity: 'grapheme' }) : null
+
+/**
+ * Without Segmenter, split only between known independent base characters.
+ * Everything uncertain (marks, ZWJ, flags, Indic conjuncts, Jamo, etc.) stays
+ * grouped with its neighbours. This deliberately over-groups rare scripts,
+ * rather than pretending Array.from/code-point slicing is grapheme-safe.
+ */
+function independentBase(char: string): boolean {
+  return /^[\x20-\x7e\t\r\n\u3400-\u9fff\u3041-\u3096\u30a1-\u30fa\uac00-\ud7a3]$/.test(char)
+}
+
+function segmentEnds(text: string, complete: boolean): number[] {
+  const ends: number[] = []
+  if (segmenter) {
+    for (const part of Array.from(segmenter.segment(text))) ends.push(part.index + part.segment.length)
+  } else {
+    let offset = 0
+    let previous = ''
+    for (const char of Array.from(text)) {
+      if (offset && independentBase(previous) && independentBase(char) && !(previous === '\r' && char === '\n')) {
+        ends.push(offset)
+      }
+      offset += char.length
+      previous = char
+    }
+    if (offset) ends.push(offset)
+  }
+  // Transport chunks can split a surrogate pair. Keep the incomplete suffix
+  // queued without spinning RAF. Once upstream finishes, preserve even malformed
+  // source text verbatim (as disabled/history does), rather than draining forever.
+  if (!complete && /[\ud800-\udbff]$/.test(text)) ends.pop()
+  return ends
+}
+
+function textState(fullText: string, previous: TextState, complete: boolean): TextState {
+  if (fullText === previous.fullText) {
+    let ends = previous.ends
+    if (/[\ud800-\udbff]$/.test(fullText)) {
+      const included = ends[ends.length - 1] === fullText.length
+      if (complete !== included) ends = complete ? ends.concat(fullText.length) : ends.slice(0, -1)
+    }
+    return { fullText, ends }
+  }
+  if (!fullText.startsWith(previous.fullText)) return { fullText, ends: segmentEnds(fullText, complete) }
+  // Re-segment the last cluster: a chunk may extend it with a combining mark,
+  // skin tone, ZWJ sequence or the second regional indicator of a flag.
+  const stableCount = Math.max(0, previous.ends.length - 1)
+  const start = stableCount ? previous.ends[stableCount - 1] : 0
+  return {
+    fullText,
+    ends: previous.ends.slice(0, stableCount).concat(segmentEnds(fullText.slice(start), complete).map(end => start + end)),
+  }
+}
+
+/** Number of boundaries at/before a UTF-16 offset. */
+function boundaryCount(ends: number[], offset: number): number {
+  let lo = 0
+  let hi = ends.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (ends[mid] <= offset) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+function retainedLength(visible: string, previous: TextState, next: TextState): number {
+  let length = Math.min(visible.length, next.fullText.length)
+  if (!next.fullText.startsWith(visible)) {
+    length = 0
+    while (length < visible.length && length < next.fullText.length && visible[length] === next.fullText[length]) length++
+  }
+  // Keep only a prefix that is a complete unit in BOTH versions. Never reveal
+  // unseen common text, or preserve half a glyph when its combining mark changes.
+  for (;;) {
+    const before = previous.ends[boundaryCount(previous.ends, length) - 1] ?? 0
+    const after = next.ends[boundaryCount(next.ends, length) - 1] ?? 0
+    const safe = Math.min(before, after)
+    if (safe === length) return safe
+    length = safe
+  }
 }
 
 function getStore(token: object): StoreEntry {
-  let s = stores.get(token)
-  if (s) return s
-  s = {
-    fullText: '',
-    revealedLength: 0,
-    revealedPos: 0,
-    rate: RATE_MIN,
-    rateCap: RATE_MAX,
-    lastTs: 0,
-    listeners: new Set(),
-    rafId: null,
-    alive: false,
+  let entry = stores.get(token)
+  if (!entry) {
+    entry = {
+      fullText: '', ends: [], revealedLength: 0, revealedPos: 0,
+      rate: RATE_MIN, rateCap: 240, lastTs: 0,
+      listeners: new Set(), rafId: null, alive: false,
+    }
+    stores.set(token, entry)
   }
-  stores.set(token, s)
-  return s
+  return entry
 }
 
-let tokenCounter = 0
+function snapshot(entry: StoreEntry): string {
+  return entry.fullText.slice(0, entry.revealedLength)
+}
 
-/* ── 核心 RAF tick ────────────────────────────────────────────────────── */
+function notifyChanged(entry: StoreEntry, before: string) {
+  if (snapshot(entry) !== before) entry.listeners.forEach(listener => listener())
+}
 
 function tick(entry: StoreEntry, now: number) {
   entry.rafId = null
-
-  const target = entry.fullText.length
-
-  // 已追平:退出链
-  if (entry.revealedPos >= target) {
+  const target = entry.ends.length
+  if (!entry.alive || entry.revealedPos >= target) {
     entry.alive = false
     return
   }
 
-  const dtMs = entry.lastTs ? Math.min(MAX_DT_MS, Math.max(1, now - entry.lastTs)) : 16.7
+  const before = snapshot(entry)
+  const dtMs = Math.min(MAX_DT_MS, Math.max(0, now - entry.lastTs))
   entry.lastTs = now
-
   const gap = target - entry.revealedPos
-  entry.rate += (targetRate(gap, entry.rateCap) - entry.rate) * (1 - Math.exp(-dtMs / TAU_MS))
+  const budget = LATENCY_MS + Math.min(BURST_EXTRA_MS, Math.sqrt(Math.max(0, gap - 48)) * 5)
+  // Bound extreme upstream bursts as well: a 6000-character snapshot must not
+  // suddenly paint hundreds of characters per frame as its latency budget shrinks.
+  const desired = Math.min(entry.rateCap, 2400, Math.max(RATE_MIN, gap * 1000 / budget))
+  const alpha = 1 - Math.exp(-dtMs / TAU_MS)
+  // Exact integral of the exponential velocity ramp for this frame. Unlike
+  // applying the final velocity to the whole frame, this avoids a first-frame
+  // jump and behaves consistently at 30/60/120Hz.
+  const distance = (desired * dtMs + (entry.rate - desired) * TAU_MS * alpha) / 1000
+  entry.rate += (desired - entry.rate) * alpha
+  entry.revealedPos = Math.min(target, entry.revealedPos + Math.max(0, distance))
+  entry.revealedLength = entry.ends[Math.floor(entry.revealedPos) - 1] ?? 0
 
-  entry.revealedPos = Math.min(target, entry.revealedPos + (entry.rate * dtMs) / 1000)
-  entry.revealedLength = Math.floor(entry.revealedPos)
-
-  // 通知 React (通过 useSyncExternalStore)
-  // 注意: 这必须在 RAF 中调用,不在 render 中。
-  entry.listeners.forEach((l) => l())
-
-  // 追平则不调度下一帧
-  if (entry.revealedPos >= target) {
-    entry.alive = false
-    return
-  }
-
-  // 调度下一帧
-  entry.rafId = requestAnimationFrame((t) => tick(entry, t))
+  // Schedule before notifying: a synchronous subscriber commit may stop or
+  // replace this chain. Never resurrect it after that commit returns.
+  entry.alive = entry.revealedPos < target
+  if (entry.alive) entry.rafId = requestAnimationFrame(t => tick(entry, t))
+  notifyChanged(entry, before)
 }
 
 function kick(entry: StoreEntry) {
-  if (entry.alive) return
-  if (entry.revealedLength >= entry.fullText.length) return
+  if (entry.alive || entry.revealedPos >= entry.ends.length) return
   entry.alive = true
-  entry.lastTs = 0
-  if (entry.rafId !== null) {
-    cancelAnimationFrame(entry.rafId)
-  }
-  entry.rafId = requestAnimationFrame((t) => tick(entry, t))
+  entry.lastTs = performance.now()
+  entry.rafId = requestAnimationFrame(t => tick(entry, t))
 }
 
 function stop(entry: StoreEntry) {
   entry.alive = false
-  if (entry.rafId !== null) {
-    cancelAnimationFrame(entry.rafId)
-    entry.rafId = null
-  }
-}
-
-/** 一次性揭示到全文(关闭逐字符 / 重置时用), 同步三个派生字段 */
-function revealAll(entry: StoreEntry) {
-  entry.revealedPos = entry.fullText.length
-  entry.revealedLength = entry.fullText.length
-  entry.rate = RATE_MIN
-  stop(entry)
-  entry.listeners.forEach((l) => l())
-}
-
-/* ── useSyncExternalStore 接口 ─────────────────────────────────────────── */
-
-function subscribe(token: object, listener: () => void) {
-  const entry = getStore(token)
-  entry.listeners.add(listener)
-  return () => {
-    entry.listeners.delete(listener)
-  }
-}
-
-function getSnapshot(token: object): string {
-  const entry = getStore(token)
-  return entry.fullText.slice(0, entry.revealedLength)
+  if (entry.rafId !== null) cancelAnimationFrame(entry.rafId)
+  entry.rafId = null
 }
 
 function getServerSnapshot(): string {
   return ''
 }
 
-/* ── Hook ─────────────────────────────────────────────────────────────── */
-
-export function useTypewriter(fullText: string, enabled: boolean, maxRate?: number): {
+/** maxRate, when explicitly supplied, remains a hard graphemes/second cap. */
+export function useTypewriter(fullText: string, enabled: boolean, maxRate?: number, drainOnDisable = false): {
   displayText: string
   isTyping: boolean
 } {
-  // 稳定 token (每次 hook 调用分配一个, 跨渲染保持稳定)
   const tokenRef = useRef<object | null>(null)
-  if (tokenRef.current === null) {
-    tokenRef.current = { __id: ++tokenCounter }
-  }
+  if (tokenRef.current === null) tokenRef.current = {}
   const token = tokenRef.current
+  const entry = getStore(token)
+  const subscribe = useCallback((listener: () => void) => {
+    entry.listeners.add(listener)
+    return () => { entry.listeners.delete(listener) }
+  }, [entry])
+  const getSnapshot = useCallback(() => snapshot(entry), [entry])
+  const displayText = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+  // Pure, immutable derivation only; aborted renders cannot mutate the store.
+  const next = useMemo(() => textState(fullText, entry, !enabled), [fullText, enabled, entry])
 
-  // ── 关键: 所有 entry 字段修改都放在 useEffect 里, 绝不在 render 函数里 ──
   useEffect(() => {
-    const entry = getStore(token)
-    entry.rateCap = maxRate && maxRate > 0 ? maxRate : RATE_MAX
+    const before = snapshot(entry)
+    const appendOnly = fullText.startsWith(entry.fullText)
+    const changed = fullText !== entry.fullText || next.ends !== entry.ends
+    const wasTyping = entry.enabled || (entry.draining && entry.revealedLength < entry.fullText.length)
+    entry.draining = Boolean(!enabled && drainOnDisable && wasTyping && appendOnly && entry.revealedLength < fullText.length)
+    entry.enabled = enabled
+    entry.rateCap = maxRate !== undefined && Number.isFinite(maxRate) && maxRate > 0 ? maxRate : 240
+    entry.rate = Math.min(entry.rate, entry.rateCap)
 
-    const prevLen = entry.fullText.length
-
-    if (fullText.length < prevLen) {
-      // fullText 缩短: 新消息 / 重置, 从头开始
-      entry.fullText = fullText
-      entry.revealedPos = 0
-      entry.revealedLength = 0
-      entry.rate = RATE_MIN
-      // 通知 React
-      entry.listeners.forEach((l) => l())
-
-      if (!enabled) {
-        // enabled = false: 一次性显示
-        revealAll(entry)
-      } else {
-        kick(entry)
+    if (changed) {
+      const retained = retainedLength(before, entry, next)
+      const count = boundaryCount(next.ends, retained)
+      const fraction = appendOnly && retained === entry.revealedLength ? entry.revealedPos % 1 : 0
+      if (!appendOnly) {
+        stop(entry)
+        entry.rate = Math.min(RATE_MIN, entry.rateCap)
       }
-    } else if (fullText.length > prevLen) {
-      // fullText 增长
       entry.fullText = fullText
-
-      if (!enabled) {
-        // enabled = false: 一次性显示完整
-        revealAll(entry)
-      } else {
-        // enabled = true:
-        //   - 若 tick 链还活着, 自然推进 (tick 会读最新 fullText)
-        //   - 若 tick 链已退出(上游慢、打字追平后新 chunk 才到), 保持已揭示
-        //     位置原地续打只 kick —— 不能重置为 0: 慢速流式下"追平→新chunk"
-        //     反复出现, 清零会造成跳 0 再整段快速重放的回跳观感
-        if (!entry.alive) {
-          kick(entry)
-        }
-        // 不需要在这里 notify —— tick 链会持续推进并 notify
-      }
+      entry.ends = next.ends
+      entry.revealedLength = retained
+      entry.revealedPos = Math.min(next.ends.length, count + fraction)
     }
-    // fullText.length 没变: enabled 切换已由下面 effect 处理
-  }, [fullText, enabled, token, maxRate])
-
-  // 单独 effect 处理 enabled 切换 (fullText 没变时)
-  useEffect(() => {
-    const entry = getStore(token)
-
-    if (!enabled) {
-      // 关闭逐字符: 一次性显示
-      if (entry.revealedLength !== entry.fullText.length || entry.alive) {
-        revealAll(entry)
-      }
+    if (enabled || entry.draining) {
+      kick(entry)
     } else {
-      // 启用逐字符: 若 tick 链死了, kick
-      if (!entry.alive && entry.revealedLength < entry.fullText.length) {
-        kick(entry)
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled])
-
-  // 卸载时清理
-  useEffect(() => {
-    const entry = getStore(token)
-    return () => {
+      entry.revealedLength = fullText.length
+      entry.revealedPos = entry.ends.length
+      entry.rate = Math.min(RATE_MIN, entry.rateCap)
       stop(entry)
     }
-  }, [token])
+    // Hidden appends do not notify; multiple incoming commits share one RAF.
+    notifyChanged(entry, before)
+  }, [fullText, enabled, entry, next, maxRate, drainOnDisable])
 
-  // ── 这里只读, 不写 ──
-  const displayText = useSyncExternalStore(
-    (listener) => subscribe(token, listener),
-    () => getSnapshot(token),
-    getServerSnapshot
-  )
+  useEffect(() => () => stop(entry), [entry])
 
-  // isTyping 用 useSyncExternalStore 的 getServerSnapshot 思路,
-  // 但 enabled + revealedLength 比较是渲染时计算 —— 不会触发 setState
-  // 注意: 这里读 entry 是读 module-level 单例, 不在 effect 中, 所以安全。
-  // 但 SSR 时 entry 不存在, getStore 会创建。但 enabled 通常是 false 在 SSR,
-  // 且 isTyping 只是 UI 提示, SSR 渲染时不会显示, 安全。
-  const entry = getStore(token)
-  const isTyping = enabled && entry.revealedLength < entry.fullText.length
-
-  return { displayText, isTyping }
+  const appendOnly = fullText.startsWith(entry.fullText)
+  const draining = drainOnDisable && appendOnly &&
+    (entry.enabled || (entry.draining && entry.revealedLength < entry.fullText.length))
+  const visibleLength = retainedLength(displayText, entry, next)
+  const visibleText = displayText.slice(0, visibleLength)
+  const isTyping = Boolean((enabled || draining) && visibleText.length < fullText.length)
+  // History/default-disabled is complete on its first render, while the ending
+  // streaming frame keeps its queued tail. Revisions retain their safe prefix
+  // even before the effect commits, instead of flashing empty/new full text.
+  return { displayText: isTyping ? visibleText : fullText, isTyping }
 }

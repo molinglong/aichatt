@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useState } from 'react'
-import { BookOpen, Brain, Check, ChevronDown, ClipboardCheck, Dumbbell, Globe, Link2, ListTodo, Loader2, Plug, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
+import { BookOpen, Brain, Calculator, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Globe, Link2, ListTodo, Loader2, Plug, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UIMessage } from 'ai'
 import { ClarifyCard } from './ClarifyCard'
@@ -28,10 +28,18 @@ import { PROVIDER_MODEL_TOOL_NAME } from '@/lib/ai/provider-model-tool'
 import { ADD_CUSTOM_MODEL_TOOL_NAME } from '@/lib/ai/custom-model-tool'
 import { DELETE_CUSTOM_MODEL_TOOL_NAME } from '@/lib/ai/delete-custom-model-tool'
 import { MEMORY_TOOL_NAME } from '@/lib/ai/memory-tool'
-import { KNOWLEDGE_TOOL_NAME } from '@/lib/ai/knowledge-tool'
-import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME } from '@/lib/ai/practice-tool'
+import {
+  KNOWLEDGE_TOOL_NAME,
+  KNOWLEDGE_OUTLINE_TOOL_NAME,
+  type KnowledgeToolOutput,
+  type KnowledgeOutlineOutput,
+} from '@/lib/ai/knowledge-tool'
+import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME, type PracticeToolOutput } from '@/lib/ai/practice-tool'
+import { KnowledgeDetail, OutlineDetail, PracticeDetail, CalcDetail } from './ToolDetailBlocks'
 import { TODO_TOOL_NAME, type TodoToolOutput } from '@/lib/ai/todo-tool'
 import { URL_READER_TOOL_NAME, type UrlReaderOutput } from '@/lib/ai/url-reader'
+import { CALC_TOOL_NAME, type CalcOutput } from '@/lib/ai/calc-tool'
+import { TIME_TOOL_NAME, type TimeToolOutput } from '@/lib/ai/time-tool'
 import { parseMcpToolDisplay } from '@/lib/ai/mcp/mcp-constants'
 import { getSettingDef, formatSettingValue } from '@/lib/settings/registry'
 import { isRevertableSetting, revertSettingsOp } from '@/lib/settings/executor'
@@ -198,17 +206,21 @@ function ToolRow({
   text,
   streaming = false,
   failed = false,
+  details,
 }: {
   icon: React.ReactNode
   text: string
   streaming?: boolean
   failed?: boolean
+  /**
+   * 展开区(可选):提供后整行可点,点开看这次调用的具体内容。
+   * 缺省保持原一行式 —— 状态类卡片(记忆/待办/设置/验算)不提供详情,行为不变。
+   */
+  details?: React.ReactNode
 }) {
-  return (
-    <div
-      className="flex items-center gap-1.5 rounded-lg border border-line/60 bg-surface-muted px-2.5 py-1.5 text-xs"
-      title={text}
-    >
+  const [open, setOpen] = useState(false)
+  const head = (
+    <>
       <span className="flex shrink-0 items-center text-content-secondary">{icon}</span>
       <span className="min-w-0 truncate text-content-secondary">{text}</span>
       <span className="ml-auto flex shrink-0 items-center gap-1">
@@ -223,6 +235,47 @@ function ToolRow({
           <Check className="w-3 h-3 text-content-muted" />
         )}
       </span>
+    </>
+  )
+
+  if (!details) {
+    return (
+      <div
+        className="flex items-center gap-1.5 rounded-lg border border-line/60 bg-surface-muted px-2.5 py-1.5 text-xs"
+        title={text}
+      >
+        {head}
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-line/60 bg-surface-muted overflow-hidden text-xs">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-surface-subtle transition-colors"
+        title={text}
+      >
+        {head}
+        <ChevronDown className={cn('w-3 h-3 shrink-0 text-content-muted transition-transform', open ? '' : '-rotate-90')} />
+      </button>
+      {/* 展开区:内容懒挂载(默认不跑 markdown/KaTeX),高度过渡与 web_search 同款 */}
+      <div
+        className={cn(
+          'grid transition-[grid-template-rows] duration-200 ease-out',
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        )}
+      >
+        <div className="overflow-hidden">
+          {open && (
+            <div className="max-h-[340px] overflow-y-auto overscroll-contain border-t border-line/50 px-2.5 py-2">
+              {details}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -416,7 +469,12 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
   // 待办管理:一行式卡片,按操作类型展示;服务端写库,这里只展示
   if (view.tool === TODO_TOOL_NAME) {
     const input = view.input as
-      | { operation?: string; items?: Array<{ content?: string }>; match?: string }
+      | {
+          operation?: string
+          items?: Array<{ content?: string }>
+          match?: string
+          update?: { content?: string; dueAt?: string }
+        }
       | undefined
     const out = view.output as TodoToolOutput | undefined
     const failed = view.state === 'output-error' || out?.ok === false
@@ -435,6 +493,8 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
       text = `已添加待办：${out.added.map((t) => t.content).join('；')}`
     } else if (op === 'complete' && out?.completed?.length) {
       text = `已完成：${out.completed.join('；')}`
+    } else if (op === 'update' && out?.updated?.length) {
+      text = `已更新：${out.updated.join('；')}`
     } else if (op === 'delete' && out?.deleted?.length) {
       text = `已删除：${out.deleted.join('；')}`
     } else if (op === 'list' && out?.todos) {
@@ -446,11 +506,39 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
     return <ToolRow icon={<ListTodo className="w-3.5 h-3.5" />} text={text} streaming={view.state === 'input-streaming'} failed={failed} />
   }
 
-  // 课本知识库检索:一行式卡片;流式显示检索词,完成后显示命中段数(详见 ToolRow 规范)
+  // 课本目录:一行式卡片;完成后显示“几本 / 几个框题”,展开看章-节-框题树
+  if (view.tool === KNOWLEDGE_OUTLINE_TOOL_NAME) {
+    const oIn = view.input as { title?: string; subject?: string } | undefined
+    const oOut = view.output as KnowledgeOutlineOutput | undefined
+    const oDocs = oOut?.docs ?? []
+    const oTitle = oIn?.title || oDocs[0]?.title || ''
+    const oHeadings = oDocs.reduce(
+      (sum, d) => sum + (d.chapters ?? []).reduce((s, c) => s + (c.sections ?? []).reduce((n, x) => n + (x.headings?.length ?? 0), 0), 0),
+      0
+    )
+    const oFailed = view.state === 'output-error' || !!oOut?.error
+    const oText =
+      view.state === 'input-streaming'
+        ? `正在翻课本目录「${oTitle}」…`
+        : oFailed
+          ? `翻课本目录「${oTitle}」未生效`
+          : oDocs.length > 0
+            ? `翻课本目录「${oTitle}」· ${oDocs.length} 本 / ${oHeadings} 个条目`
+            : `课本目录「${oTitle}」未找到`
+    return (
+      <ToolRow
+        icon={<BookOpen className="w-3.5 h-3.5" />}
+        text={oText}
+        streaming={view.state === 'input-streaming'}
+        failed={oFailed}
+        details={!oFailed && oDocs.length > 0 ? <OutlineDetail docs={oDocs} /> : undefined}
+      />
+    )
+  }
+
+  // 课本知识库检索:一行式卡片;流式显示检索词,完成后显示命中段数,展开看每段出处与原文
   if (view.tool === KNOWLEDGE_TOOL_NAME) {
-    const kOut = view.output as
-      | { query?: string; results?: Array<{ heading?: string }>; error?: string }
-      | undefined
+    const kOut = view.output as KnowledgeToolOutput | undefined
     const kQuery = kOut?.query ?? (view.input as { query?: string } | undefined)?.query ?? ''
     const kCount = kOut?.results?.length ?? 0
     const kFailed = view.state === 'output-error' || !!kOut?.error
@@ -462,14 +550,23 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
           : kCount > 0
             ? `查课本「${kQuery}」· 命中 ${kCount} 段`
             : `查课本「${kQuery}」· 课本中未找到`
-    return <ToolRow icon={<BookOpen className="w-3.5 h-3.5" />} text={kText} streaming={view.state === 'input-streaming'} failed={kFailed} />
+    return (
+      <ToolRow
+        icon={<BookOpen className="w-3.5 h-3.5" />}
+        text={kText}
+        streaming={view.state === 'input-streaming'}
+        failed={kFailed}
+        details={!kFailed && kCount > 0 ? <KnowledgeDetail results={kOut!.results} /> : undefined}
+      />
+    )
   }
 
-  // 题库抽题:一行式卡片;流式显示抽题条件,完成后显示抽到几道;0 道时明确告知题库无匹配
+  // 题库抽题:一行式卡片;流式显示抽题条件,完成后显示抽到几道;0 道时明确告知题库无匹配。
+  // 展开只看题干(答案仅模型判分用,展示即剧透)
   if (view.tool === PRACTICE_TOOL_NAME) {
     const pIn = view.input as { topic?: string; year?: string; kind?: string } | undefined
-    const pOut = view.output as { items?: unknown[]; error?: string } | undefined
-    const pCount = pOut?.items?.length ?? 0
+    const pOut = view.output as PracticeToolOutput | undefined
+    const pItems = pOut?.items ?? []
     const pFailed = view.state === 'output-error' || !!pOut?.error
     const pBrief = [
       pIn?.year ? `${pIn.year}年` : '',
@@ -485,12 +582,20 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
         : '正在抽题…'
       : pFailed
         ? '抽题未生效'
-        : pCount > 0
+        : pItems.length > 0
           ? pBrief
-            ? `已抽 ${pCount} 道题「${pBrief}」`
-            : `已抽 ${pCount} 道题`
+            ? `已抽 ${pItems.length} 道题「${pBrief}」`
+            : `已抽 ${pItems.length} 道题`
           : '题库暂无匹配题目'
-    return <ToolRow icon={<Dumbbell className="w-3.5 h-3.5" />} text={pText} streaming={pPending} failed={pFailed} />
+    return (
+      <ToolRow
+        icon={<Dumbbell className="w-3.5 h-3.5" />}
+        text={pText}
+        streaming={pPending}
+        failed={pFailed}
+        details={!pFailed && pItems.length > 0 ? <PracticeDetail items={pItems} /> : undefined}
+      />
+    )
   }
 
   // 判分回传:一行式卡片;完成后显示登记题数与新收错题数(答错自动进错题本)
@@ -534,6 +639,65 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
           ? `读取${host ? ` ${host}` : '链接'}未生效`
           : `已读取${kindLabel} · ${host}`
     return <ToolRow icon={<Link2 className="w-3.5 h-3.5" />} text={text} streaming={pending} failed={failed} />
+  }
+
+  // 验算：一行式「表达式 = 结果」，多行结果只取最后一行（前面是中间变量）；
+  // purpose 有值时作前缀，让用户知道这步在验什么。展开看完整表达式、每一步结果与报错原文。
+  if (view.tool === CALC_TOOL_NAME) {
+    const input = view.input as { expression?: string; purpose?: string } | undefined
+    const out = view.output as CalcOutput | undefined
+    const failed = view.state === 'output-error' || !!out?.error
+    const pending = view.state === 'input-streaming' || view.state === 'input-available'
+    const expr = (out?.expression ?? input?.expression ?? '').replace(/\s*\n\s*/g, '; ').trim()
+    const purpose = out?.purpose ?? input?.purpose
+    const shortExpr = expr.length > 60 ? `${expr.slice(0, 60)}…` : expr
+    const lastLine = (out?.result ?? '').split('\n').filter(Boolean).pop() ?? ''
+    const text = pending
+      ? `正在验算${shortExpr ? ` ${shortExpr}` : '…'}`
+      : failed
+        ? `验算未生效${shortExpr ? ` · ${shortExpr}` : ''}`
+        : `${purpose ? `${purpose} · ` : ''}${shortExpr} = ${lastLine}`
+    return (
+      <ToolRow
+        icon={<Calculator className="w-3.5 h-3.5" />}
+        text={text}
+        streaming={pending}
+        failed={failed}
+        details={
+          !pending && expr ? (
+            <CalcDetail
+              expression={out?.expression ?? input?.expression ?? expr}
+              tex={out?.tex}
+              result={out?.result}
+              error={out?.error ?? view.errorText}
+              purpose={purpose}
+            />
+          ) : undefined
+        }
+      />
+    )
+  }
+
+  // 实时时间：一行式直接给结果。与验算同属无副作用的即时读取，不提供展开区。
+  if (view.tool === TIME_TOOL_NAME) {
+    const out = view.output as TimeToolOutput | undefined
+    const pending = view.state === 'input-streaming' || view.state === 'input-available'
+    const failed = view.state === 'output-error' || !!out?.error
+    const text = pending
+      ? '正在读取当前时间…'
+      : failed
+        ? '读取当前时间未生效'
+        : out?.human
+          ? `当前时间 ${out.human}`
+          : '已读取当前时间'
+    return (
+      <ToolRow
+        icon={<Clock className="w-3.5 h-3.5" />}
+        text={text}
+        streaming={pending}
+        failed={failed}
+      />
+    )
   }
 
   // 用户手动切换后交还控制权,不再自动变化。

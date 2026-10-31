@@ -350,13 +350,13 @@ export function WriteWorkPanel({ activeDoc }: WriteWorkPanelProps) {
                   aria-label="设定注入开关"
                   onClick={() => void handleToggleWorkEnabled()}
                   className={cn(
-                    'relative w-8 h-[18px] rounded-full transition-colors shrink-0',
+                    'relative w-8 h-[18px] rounded-full transition-colors duration-base ease-standard shrink-0',
                     selected.settingsEnabled ? 'bg-accent' : 'bg-surface-subtle'
                   )}
                 >
                   <span
                     className={cn(
-                      'absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white dark:bg-surface transition-transform',
+                      'absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white dark:bg-surface transition-transform duration-base ease-standard',
                       selected.settingsEnabled && 'translate-x-[14px]'
                     )}
                   />
@@ -545,13 +545,13 @@ export function WriteWorkPanel({ activeDoc }: WriteWorkPanelProps) {
                           aria-label={`${s.title} 启用开关`}
                           onClick={() => void handleToggleSetting(s)}
                           className={cn(
-                            'relative w-7 h-4 rounded-full transition-colors shrink-0',
+                            'relative w-7 h-4 rounded-full transition-colors duration-base ease-standard shrink-0',
                             s.enabled ? 'bg-accent' : 'bg-surface-subtle'
                           )}
                         >
                           <span
                             className={cn(
-                              'absolute top-[2px] left-[2px] w-3 h-3 rounded-full bg-white dark:bg-surface transition-transform',
+                              'absolute top-[2px] left-[2px] w-3 h-3 rounded-full bg-white dark:bg-surface transition-transform duration-base ease-standard',
                               s.enabled && 'translate-x-3'
                             )}
                           />

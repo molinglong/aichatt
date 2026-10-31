@@ -76,15 +76,34 @@ export default function RootLayout({
             href={`/fonts-subset/${w}/result.css`}
           />
         ))}
+        {/* 数字等宽子集: 只盖 U+30-39 共 3.5KB, 治流式输出数字宽度抖动
+            (生成配方与选型对比见 fonts-subset/digits/digits.css 头注释) */}
+        <link rel="stylesheet" href="/fonts-subset/digits/digits.css" />
         <script
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
                 // 1. 外观同步(与 src/lib/theme.ts 的 readAppearance/applyAppearance 等价)
                 try {
+                  // 样式维度(html[data-style]): 显式存 classic / google,未知值/缺省
+                  // 一律 bigsur(trial 默认新样式),与 theme.ts 的 readStoredStyle 一致。
+                  // 必须在首帧前写好,否则样式块会晚一拍闪成别的样子。
+                  var uiStyle = localStorage.getItem('uiStyle');
+                  document.documentElement.setAttribute('data-style',
+                    uiStyle === 'classic' || uiStyle === 'google' ? uiStyle : 'bigsur');
                   var pal = localStorage.getItem('palette');
                   if (pal === 'dusk') pal = 'grid';          // 废弃配色,并入格子
-                  if (pal === 'grid') {
+                  if (pal === 'wallpaper') {
+                    // 壁纸主题: 明暗走自己的子档(light/dark/system,缺省跟随系统),
+                    // 与 theme.ts 的 readStoredWallpaperScheme 一致。
+                    // data-wallpaper 是壁纸层显隐的唯一判据 —— 首帧不写会先闪一帧无壁纸。
+                    var ws = localStorage.getItem('wallpaperScheme');
+                    var wsDark = ws === 'dark'
+                      || (ws !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                    if (wsDark) document.documentElement.classList.add('dark');
+                    document.documentElement.setAttribute('data-wallpaper', 'on');
+                    pal = 'base';
+                  } else if (pal === 'grid') {
                     // 四个光态里只有「晚上」是深底: 它是格子下唯一写 .dark 的态
                     // (日出/白天/暮色都是浅底,一律不写)
                     // (下游组件靠 .dark 判明暗),深底 token 由
@@ -106,17 +125,18 @@ export default function RootLayout({
                     }
                     document.documentElement.setAttribute('data-grid-tone', tone);
                     if (tone === 'night') document.documentElement.classList.add('dark');
+                    document.documentElement.setAttribute('data-wallpaper', 'off');
                   } else {
                     var theme = localStorage.getItem('theme');
                     if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
                       document.documentElement.classList.add('dark');
                     }
-                    if (pal === 'guihua') { if (theme !== 'dark') pal = 'base'; }  // 桂花金仅深色
+                    if (pal === 'guihua') pal = 'base';                           // 桂花金已删除,存量值回落
                     else pal = 'base';                                            // 未知值回落
+                    document.documentElement.setAttribute('data-wallpaper', 'off');
                   }
                   // 配色属性必须赶在首次绘制前写好: 配色 token 与主题专属元素
-                  // (.fest-only/.fest-night/.grid-dawn/.grid-day/.grid-night/
-                  //  .grid-nightfall)的显隐全由它驱动,
+                  // (.grid-dawn/.grid-day/.grid-night/.grid-nightfall)的显隐全由它驱动,
                   // 晚一拍会看到基线配色闪一下。
                   document.documentElement.setAttribute('data-pal', pal);
                 } catch (e) {}
