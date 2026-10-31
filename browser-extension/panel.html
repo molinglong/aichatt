@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ask aichatt</title>
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+    <link rel="stylesheet" href="panel.css" />
+    <link rel="stylesheet" href="fonts/noto-serif-ul/noto-serif-ul.css" />
+  </head>
+  <body>
+    <div class="app">
+      <div class="empty-aura" aria-hidden="true">
+        <span class="scene-light"></span>
+        <div class="depth far">
+          <span class="orb orb-a"></span>
+          <span class="star t3" style="--sx: 14%; --sy: 22%; --gd: 15.2s; --gdelay: -3.1s; --tilt: -14deg"></span>
+          <span class="star t3" style="--sx: 66%; --sy: 12%; --gd: 17.4s; --gdelay: -9.4s; --tilt: 18deg"></span>
+          <span class="star t3" style="--sx: 38%; --sy: 70%; --gd: 16.1s; --gdelay: -6.2s; --tilt: -8deg"></span>
+        </div>
+        <div class="depth mid">
+          <span class="orb orb-b"></span>
+          <span class="star t2" style="--sx: 24%; --sy: 34%; --gd: 11.8s; --gdelay: -2.2s; --tilt: 12deg"></span>
+          <span class="star t2" style="--sx: 74%; --sy: 44%; --gd: 13.6s; --gdelay: -7.5s; --tilt: -16deg"></span>
+          <span class="star t2" style="--sx: 52%; --sy: 16%; --gd: 12.4s; --gdelay: -4.9s; --tilt: 6deg"></span>
+        </div>
+        <div class="depth near">
+          <span class="star t1" style="--sx: 30%; --sy: 46%; --gd: 9.2s; --gdelay: -1.4s; --tilt: 20deg"></span>
+          <span class="star t1" style="--sx: 62%; --sy: 62%; --gd: 10.6s; --gdelay: -5.8s; --tilt: -12deg"></span>
+          <span class="star t1" style="--sx: 16%; --sy: 60%; --gd: 8.4s; --gdelay: -3.6s; --tilt: 10deg"></span>
+        </div>
+        <span class="shoot shoot-a"></span>
+        <span class="shoot shoot-b"></span>
+      </div>
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-mark mark-light" src="icons/mark.png" alt="" aria-hidden="true" />
+          <img class="brand-mark mark-dark" src="icons/mark-invert.png" alt="" aria-hidden="true" />
+          <span class="brand-name">aichatt</span>
+          <span class="brand-tag">Ask</span>
+        </div>
+        <div class="topbar-actions">
+          <span class="status" title="未配置 API 令牌">
+            <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+            <span id="statusText" class="status-text">未连接</span>
+          </span>
+          <button id="historyBtn" class="icon-btn" type="button" title="历史会话" aria-label="历史会话">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3 8.5" />
+              <path d="M3 4.5v4h4" />
+              <path d="M12 7.5V12l3 1.8" />
+            </svg>
+          </button>
+          <button id="newChatBtn" class="icon-btn" type="button" title="新对话" aria-label="新对话">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+          <button id="settingsBtn" class="icon-btn" type="button" title="设置" aria-label="设置">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.98 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.62 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.98a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.62a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.09A1.7 1.7 0 0 0 20.96 10H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="setupBanner" class="setup-banner" hidden>
+        <div class="setup-copy">
+          <strong>还没登录</strong>
+          <p>用 aichatt 账号密码登录，截图问答会直接进你的会话。</p>
+        </div>
+        <button id="setupBtn" class="mini-btn" type="button">去登录</button>
+      </div>
+
+      <section id="sessionDock" class="session-dock">
+        <div id="contextBar" class="context-bar" hidden>
+          <span class="session-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <path d="m10 9 5 3-5 3V9Z" />
+            </svg>
+          </span>
+          <span id="contextText" class="context-text">当前页面</span>
+          <button id="summarizeBtn" class="link-btn" type="button" hidden>总结视频</button>
+          <button id="resumeBtn" class="link-btn" type="button" hidden>继续播放</button>
+        </div>
+
+        <div id="syncBar" class="sync-bar" hidden>
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span id="syncText" class="sync-text">已同步到 aichatt</span>
+          <button id="openConversationBtn" class="link-btn" type="button">打开</button>
+        </div>
+      </section>
+
+      <main id="chat" class="chat">
+        <section id="emptyState" class="empty-state">
+          <div class="empty-wordmark">
+            <img class="mark-light" src="icons/wordmark.png" alt="" aria-hidden="true" />
+            <img class="mark-dark" src="icons/wordmark-invert.png" alt="" aria-hidden="true" />
+          </div>
+          <h1>陪你跨越星海，探索一切未知</h1>
+        </section>
+        <div id="messages" class="messages"></div>
+      </main>
+
+      <div class="composer-wrap">
+        <div id="promptRow" class="prompt-row" hidden>
+          <button class="prompt-chip" type="button" data-prompt="这道题怎么做？">这题怎么做</button>
+          <button class="prompt-chip" type="button" data-prompt="帮我解释一下这个画面里的概念。">解释一下</button>
+          <button class="prompt-chip" type="button" data-prompt="总结一下这个画面的要点。">总结画面</button>
+        </div>
+
+        <div id="attachmentBar" class="attachment-bar" hidden>
+          <button id="attachmentThumbBtn" class="attachment-thumb" type="button" title="查看截图">
+            <img id="attachmentThumb" alt="截图预览" />
+          </button>
+          <div class="attachment-meta">
+            <strong id="attachmentTitle">截图</strong>
+            <span id="attachmentSub">拖拽框选 · 12:34</span>
+          </div>
+          <button id="removeAttachmentBtn" class="icon-btn small" type="button" title="移除截图" aria-label="移除截图">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="composer-stack">
+          <div id="shortcutPanel" class="shortcut-panel" hidden>
+            <div class="shortcut-head">
+              <span id="shortcutSigil" class="shortcut-sigil" aria-hidden="true">/</span>
+              <div class="shortcut-title">
+                <strong>快捷入口</strong>
+                <span id="shortcutPriority" class="shortcut-priority">操作优先</span>
+              </div>
+              <span class="shortcut-keys" aria-label="方向键选择，回车确认">
+                <kbd>↑</kbd><kbd>↓</kbd><span>选择</span><span aria-hidden="true">·</span><kbd>Enter</kbd><span>确认</span>
+              </span>
+              <button id="closeShortcutBtn" class="shortcut-icon-btn" type="button" title="关闭" aria-label="关闭快捷面板">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <label class="shortcut-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="11" cy="11" r="6.5" />
+                <path d="m16 16 4 4" />
+              </svg>
+              <input
+                id="shortcutSearchInput"
+                type="text"
+                inputmode="search"
+                placeholder="搜索操作或聊天记录"
+                aria-label="搜索快捷操作与聊天记录"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="clearShortcutSearchBtn" class="shortcut-clear" type="button" title="清空搜索" aria-label="清空搜索" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+            </label>
+            <div id="shortcutList" class="shortcut-list" role="tree" aria-label="快捷操作与历史会话"></div>
+            <div id="shortcutStatus" class="shortcut-status" role="status" aria-live="polite" hidden></div>
+          </div>
+
+          <div id="referenceBar" class="reference-bar" aria-label="待发送会话引用" hidden></div>
+
+          <div class="composer-suggest">
+            <button id="emptyFrameBtn" class="suggest-pill" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M8 4v16M16 4v16M3 9h5M16 9h5M3 15h5M16 15h5" />
+              </svg>
+              截当前画面
+            </button>
+            <button id="emptyRegionBtn" class="suggest-pill" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+                <rect x="8" y="8" width="8" height="8" rx="1" />
+              </svg>
+              框选一块
+            </button>
+          </div>
+
+          <div id="composer" class="composer composer-command">
+          <textarea
+            id="input"
+            rows="1"
+            placeholder="问截图里的题，或输入…"
+            spellcheck="false"
+          ></textarea>
+
+          <div class="composer-toolbar">
+            <div class="composer-more">
+              <button id="moreBtn" class="composer-more-btn" type="button" title="更多" aria-label="更多" aria-expanded="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                  <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                  <circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                </svg>
+              </button>
+
+              <div id="moreMenu" class="command-menu composer-more-menu" hidden>
+                <button id="moreFrameBtn" class="command-menu-item" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <path d="M8 4v16M16 4v16M3 9h5M16 9h5M3 15h5M16 15h5" />
+                  </svg>
+                  截当前画面
+                  <span>整帧</span>
+                </button>
+                <button id="moreRegionBtn" class="command-menu-item" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+                    <rect x="8" y="8" width="8" height="8" rx="1" />
+                  </svg>
+                  框选一块
+                  <span>拖拽</span>
+                </button>
+                <div class="command-menu-sep"></div>
+                <button id="moreDeepBtn" class="command-menu-item" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 3a6 6 0 0 0-6 6c0 2.2 1.2 3.6 2.4 4.8.8.8 1.6 1.6 1.6 2.7V18h4v-1.5c0-1.1.8-1.9 1.6-2.7C16.8 12.6 18 11.2 18 9a6 6 0 0 0-6-6Z" />
+                    <path d="M9.5 21h5" />
+                  </svg>
+                  深度思考
+                  <span id="moreDeepState">开</span>
+                </button>
+                <button id="moreSearchBtn" class="command-menu-item" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.6-3.6" />
+                  </svg>
+                  联网搜索
+                  <span id="moreSearchState">开</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="composer-actions">
+              <button id="sendBtn" class="send-btn" type="button" disabled title="发送" aria-label="发送">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        </div>
+
+        <div id="composerHint" class="composer-hint" hidden>
+          <span id="composerStatus" class="composer-status" hidden></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="contextMenu" class="context-menu" role="menu" aria-label="回答操作" hidden></div>
+
+    <div id="selectionBar" class="selection-bar" role="toolbar" aria-label="选中文字操作" hidden></div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+    <div id="historySheet" class="sheet-backdrop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <header class="sheet-head">
+          <div>
+            <h2 id="historyTitle">历史会话</h2>
+            <p>与 aichatt 网页端同一份记录</p>
+          </div>
+          <button id="closeHistoryBtn" class="icon-btn" type="button" title="关闭" aria-label="关闭">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </header>
+        <div class="sheet-body history-body">
+          <input
+            id="historySearch"
+            class="history-search"
+            type="search"
+            placeholder="搜索标题或消息内容"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div id="historyStatus" class="history-status" hidden></div>
+          <div id="historyList" class="history-list"></div>
+          <div id="historyEmpty" class="history-empty" hidden>
+            <strong>还没有历史会话</strong>
+            <span>在网页或这里聊过的会话都会出现</span>
+          </div>
+          <button id="historyMoreBtn" class="ghost-btn history-more" type="button" hidden>
+            加载更多
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div id="settingsSheet" class="sheet-backdrop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <header class="sheet-head">
+          <div>
+            <h2 id="settingsTitle">设置</h2>
+            <p>连接你自己的 aichatt</p>
+          </div>
+          <button id="closeSettingsBtn" class="icon-btn" type="button" title="关闭" aria-label="关闭">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </header>
+
+        <div class="sheet-body">
+          <p class="section-label">连接</p>
+
+          <div id="accountBox" class="account-card" hidden>
+            <span id="accountAvatar" class="account-avatar" aria-hidden="true">A</span>
+            <div class="account-info">
+              <strong id="accountName">已登录</strong>
+              <span id="accountEmail"></span>
+            </div>
+            <button id="logoutBtn" class="ghost-btn" type="button">退出</button>
+          </div>
+
+          <form id="loginForm" class="login-form">
+            <label class="field">
+              <span class="field-label">邮箱或用户名</span>
+              <input
+                id="loginIdentifier"
+                type="text"
+                autocomplete="username"
+                placeholder="you@example.com 或用户名"
+                spellcheck="false"
+              />
+            </label>
+            <label class="field">
+              <span class="field-label">密码</span>
+              <div class="input-row">
+                <input
+                  id="loginPassword"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="账户主密码"
+                />
+                <button id="toggleLoginPasswordBtn" class="ghost-btn" type="button">显示</button>
+              </div>
+              <span class="field-help">用 aichatt 账户主密码登录。扩展会为这台浏览器生成一枚专属令牌，可在 aichatt「设置 → API 令牌」撤销。</span>
+            </label>
+            <button id="loginBtn" class="primary-btn login-submit" type="submit">登录</button>
+            <div class="login-alt">
+              <button id="useTokenLink" class="link-btn" type="button">改用 API 令牌</button>
+              <span class="login-sep" aria-hidden="true">·</span>
+              <button id="registerLink" class="link-btn" type="button">注册账号</button>
+            </div>
+          </form>
+
+          <div id="tokenField" class="token-field" hidden>
+            <label class="field">
+              <span class="field-label">API 令牌</span>
+              <div class="input-row">
+                <input id="tokenInput" type="password" placeholder="sk-..." autocomplete="off" />
+                <button id="toggleTokenBtn" class="ghost-btn" type="button">显示</button>
+              </div>
+              <span class="field-help">aichatt → 设置 → API 令牌 → 新建，复制 sk- 开头的一串。令牌可随时撤销。</span>
+            </label>
+            <div class="login-alt">
+              <button id="useAccountLink" class="link-btn" type="button">改用账号密码</button>
+            </div>
+          </div>
+
+          <p class="section-label">截图</p>
+          <div class="switch-list">
+            <label class="switch-row">
+              <span>
+                <strong>截图时自动暂停</strong>
+                <small>冻结画面，避免运动模糊</small>
+              </span>
+              <input id="autoPauseInput" type="checkbox" />
+            </label>
+            <label class="switch-row">
+              <span>
+                <strong>截图时隐藏弹幕</strong>
+                <small>只隐藏 B 站弹幕，字幕保留</small>
+              </span>
+              <input id="hideDanmakuInput" type="checkbox" />
+            </label>
+          </div>
+
+          <p class="section-label">划词</p>
+          <div class="switch-list">
+            <label class="switch-row">
+              <span>
+                <strong>全站划词工具条</strong>
+                <small>选中文字后浮出搜索/追问等按钮；默认关闭</small>
+              </span>
+              <input id="selectionToolbarInput" type="checkbox" />
+            </label>
+          </div>
+
+          <p class="section-label">回答</p>
+          <div class="switch-list">
+            <label class="switch-row">
+              <span>
+                <strong>深度思考</strong>
+                <small>先推理再回答，复杂题更稳但更慢</small>
+              </span>
+              <input id="deepThinkInput" type="checkbox" />
+            </label>
+            <label class="switch-row">
+              <span>
+                <strong>联网搜索</strong>
+                <small>回答前先搜实时资料</small>
+              </span>
+              <input id="webSearchInput" type="checkbox" />
+            </label>
+            <div id="searchEngineRow" class="switch-row engine-row">
+              <span>
+                <strong>搜索引擎</strong>
+                <small>需在网页端配置对应搜索 Key</small>
+              </span>
+              <select id="searchEngineInput" class="inline-select" aria-label="联网搜索引擎">
+                <option value="qianfan">千帆</option>
+                <option value="tavily">Tavily</option>
+                <option value="deepseek">DeepSeek</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="settingsStatus" class="settings-status" hidden></div>
+          <p class="sheet-note">连接 chat.yuban.icu · 登录令牌只存在这台电脑的浏览器里。</p>
+        </div>
+
+        <footer class="sheet-foot">
+          <button id="testBtn" class="ghost-btn" type="button">测试连接</button>
+          <button id="saveBtn" class="primary-btn" type="button">保存</button>
+        </footer>
+      </section>
+    </div>
+
+    <div id="lightbox" class="lightbox" hidden>
+      <img id="lightboxImg" alt="截图大图" />
+    </div>
+
+    <script src="vendor/katex/katex.min.js"></script>
+    <script src="vendor/katex/auto-render.min.js"></script>
+    <script src="panel.js"></script>
+  </body>
+</html>
