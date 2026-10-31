@@ -45,7 +45,6 @@ export interface SettingsOpResult {
 /** 单条 op 的执行器：与 SettingsModal 手动操作的写法保持一致 */
 const APPLY: Partial<Record<SettingKey, (value: string) => void | Promise<void>>> = {
   // 只改「明暗」这一维(配色与格子不在 AI 白名单内)。
-  // 月白·桂花金仅深色: 若当前配色是桂花金而 AI 把它设成浅色,setThemeMode 会连带回落黑白基线
   theme: (value) => {
     setThemeMode(value as ThemeMode)
   },

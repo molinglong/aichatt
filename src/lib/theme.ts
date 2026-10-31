@@ -1,15 +1,20 @@
 /**
  * 主题体系单点控制 —— 外观是**一维**的: 选设置里的「主题」等于选一件事。
- *   light / dark / system → 黑白基线(可再叠加「月白·桂花金」配色)
+ *   light / dark / system → 黑白基线
  *   grid                  → 格子,自带光态: 白天(正午) / 暮色(日落) / 晚上(深夜)
- * 设置面板随之分两排: 上面那排是主题(四选一),下面那排按主题切换内容 ——
- * 非格子时选配色(黑白基线 / 月白·桂花金),格子时选白天 / 暮色 / 晚上。
+ *   wallpaper             → 壁纸(用户自拍的那张云),明暗另配(浅色/深色/跟随系统)
+ * 设置面板随之分两排: 上面那排是主题(五选一),下面那排按主题切换内容 ——
+ * 非格子非壁纸时选配色(黑白基线),格子时选白天/暮色/晚上,壁纸时选明暗。
+ * 「月白·桂花金」配色已于 2026-10-25 删除,存量存储值一律回落黑白基线。
  *
- * CSS 侧由三个属性驱动(样式层不必知道这套一维模型):
- *   html.dark              → 明暗(格子下 = gridTone === 'night',是它唯一会写 .dark 的光态)
- *   html[data-pal]         → base | guihua | grid
+ * CSS 侧由四个属性驱动(样式层不必知道这套一维模型):
+ *   html.dark              → 明暗(格子下 = gridTone === 'night',壁纸下 = wallpaperScheme)
+ *   html[data-pal]         → base | grid | wallpaper
  *   html[data-grid-tone]   → dawn | day | dusk | night(仅格子写,区分四个光态)
+ *   html[data-style]       → classic | bigsur(形状/材质维度,与明暗配色正交,见 UiStyle)
+ *   html[data-wallpaper]   → on | off(壁纸层显隐唯一判据,纯 CSS 驱动)
  * 格子的光态由 gridTone 决定,且不覆盖用户的明暗偏好 —— 退出格子时原样恢复。
+ * 壁纸同理: 明暗记在 wallpaperScheme,不动 theme 键。
  *
  * 三个写入方共用本模块,行为必须一致:
  *   1) src/app/layout.tsx 首帧内联脚本(不能 import,逻辑等价照抄,防首帧闪白)
@@ -20,10 +25,11 @@
  */
 
 export type ThemeMode = 'light' | 'dark' | 'system'
-/** 写进 html[data-pal] 的取值 */
-export type PaletteId = 'base' | 'guihua' | 'grid'
-/** 能出现在「配色」选择器里的 —— 格子不算配色,它是主题 */
-export type SelectablePalette = Exclude<PaletteId, 'grid'>
+/** 写进 html[data-pal] 的取值(「月白·桂花金」已删除,存量值在读取时回落 base)。
+ *  wallpaper 与 grid 同类: 它只用来记住「当前主题是壁纸」这一个事实 */
+export type PaletteId = 'base' | 'grid' | 'wallpaper'
+/** 能出现在「配色」选择器里的 —— 格子/壁纸不算配色,它们是主题 */
+export type SelectablePalette = Exclude<PaletteId, 'grid' | 'wallpaper'>
 /** 格子的四个光态(一扇窗的一天,按时间序):
  *  日出(右上低角·冷暖对峙·浅底) / 白天(正午顶光·浅底) /
  *  暮色(日落暖橙·浅底) / 晚上(深夜冷蓝·深底) */
@@ -33,23 +39,59 @@ export type GridTone = 'dawn' | 'day' | 'dusk' | 'night'
  *  故 CSS 侧(globals.css 的四个门控块)完全不需要知道"智能"存在 */
 export type GridTonePref = GridTone | 'auto'
 /** 「主题」选择器里被选中的那一项 */
-export type ThemeChoice = ThemeMode | 'grid'
+export type ThemeChoice = ThemeMode | 'grid' | 'wallpaper'
+/** 壁纸的明暗子档: 壁纸主题下「下面那排」选的就是这个,不动用户的 theme 偏好 */
+export type WallpaperScheme = ThemeMode
+
+/**
+ * UI 样式维度(第二维,与明暗/配色正交): 管**形状与材质**,不管颜色。
+ *   classic = 现行基线(玻璃只给浮层)
+ *   bigsur  = Big Sur 玻璃(玻璃扩到侧栏/顶栏/输入岛,双层软阴影 + 双环描边,
+ *             黑白基线强调色换系统蓝)。参数定稿自 GitHub 参考
+ *             (PuruVJ/macos-web 窗口阴影/描边、tauri-apps/window-vibrancy),
+ *             预览见 public/preview-ui-style.html。
+ *   google  = Google 2020(Gmail 侧栏 + Google Chat 会话):浅灰蓝侧栏、白底内容、
+ *             8px 卡片、#1A73E8 主色、顶栏搜索框;移动端固定顶栏 + M2 底部导航。
+ *             预览见 public/preview-material3.html(文件名沿用旧版,内容是 Google 2020)。
+ * 缺省(无存储值)取 bigsur —— trial 验收默认即新样式;想回旧观感选 classic。
+ */
+export type UiStyle = 'classic' | 'bigsur' | 'google'
 
 export const THEME_STORAGE_KEY = 'theme'
 export const PALETTE_STORAGE_KEY = 'palette'
 export const GRID_TONE_STORAGE_KEY = 'gridTone'
+export const UI_STYLE_STORAGE_KEY = 'uiStyle'
+export const WALLPAPER_SCHEME_STORAGE_KEY = 'wallpaperScheme'
 
-/** 月白·桂花金: 仅深色 */
-export const FEST_PALETTE = 'guihua' as const
+/** 设置面板「样式」一排。
+ *  2026-10-31 用户指令:暂时只保留 Big Sur 玻璃,经典 / Google 2020 从选择入口隐藏 ——
+ *  类型、CSS 渲染分支、首帧脚本全部保留,恢复时把下面两行注释解开即可。
+ *  已选经典/Google 的浏览器存量偏好不受影响(仍按旧值渲染,只是设置里不再出现选项)。 */
+export const UI_STYLES: { value: UiStyle; label: string }[] = [
+  // { value: 'classic', label: '经典' },
+  { value: 'bigsur', label: 'Big Sur 玻璃' },
+  // { value: 'google', label: 'Google 2020' },
+]
+
 /** 格子: 日出 / 白天 / 暮色 / 晚上 */
 export const GRID_PALETTE = 'grid' as const
+/** 壁纸: 只用来记住「当前主题是壁纸」(与 GRID_PALETTE 同一套路) */
+export const WALLPAPER_PALETTE = 'wallpaper' as const
 
-/** 上面那排: 主题(明暗三态 + 格子) */
+/** 上面那排: 主题(明暗三态 + 格子 + 壁纸) */
 export const THEME_CHOICES: { value: ThemeChoice; label: string }[] = [
   { value: 'light', label: '浅色' },
   { value: 'dark', label: '深色' },
   { value: 'system', label: '跟随系统' },
   { value: 'grid', label: '格子' },
+  { value: 'wallpaper', label: '壁纸' },
+]
+
+/** 下面那排(主题 = 壁纸时): 壁纸的明暗。默认跟随系统 */
+export const WALLPAPER_SCHEMES: { value: WallpaperScheme; label: string }[] = [
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+  { value: 'system', label: '跟随系统' },
 ]
 
 /** 下面那排(主题 = 格子时): 格子的光态,按一天的时间序排 —— 一扇窗的四个时刻 */
@@ -78,7 +120,7 @@ export function resolveAutoTone(now: Date = new Date()): GridTone {
   return 'night'
 }
 
-/** 下面那排(主题 ≠ 格子时): 配色 */
+/** 下面那排(主题 ≠ 格子时): 配色。桂金删除后只剩黑白基线一项 */
 export const PALETTES: {
   value: SelectablePalette
   label: string
@@ -86,7 +128,6 @@ export const PALETTES: {
   swatch: string
 }[] = [
   { value: 'base', label: '黑白基线', hint: '中性灰', swatch: 'rgb(63 63 70)' },
-  { value: 'guihua', label: '月白·桂花金', hint: '仅深色', swatch: 'rgb(205 158 62)' },
 ]
 
 /** 外观的完整状态,与设置面板的三个 state 一一对应 */
@@ -98,6 +139,10 @@ export interface Appearance {
   gridTone: GridTone
   /** choice 是格子时生效: 光态是否交给时间自动决定(存 'auto',见 GridTonePref) */
   gridToneAuto: boolean
+  /** 样式维度。可缺省: 老调用点(不关心样式)不传时,applyAppearance 沿用当前存储值 */
+  style?: UiStyle
+  /** choice 是壁纸时生效: 壁纸的明暗子档。缺省时沿用存储值(默认 system) */
+  wallpaperScheme?: WallpaperScheme
 }
 
 /** 明暗模式的最终判据: system 跟随系统偏好 */
@@ -108,14 +153,13 @@ export function resolveDark(mode: ThemeMode): boolean {
 }
 
 /**
- * 合法化:
- *   1) 格子接管明暗,「配色」这一栏对它没有意义 → 回落黑白基线
- *   2) 月白·桂花金只在「明暗 = 深色」下可用,落在浅色/跟随系统时 → 回落黑白基线
- * (跟随系统不参与 2 的判断: 系统偏好随时可能翻转,而配色是选中那一刻定下的)
+ * 合法化: 格子接管明暗,「配色」这一栏对它没有意义 → 回落黑白基线
+ * (「月白·桂花金」已删除,存量 palette 值在 readAppearance 读取时即已回落)
+ * 壁纸同理: 它的「下面那排」是明暗,不是配色
  */
 export function normalizeAppearance(next: Appearance): Appearance {
   if (next.choice === 'grid') return { ...next, palette: 'base' }
-  if (next.palette === FEST_PALETTE && next.choice !== 'dark') return { ...next, palette: 'base' }
+  if (next.choice === 'wallpaper') return { ...next, palette: 'base' }
   return next
 }
 
@@ -130,10 +174,22 @@ function readStoredThemeMode(): ThemeMode {
   return v === 'light' || v === 'dark' ? v : 'system'
 }
 
+/** 样式维度: 显式存 classic / google,未知值一律回落 bigsur(trial 默认即新样式) */
+export function readStoredStyle(): UiStyle {
+  const v = localStorage.getItem(UI_STYLE_STORAGE_KEY)
+  return v === 'classic' || v === 'google' ? v : 'bigsur'
+}
+
+/** 壁纸的明暗子档: 未知值/缺省一律跟随系统 */
+export function readStoredWallpaperScheme(): WallpaperScheme {
+  const v = localStorage.getItem(WALLPAPER_SCHEME_STORAGE_KEY)
+  return v === 'light' || v === 'dark' ? v : 'system'
+}
+
 /** 读出当前外观 —— 选择器三个 state 的初值 */
 export function readAppearance(): Appearance {
   if (typeof window === 'undefined') {
-    return { choice: 'system', palette: 'base', gridTone: 'day', gridToneAuto: false }
+    return { choice: 'system', palette: 'base', gridTone: 'day', gridToneAuto: false, style: 'bigsur' }
   }
 
   // 未知值一律回落白天(存量只可能是 day/dusk;'night'/'dawn'/'auto' 是后续新增值)。
@@ -148,29 +204,41 @@ export function readAppearance(): Appearance {
   const v = localStorage.getItem(PALETTE_STORAGE_KEY)
   // 'dusk' 是废弃的暮色·落霞配色,已并入格子
   if (v === GRID_PALETTE || v === 'dusk') {
-    return { choice: 'grid', palette: 'base', gridTone, gridToneAuto }
+    return { choice: 'grid', palette: 'base', gridTone, gridToneAuto, style: readStoredStyle() }
+  }
+  // 壁纸与格子同一套路: palette 键里存的是「当前主题是壁纸」这个事实
+  if (v === WALLPAPER_PALETTE) {
+    return {
+      choice: 'wallpaper',
+      palette: 'base',
+      gridTone,
+      gridToneAuto,
+      style: readStoredStyle(),
+      wallpaperScheme: readStoredWallpaperScheme(),
+    }
   }
 
   const choice = readStoredThemeMode()
-  // 存量数据里可能有"桂花金 + 浅色"这种非法组合(白天-桂花金已撤销),这里一并纠正
-  const palette: SelectablePalette = v === FEST_PALETTE && choice === 'dark' ? FEST_PALETTE : 'base'
-  return { choice, palette, gridTone, gridToneAuto }
+  // 「月白·桂花金」配色已删除: 存量值('guihua')与未知值一律回落黑白基线
+  const palette: SelectablePalette = 'base'
+  return { choice, palette, gridTone, gridToneAuto, style: readStoredStyle() }
 }
 
 /** 外观唯一写入路径: localStorage + <html> 的 class/attr(CSS 全部由它们驱动) */
 export function applyAppearance(input: Appearance): void {
   const next = normalizeAppearance(input)
   const isGrid = next.choice === 'grid'
+  const isWallpaper = next.choice === 'wallpaper'
   const root = document.documentElement
   // 智能模式下光态以"此刻"为准: 不信任外部传进来的 gridTone,
   // 免得定时器或一份过期的 state 把一个已经过时的光态写进去
   const tone: GridTone = next.gridToneAuto ? resolveAutoTone() : next.gridTone
 
-  // 格子下不写 theme 键 —— 用户原先的明暗偏好留着,退出格子时原样恢复
+  // 格子/壁纸下不写 theme 键 —— 用户原先的明暗偏好留着,退出时原样恢复
   if (isGrid) {
     const pref: GridTonePref = next.gridToneAuto ? 'auto' : tone
     localStorage.setItem(GRID_TONE_STORAGE_KEY, pref)
-  } else persistThemeMode(next.choice as ThemeMode)
+  } else if (!isWallpaper) persistThemeMode(next.choice as ThemeMode)
 
   if (isGrid) {
     // 四个光态里只有「晚上」是深底 —— 它是格子下唯一会写 .dark 的态
@@ -183,12 +251,23 @@ export function applyAppearance(input: Appearance): void {
     root.classList.toggle('dark', tone === 'night')
   } else {
     root.removeAttribute('data-grid-tone')
-    root.classList.toggle('dark', resolveDark(next.choice as ThemeMode))
+    // 壁纸: 明暗走自己的子档(不动 theme 键),与格子同理
+    const scheme: WallpaperScheme = next.wallpaperScheme ?? readStoredWallpaperScheme()
+    if (isWallpaper) localStorage.setItem(WALLPAPER_SCHEME_STORAGE_KEY, scheme)
+    root.classList.toggle('dark', resolveDark(isWallpaper ? scheme : (next.choice as ThemeMode)))
   }
 
-  const palette: PaletteId = isGrid ? GRID_PALETTE : next.palette
+  // 壁纸层显隐的唯一判据(纯 CSS 驱动,首帧脚本写同一个值)
+  root.setAttribute('data-wallpaper', isWallpaper ? 'on' : 'off')
+
+  const palette: PaletteId = isGrid ? GRID_PALETTE : isWallpaper ? WALLPAPER_PALETTE : next.palette
   localStorage.setItem(PALETTE_STORAGE_KEY, palette)
   root.setAttribute('data-pal', palette)
+
+  // 样式维度: 调用点没带 style(老入口)时沿用当前存储值,不做任何"纠正"
+  const style: UiStyle = next.style ?? readStoredStyle()
+  localStorage.setItem(UI_STYLE_STORAGE_KEY, style)
+  root.setAttribute('data-style', style)
 }
 
 /**

@@ -3,6 +3,34 @@ import { fetchJson } from '@/lib/query/fetcher'
 import type { ModelDefinition } from '@/lib/ai/types'
 
 /**
+ * ── 已配置 Key 的 provider 名单(仅标识,零密钥信息) ────────
+ * 用它回答「哪些服务商的模型真的能跑」。不用 /api/keys:后者返回掩码密钥,
+ * 临时聊天模式下被 middleware 整体 403(见 app/api/providers/keys-status)。
+ */
+export const providerKeysStatusQuery = {
+  queryKey: [...queryKeys.providers(), 'keys-status'] as const,
+  queryFn: async (): Promise<Set<string>> => {
+    const rows = await fetchJson<Array<{ provider?: string }>>('/api/providers/keys-status')
+    return new Set(
+      (Array.isArray(rows) ? rows : []).map((r) => r.provider ?? '').filter(Boolean)
+    )
+  },
+  staleTime: STALE.providers,
+}
+
+/**
+ * 模型「开箱可用」判定 —— 与 ModelSelector 的下拉口径一致:
+ * 已配置 Key 的 provider / 自定义模型 / 公共池门面(服务端出钱,全员可见)。
+ */
+export const isModelAvailable = (
+  model: Pick<ModelDefinition, 'provider' | 'publicPool'>,
+  configuredProviders: Set<string>
+) =>
+  model.provider === 'custom' ||
+  model.publicPool === true ||
+  configuredProviders.has(model.provider)
+
+/**
  * ── /api/providers 模型列表的唯一 queryFn ─────────────────
  * 历史上 TopBar 预热(prefetchTab)、/chat、/study、/write、/chat/c/[id]
  * 各自手写映射,字段清单漂移 —— publicPool 透传缺失导致「标准」模型的

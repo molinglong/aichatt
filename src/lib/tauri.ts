@@ -106,6 +106,41 @@ async function androidInvoke<T = unknown>(
   return tauriInvoke<T>(cmd, args)
 }
 
+/**
+ * 安卓壳:生成期间启动前台服务(通知栏常驻「正在生成」)。
+ *
+ * 目的不只是提示:服务运行期间 WryActivity 不暂停 WebView,切后台后 JS/SSE
+ * 继续跑,完成那一刻前端才能调系统通知。返回是否成功启动(失败时沿用旧路径)。
+ */
+export async function startGenerationNotification(): Promise<boolean> {
+  if (!isAndroidTauriShell()) return false
+  try {
+    // 前台服务通知与完成通知共用 Android 13+ 的通知权限。
+    // 必须在用户还看得见页面时请求;切后台后系统不会展示权限框。
+    const { isPermissionGranted, requestPermission } = await import('@tauri-apps/plugin-notification')
+    if (!(await isPermissionGranted())) await requestPermission()
+  } catch {
+    // 权限请求失败不阻塞:服务仍可启动,只是通知不可见
+  }
+  try {
+    await androidInvoke('generation_notification_start')
+    return true
+  } catch (err) {
+    console.error('[tauri] startGenerationNotification failed:', err)
+    return false
+  }
+}
+
+/** 安卓壳:停止生成前台服务,移除常驻通知。非安卓 no-op。 */
+export async function stopGenerationNotification(): Promise<void> {
+  if (!isAndroidTauriShell()) return
+  try {
+    await androidInvoke('generation_notification_stop')
+  } catch (err) {
+    console.error('[tauri] stopGenerationNotification failed:', err)
+  }
+}
+
 /** 安卓壳事件监听:非安卓环境返回空清理函数,监听失败静默降级 */
 function listenAndroidEvent(event: string, handler: (payload: unknown) => void): () => void {
   if (!isAndroidTauriShell()) return () => {}
@@ -168,21 +203,6 @@ export function setUpdateIgnoredVersion(version: string | null) {
 
 /** 回复完成通知开关 localStorage key('0'=关,缺省开) */
 const NOTIFY_ON_REPLY_KEY = 'chat:notifyOnReply'
-
-/**
- * 预约提醒的固定通知 id。
- * 插件的 cancel 是按 requestCode(= 通知 id)精确撤 AlarmManager 的闹钟,
- * 所以必须自持一个不会变的 id,而不是从 pending() 里捞 —— 捞出来的列表里
- * 混着别的通知,一刀切会误伤。
- */
-const REPLY_REMINDER_ID = 47001
-
-/**
- * 提醒文案。刻意不说「回复已完成」:闹钟响的那一刻我们并不知道结果 ——
- * 人一走 JS 就冻住,生成多半还停在半路。只催「回来看看」,两种情况都不撒谎。
- */
-const REPLY_REMINDER_TITLE = 'aichatt · 回复提醒'
-const REPLY_REMINDER_BODY = '刚发出的回复这会儿该有结果了,回来看一眼'
 
 /** 通知正文摘要:多行 Markdown 压平成一行,超出 80 字截断 */
 function squashForNotification(text: string): string {
@@ -326,63 +346,6 @@ export const tauri = {
   },
 
   /**
-   * 预约一条「回来看回复」的系统通知(仅安卓壳)。
-   *
-   * 为什么必须预约而不是生成完再发:壳切后台时 WryActivity.onPause() 会同时调
-   * Rust.pause() 和 mWebView.onPause(),后者按 Android 文档会暂停 JS 执行 ——
-   * 也就是说人一走,前端既收不到流、也发不出通知,任何「完成时通知」的想法都落空。
-   * 唯一还能在后台工作的东西是预约给系统的 AlarmManager 定时通知:
-   * 发信那一刻(JS 必然还活着)先把闹钟挂上,人在前台看到完成就取消。
-   *
-   * 代价(定案时已认):时长是估的。到点时回复可能还在生成、也可能早写完了,
-   * 所以文案只催「回来看」,不声称「已完成」。
-   */
-  async armReplyReminder() {
-    if (!isAndroidTauriShell()) return
-    if (!getNotifyOnReply()) return
-    const delaySec = getReplyReminderDelaySec()
-    if (delaySec <= 0) return
-    try {
-      const { isPermissionGranted, requestPermission, sendNotification, Schedule } =
-        await import('@tauri-apps/plugin-notification')
-      let granted = await isPermissionGranted()
-      if (!granted) {
-        const permission = await requestPermission()
-        granted = permission === 'granted'
-      }
-      if (!granted) return
-      // id 固定:cancel 只认 requestCode == 这个 id 的闹钟,同时保证连发多次
-      // 是同一条闹钟(FLAG_CANCEL_CURRENT 覆盖),不会攒出一串提醒。
-      sendNotification({
-        id: REPLY_REMINDER_ID,
-        title: REPLY_REMINDER_TITLE,
-        body: REPLY_REMINDER_BODY,
-        // repeating=false;allowWhileIdle=true → 走 setAndAllowWhileIdle。
-        // 壳没申请 SCHEDULE_EXACT_ALARM(Android 13+ 新装默认拒绝),
-        // 精确闹钟那条路 canScheduleExactAlarms()=false,只能靠这个档。
-        schedule: Schedule.at(new Date(Date.now() + delaySec * 1000), false, true),
-      })
-    } catch (err) {
-      console.error('[tauri] armReplyReminder failed:', err)
-    }
-  },
-
-  /**
-   * 取消预约的那条提醒。人在前台、回复已经落在屏幕上时它就没意义了。
-   * 插件的 cancel(id) = 撤闹钟 + 撤已显示的通知 + 删存储三件事一起做,
-   * 所以闹钟已经抢在回来之前响过的情况下,这一调用会把通知一并收掉。
-   */
-  async cancelReplyReminder() {
-    if (!isAndroidTauriShell()) return
-    try {
-      const { cancel } = await import('@tauri-apps/plugin-notification')
-      await cancel([REPLY_REMINDER_ID])
-    } catch (err) {
-      console.error('[tauri] cancelReplyReminder failed:', err)
-    }
-  },
-
-  /**
    * 应用内自更新三件套(仅安卓壳,见 updater.rs)。
    * 旧 APK 上命令不存在 → invoke 抛错,一律吞掉返回 null/false:
    * 横幅在旧版上必须永远安静,所以错误不上报只打日志。
@@ -471,29 +434,3 @@ export function setNotifyOnReply(enabled: boolean) {
   }
 }
 
-/** 预约提醒的等待时长(秒)localStorage key;'0' = 关掉提醒 */
-const REPLY_REMINDER_DELAY_KEY = 'chat:replyReminderDelaySec'
-
-/** 提醒默认 45s:常规问答多数 10~30s 出结果,留一点余量再催 */
-const REPLY_REMINDER_DEFAULT_SEC = 45
-
-/** 回复提醒延时秒数(设置弹窗「聊天行为」可调)。0=关;脏值回落到默认档 */
-export function getReplyReminderDelaySec(): number {
-  try {
-    const raw = localStorage.getItem(REPLY_REMINDER_DELAY_KEY)
-    if (raw === null) return REPLY_REMINDER_DEFAULT_SEC
-    const n = Number.parseInt(raw, 10)
-    return Number.isFinite(n) && n >= 0 ? n : REPLY_REMINDER_DEFAULT_SEC
-  } catch {
-    return REPLY_REMINDER_DEFAULT_SEC
-  }
-}
-
-/** 写入回复提醒延时秒数(设置弹窗切换) */
-export function setReplyReminderDelaySec(sec: number) {
-  try {
-    localStorage.setItem(REPLY_REMINDER_DELAY_KEY, String(Math.max(0, Math.trunc(sec))))
-  } catch {
-    // ignore
-  }
-}

@@ -57,6 +57,8 @@ export const queryKeys = {
   },
   masks: {
     list: () => [...queryKeys.all, 'masks', 'list'] as const,
+    /** 面具面板已下载的内置面具 id 列表 */
+    installed: () => [...queryKeys.all, 'masks', 'installed'] as const,
     /** 各面具的对话使用数(搜索筛选折叠排序用) */
     usage: () => [...queryKeys.all, 'masks', 'usage'] as const,
   },

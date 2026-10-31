@@ -34,7 +34,26 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "登录已失效，请重新登录后再试" }, { status: 401 })
   }
 
-  const doneParam = new URL(req.url).searchParams.get("done")
+  const params = new URL(req.url).searchParams
+  // 同步客户端按稳定 id 分页，完成状态改变不会让条目在分页中移动。
+  // 普通列表继续保持原来的排序和 100 条上限，兼容已有客户端。
+  if (params.get("sync") === "true") {
+    const after = params.get("after")
+    const rows = await prisma.todo.findMany({
+      where: { userId, ...(after ? { id: { gt: after } } : {}) },
+      orderBy: { id: "asc" },
+      take: 101,
+      select: { id: true, content: true, done: true, dueAt: true },
+    })
+    const todos = rows.slice(0, 100)
+    return NextResponse.json({
+      todos,
+      ownerId: userId,
+      nextCursor: rows.length > 100 ? todos[todos.length - 1].id : null,
+    }, { headers: { "Cache-Control": "no-store" } })
+  }
+
+  const doneParam = params.get("done")
   const todos = await prisma.todo.findMany({
     where: {
       userId,
@@ -81,6 +100,10 @@ export async function PATCH(req: Request) {
   const id = typeof body.id === "string" ? body.id : ""
   if (!id) {
     return NextResponse.json({ error: "缺少待办 id" }, { status: 400 })
+  }
+
+  if (body.expectedOwnerId !== undefined && body.expectedOwnerId !== userId) {
+    return NextResponse.json({ error: "aichatt 账号已改变，请先重新同步" }, { status: 409 })
   }
 
   // 构造更新数据：仅接受明确传入的字段

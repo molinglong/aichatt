@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { writeFile, mkdir } from "fs/promises"
 import path from "path"
 import { auth } from "@/lib/auth"
+import { getUserId } from "@/lib/api-auth"
 import { nanoid } from "nanoid"
 import {
   UPLOAD_DIR,
@@ -17,11 +18,12 @@ import {
   parseTextFile,
   parseXlsx,
   parseDocx,
+  parsePptx,
   parseHtmlText,
 } from "@/lib/file-parser"
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
-// 支持图片、纯文本、PDF、Excel、Word、HTML;文本类扩展名兜底(Windows 下 .md/.json 可能被判为 octet-stream)
+// 支持图片、纯文本、PDF、Excel、Word、PPT、HTML;文本类扩展名兜底(Windows 下 .md/.json 可能被判为 octet-stream)
 const EXTRA_MIME_TYPES = ["application/pdf", "application/json"]
 const TEXT_EXT_FALLBACK = new Set([".txt", ".md", ".markdown", ".csv", ".log", ".json"])
 // 可在浏览器上下文执行的类型一律拒绝(存储型 XSS 防线之一;响应层另有 CSP sandbox 兜底)。
@@ -34,11 +36,11 @@ const BLOCKED_EXTENSIONS = new Set([
   ".js", ".mjs", ".cjs", ".jse", ".hta", ".htc", ".swf",
 ])
 
-/** 归类上传文件:图片 / 文本 / PDF / Excel / Word / HTML;不支持返回 null */
+/** 归类上传文件:图片 / 文本 / PDF / Excel / Word / PPT / HTML;不支持返回 null */
 function resolveKind(
   mimeType: string,
   fileName: string
-): "image" | "text" | "pdf" | "sheet" | "docx" | "html" | null {
+): "image" | "text" | "pdf" | "sheet" | "docx" | "pptx" | "html" | null {
   const ext = path.extname(fileName).toLowerCase()
   // 先拦可执行/标记类类型(黑名单优先于前缀放行)
   if (BLOCKED_MIME_TYPES.has(mimeType) || BLOCKED_EXTENSIONS.has(ext)) return null
@@ -59,6 +61,13 @@ function resolveKind(
   ) {
     return "docx"
   }
+  if (
+    (mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+      (mimeType === "application/octet-stream" && ext === ".pptx")) &&
+    ext === ".pptx"
+  ) {
+    return "pptx"
+  }
   if (mimeType === "text/html" || ext === ".html" || ext === ".htm") return "html"
   if (
     mimeType.startsWith("text/") ||
@@ -72,8 +81,9 @@ function resolveKind(
 // 孤儿文件保留时长与节流清扫入口见 @/lib/uploads(ORPHAN_MAX_AGE_MS / sweepOrphanUploadsThrottled)
 
 export async function POST(req: NextRequest) {
-  const session = await auth()
-  if (!session?.user?.id) {
+  // 双通道:cookie session 或 Bearer 令牌(浏览器扩展上传截图)
+  const userId = await getUserId(req)
+  if (!userId) {
     return NextResponse.json({ error: "登录已失效，请重新登录后再试" }, { status: 401 })
   }
 
@@ -146,6 +156,11 @@ export async function POST(req: NextRequest) {
     } else if (kind === "docx") {
       parseText = (await parseDocx(buffer)).text
       parseStatus = "done"
+    } else if (kind === "pptx") {
+      const parsed = await parsePptx(buffer)
+      parseText = parsed.text
+      pageCount = parsed.pageCount ?? null
+      parseStatus = "done"
     } else if (kind === "html") {
       parseText = parseHtmlText(buffer.toString("utf-8")).text
       parseStatus = "done"
@@ -160,7 +175,7 @@ export async function POST(req: NextRequest) {
   try {
     await prisma.uploadFile.create({
       data: {
-        userId: session.user.id,
+        userId,
         fileName: uniqueName,
         originalName: file.name,
         mimeType: file.type,

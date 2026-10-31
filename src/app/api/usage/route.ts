@@ -58,40 +58,62 @@ async function aggregateChat(
       model: true,
       promptTokens: true,
       completionTokens: true,
+      // prompt caching 观测(上游未报数为 null)
+      cacheReadTokens: true,
+      cacheWriteTokens: true,
       createdAt: true,
     },
   })
 
   let totalPrompt = 0
   let totalCompletion = 0
+  let totalCacheRead = 0
+  let totalCacheWrite = 0
 
   const modelMap = new Map<
     string,
-    { promptTokens: number; completionTokens: number; messages: number }
+    {
+      promptTokens: number
+      completionTokens: number
+      cacheReadTokens: number
+      messages: number
+    }
   >()
   const dayMap = new Map<string, number>()
-  for (const day of recentDays) dayMap.set(day, 0)
+  const dayCacheMap = new Map<string, number>()
+  for (const day of recentDays) {
+    dayMap.set(day, 0)
+    dayCacheMap.set(day, 0)
+  }
 
   for (const m of messages) {
     const prompt = m.promptTokens ?? 0
     const completion = m.completionTokens ?? 0
+    // cacheReadTokens 是 promptTokens 的子集(上游计费口径),不是额外增量
+    const cacheRead = m.cacheReadTokens ?? 0
+    const cacheWrite = m.cacheWriteTokens ?? 0
     totalPrompt += prompt
     totalCompletion += completion
+    totalCacheRead += cacheRead
+    totalCacheWrite += cacheWrite
 
     const modelKey = m.model || "未知模型"
     const entry = modelMap.get(modelKey) ?? {
       promptTokens: 0,
       completionTokens: 0,
+      cacheReadTokens: 0,
       messages: 0,
     }
     entry.promptTokens += prompt
     entry.completionTokens += completion
+    entry.cacheReadTokens += cacheRead
     entry.messages += 1
     modelMap.set(modelKey, entry)
 
     const day = dayKeyOf(m.createdAt)
     if (recentDaySet.has(day)) {
       dayMap.set(day, (dayMap.get(day) ?? 0) + prompt + completion)
+      dayCacheMap.set(day, (dayCacheMap.get(day) ?? 0) + cacheRead)
     }
   }
 
@@ -100,6 +122,7 @@ async function aggregateChat(
       model,
       promptTokens: v.promptTokens,
       completionTokens: v.completionTokens,
+      cacheReadTokens: v.cacheReadTokens,
       totalTokens: v.promptTokens + v.completionTokens,
       messages: v.messages,
     }))
@@ -108,12 +131,15 @@ async function aggregateChat(
   const byDay = recentDays.map((date) => ({
     date,
     totalTokens: dayMap.get(date) ?? 0,
+    cacheReadTokens: dayCacheMap.get(date) ?? 0,
   }))
 
   return {
     totals: {
       promptTokens: totalPrompt,
       completionTokens: totalCompletion,
+      cacheReadTokens: totalCacheRead,
+      cacheWriteTokens: totalCacheWrite,
       totalTokens: totalPrompt + totalCompletion,
       messages: messages.length,
     },

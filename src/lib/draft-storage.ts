@@ -8,6 +8,8 @@
  *  - 读取走同步 API,便于组件挂载时一次性恢复
  */
 
+import type { ConversationReference } from './chat-shortcuts'
+
 const STORAGE_KEY = 'chat:drafts:v1'
 const SAVE_DEBOUNCE_MS = 500
 
@@ -16,6 +18,8 @@ export interface DraftEntry {
   text: string
   /** 最近保存时间戳(ms) */
   savedAt: number
+  /** 用户主动选取的会话正文快照，与正文一起恢复，避免标签丢失。 */
+  references?: ConversationReference[]
 }
 
 export type DraftsMap = Record<string, DraftEntry>

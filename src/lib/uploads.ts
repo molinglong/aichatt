@@ -14,9 +14,9 @@ export const UPLOAD_DIR = path.join(process.cwd(), "public", "uploads")
 // 供 /uploads 静态兜底路由复用;此处 re-export 保持既有调用方不变
 export { sanitizeUploadName }
 
-/** 收集全库消息中所有被引用的附件文件名 */
+/** 收集全库被引用的附件文件名(聊天消息 / 生图产物 / 错题本题目截图) */
 export async function collectReferencedUploadNames(): Promise<Set<string>> {
-  const [msgRows, imgRows] = await Promise.all([
+  const [msgRows, imgRows, noteRows] = await Promise.all([
     prisma.message.findMany({
       where: { attachments: { not: null } },
       select: { attachments: true },
@@ -25,6 +25,11 @@ export async function collectReferencedUploadNames(): Promise<Set<string>> {
     // 必须一并扫描,避免被 24h 孤儿清理误删导致历史消息图片裂开
     prisma.generatedImage.findMany({
       select: { url: true },
+    }),
+    // 错题本题目截图:可能只被 StudyNote 引用(会话删除后仍要保留)
+    prisma.studyNote.findMany({
+      where: { imageUrl: { not: null } },
+      select: { imageUrl: true },
     }),
   ])
   const names = new Set<string>()
@@ -36,6 +41,12 @@ export async function collectReferencedUploadNames(): Promise<Set<string>> {
   for (const row of imgRows) {
     const name = sanitizeUploadName(row.url)
     if (name) names.add(name)
+  }
+  for (const row of noteRows) {
+    if (row.imageUrl) {
+      const name = sanitizeUploadName(row.imageUrl)
+      if (name) names.add(name)
+    }
   }
   return names
 }
