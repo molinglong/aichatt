@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Menu, ArrowLeft, Settings as SettingsIcon, RotateCw } from 'lucide-react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useChatStore } from '@/store/chat-store'
@@ -22,19 +23,16 @@ export function MobileFloatButtons() {
   const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
 
   const isConversation = !!pathname?.startsWith('/chat/c/')
+  const [reloading, setReloading] = useState(false)
+  if (pathname?.startsWith('/study')) return null
 
-  // 2026-10-07 换色定案:浅色页上原「深 36% 玻璃」渲染成脏灰,改白玻璃+墨图标(与输入胶囊同族材质);
-  // 暗色页白玻璃刺眼,回落回原深玻璃。只换配色,40px/结构/位置一律未动
+  // 2026-10-28:去掉顶栏圆钮的圆底/描边/阴影,只保留图标本体(命中区仍 40px)。
   const btnBase =
-    'flex items-center justify-center w-10 h-10 rounded-full border ' +
-    'border-[rgba(29,29,31,0.08)] bg-[rgba(255,255,255,0.72)] text-content-primary ' +
-    'shadow-[0_2px_12px_rgb(0_0_0_/_0.10)] ' +
-    'dark:border-white/35 dark:bg-[rgb(28_28_30_/_0.36)] dark:text-white ' +
+    'flex items-center justify-center w-10 h-10 text-content-primary ' +
+    'dark:text-white ' +
     'transition-transform duration-150 ' +
     'active:scale-90 touch-manipulation'
   const btnStyle: React.CSSProperties = {
-    WebkitBackdropFilter: 'blur(14px)',
-    backdropFilter: 'blur(14px)',
     WebkitTapHighlightColor: 'transparent',
   }
 
@@ -42,51 +40,57 @@ export function MobileFloatButtons() {
     // fixed(不是 absolute):基线要按视口顶算,才能与抽屉头部(fixed inset-0)落在同一条线,
     // 不吃 main 的 max-md:pt-[var(--sat)] 与 shell 1px 边框,免得安全区被算两遍。
     <div
-      className="md:hidden pointer-events-none fixed inset-x-0 z-30"
+      className="mobile-float-buttons md:hidden pointer-events-none fixed inset-x-0 z-30"
       style={{ top: 'var(--m-chrome-top)' }}
     >
       <div className="relative h-10">
-        {/* 左一:会话页=返回欢迎页,其余页=开抽屉 */}
-        <button
-          onClick={() => (isConversation ? router.push('/chat') : toggleSidebar())}
-          className={cn(btnBase, 'pointer-events-auto absolute left-[var(--m-chrome-inset)] top-0')}
-          aria-label={isConversation ? '返回' : '打开侧边栏'}
-          style={btnStyle}
-        >
-          {isConversation ? <ArrowLeft className="w-[18px] h-[18px]" /> : <Menu className="w-[18px] h-[18px]" />}
-        </button>
-        {/* 左二:仅会话页出现(开抽屉),与左一同间距 */}
-        {isConversation && (
+        {/* 左:会话页 = ← 返回 + ☰ 抽屉,并成一个胶囊;其余页只有一颗 ☰,
+            胶囊宽度就是 40px,圆角下看起来仍是一个圆。底色只在壁纸主题下画 */}
+        <div className="m-float-pill absolute left-[var(--m-chrome-inset)] top-0 flex items-center gap-[var(--m-chrome-gap)] rounded-full">
           <button
-            onClick={toggleSidebar}
-            className={cn(btnBase, 'pointer-events-auto absolute left-[calc(var(--m-chrome-inset)_+_40px_+_var(--m-chrome-gap))] top-0')}
-            aria-label="打开侧边栏"
+            onClick={() => (isConversation ? router.push('/chat') : toggleSidebar())}
+            className={cn(btnBase, 'pointer-events-auto')}
+            aria-label={isConversation ? '返回' : '打开侧边栏'}
             style={btnStyle}
           >
-            <Menu className="w-[18px] h-[18px]" />
+            {isConversation ? <ArrowLeft className="w-[18px] h-[18px]" /> : <Menu className="w-[18px] h-[18px]" />}
           </button>
-        )}
-        {/* 右二:刷新(整页重载,壳内即重新拉远程站) */}
-        <button
-          onClick={() => window.location.reload()}
-          className={cn(
-            btnBase,
-            'pointer-events-auto absolute right-[calc(var(--m-chrome-inset)_+_40px_+_var(--m-chrome-gap))] top-0'
+          {isConversation && (
+            <button
+              onClick={toggleSidebar}
+              className={cn(btnBase, 'pointer-events-auto')}
+              aria-label="打开侧边栏"
+              style={btnStyle}
+            >
+              <Menu className="w-[18px] h-[18px]" />
+            </button>
           )}
-          aria-label="刷新页面"
-          style={btnStyle}
-        >
-          <RotateCw className="w-[18px] h-[18px]" />
-        </button>
-        {/* 右:设置 */}
-        <button
-          onClick={() => setSettingsOpen(true)}
-          className={cn(btnBase, 'pointer-events-auto absolute right-[var(--m-chrome-inset)] top-0')}
-          aria-label="设置"
-          style={btnStyle}
-        >
-          <SettingsIcon className="w-[18px] h-[18px]" />
-        </button>
+        </div>
+        {/* 右:刷新 + 设置 —— 两颗并成一个胶囊。容器不设定位宽度,按钮仍是原来那 40px:
+            胶囊右边缘对齐原来的设置钮右边缘,刷新钮靠 gap 顶在它左边,
+            所以与合并前的横向位置逐像素一致。胶囊底色只在壁纸主题下画(globals.css ⑥) */}
+        <div className="m-float-pill absolute right-[var(--m-chrome-inset)] top-0 flex items-center gap-[var(--m-chrome-gap)] rounded-full">
+          <button
+            onClick={() => {
+              if (reloading) return
+              setReloading(true)
+              window.location.reload()
+            }}
+            className={cn(btnBase, 'pointer-events-auto')}
+            aria-label="刷新页面"
+            style={btnStyle}
+          >
+            <RotateCw className={cn('w-[18px] h-[18px]', reloading && 'animate-spin')} />
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className={cn(btnBase, 'pointer-events-auto')}
+            aria-label="设置"
+            style={btnStyle}
+          >
+            <SettingsIcon className="w-[18px] h-[18px]" />
+          </button>
+        </div>
       </div>
     </div>
   )

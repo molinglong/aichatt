@@ -6,7 +6,6 @@ import { TopFade } from '@/components/TopFade'
 import { SettingsModal } from '@/components/SettingsModal'
 import { ContextMenuHost } from '@/components/ui/ContextMenu'
 import { ConfirmDialogHost } from '@/components/ui/ConfirmDialog'
-import { WelcomeWallpaperLayer } from '@/components/WelcomeWallpaperLayer'
 import { MobileFloatButtons } from '@/components/mobile/MobileFloatButtons'
 import { UpdateBanner } from '@/components/mobile/UpdateBanner'
 import { MobileDrawer } from '@/components/mobile/MobileDrawer'
@@ -35,17 +34,23 @@ export default async function AppLayout({
 
   // 安全区让位从 app-frame 下移到 <main>(2026-10-07 灰条修复):让位带此前由 frame 的
   // pt-[var(--sat)] 呈现,露出的是 frame 自己的 bg-surface-muted 灰(#F5F5F7/#262628)——
-  // 状态栏灰条即它。移到 main 后,让位带由 app-shell-column(bg-surface 白 / 壁纸)呈现,
+  // 状态栏灰条即它。移到 main 后,让位带由 app-shell-column(bg-surface 白)呈现,
   // 顶部与页面同色。仅 ≤md 让位:md:p-1.5 本就盖过 sat,桌面端零变化。
   // 内容列 relative:承接桌面端浮动工具簇(TopBar ≥md 分支)
   return (
     <div className="app-frame h-screen bg-surface-muted p-0 md:p-1.5 overflow-hidden">
-      {/* app-shell 加 relative isolate: 为 shell 层壁纸(.welcome-wallpaper, z-index:-1)
-          提供定位锚点并收拢层叠上下文,保证壁纸压在 shell 底色上、垫在所有面板下。
+      {/* app-shell 加 relative isolate: 收拢层叠上下文。
           底色用 muted 不用 surface: shell 只在浮动侧栏的四周缝隙露出来,取灰不取白,
-          否则纯色模式下侧栏外圈是一圈白板(壁纸模式下这块被壁纸盖住,无此问题) */}
+          否则侧栏外圈是一圈白板 */}
       <div className="app-shell relative isolate h-full flex overflow-hidden rounded-none md:rounded-xl shadow-2xl border border-line bg-surface-muted">
-        <WelcomeWallpaperLayer />
+        {/* 壁纸层(主题 = 壁纸时可见): 无状态,显隐全由 html[data-wallpaper="on"] 驱动。
+            照片一层 + 中间柔光一层。柔光默认 display:none —— 只在对话页出现
+            (欢迎页曾经也有,会在屏幕正中印出一个白圆,已按用户要求去掉)。
+            CSS 在 globals.css 的「主题: 壁纸」段。z-0 低于内容列(z-1)与侧栏(z-50) */}
+        <div className="sky-wallpaper" aria-hidden>
+          <div className="sky-wallpaper-photo" />
+          <div className="sky-wallpaper-veil" />
+        </div>
         <Sidebar />
         <div className="app-shell-column relative flex flex-col flex-1 min-w-0 bg-surface">
           <TopBar />
@@ -57,9 +62,16 @@ export default async function AppLayout({
           <MobileFloatButtons />
           {/* 应用内自更新横幅(仅安卓壳渲染;启动静默检查,有新版才浮出) */}
           <UpdateBanner />
+          {/* 深渊微光 · 流星层: 深色画布 z:-1 层带(纸面之上/内容之下),样式全在 globals.css;
+              浅色模式下无样式注入,空 div 不可见 */}
+          <div className="abyss-sky" aria-hidden>
+            <i />
+            <i />
+            <i />
+          </div>
           {/* max-md:pt-[var(--sat)]:手机端让位带在 main 内,背景随内容列(白/壁纸);
               桌面 md 档由 app-frame 的 p-1.5 承担,此处不生效 */}
-          <main className="flex-1 overflow-hidden max-md:pt-[var(--sat)]">
+          <main className="app-main flex-1 overflow-hidden max-md:pt-[var(--sat)]">
             {children}
           </main>
         </div>

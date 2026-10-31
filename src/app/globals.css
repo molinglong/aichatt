@@ -11,7 +11,9 @@
    由 layout.tsx 的 <link> 直接引入(勿走 CSS @import:
    1520 个 @font-face 进 webpack 管线会把 dev server 拖到 OOM 死锁)。
    family 名 'PingFang SC Sub' 排在 'PingFang SC' 之后:
-   macOS/iOS 命中系统原生苹方(零下载), Windows/Android 按需拉分片。 */
+   macOS/iOS 命中系统原生苹方(零下载), Windows/Android 按需拉分片。
+   分片必须用 font-display: optional(生成脚本同源):已上屏的 fallback 不再被迟到字体
+   替换,避免正文逐行字数/基线跳动。慢网本页沿用 fallback,缓存命中仍用苹方。 */
 
 @tailwind base;
 @tailwind components;
@@ -20,9 +22,11 @@
 /* ── 统一配色体系：macOS 极简黑白灰 + 单一中灰强调色 ───────────── */
 /* 变量采用 RGB 三元组（配合 Tailwind 的 rgb(var(--x) / <alpha>) 支持透明度）*/
 :root {
-  /* 字体栈: 'PingFang SC' 让 macOS/iOS 直接命中系统苹方(全字重零下载);
+  /* 字体栈: 'Noto Sans Digits' 只接管 0-9(等宽数字子集, unicode-range U+30-39,
+     见 fonts-subset/digits/digits.css 头注释) —— 治流式输出时数字宽度抖动;
+     'PingFang SC' 让 macOS/iOS 直接命中系统苹方(全字重零下载);
      其他平台落到 'PingFang SC Sub' 子集分片(见文件头 @import) */
-  --font-sans: 'PingFang SC', 'PingFang SC Sub', 'Microsoft YaHei UI', -apple-system,
+  --font-sans: 'Noto Sans Digits', 'PingFang SC', 'PingFang SC Sub', 'Microsoft YaHei UI', -apple-system,
     BlinkMacSystemFont, sans-serif;
 
   /* 基础 */
@@ -92,6 +96,15 @@
   --danger-soft: 254 233 234;
   --ease: cubic-bezier(0.32, 0.72, 0.28, 1);
 
+  /* 动效时长四档(2026-10-31 全站统一定稿): 与 tailwind.config.ts 同值, 改一处必须同改另一处。
+     micro 颜色/透明度反馈 · fast 按压与小浮层 · base 面板与折叠 · slow 抽屉位移。
+     曲线只两条: --ease(状态切换与出场) + --ease-enter(入场)。 */
+  --motion-micro: 150ms;
+  --motion-fast: 180ms;
+  --motion-base: 260ms;
+  --motion-slow: 420ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+
   /* 推理档位滑杆:紫色渐变轨 + 最高档发光色(定稿自 preview-reasoning-tier A 充能流) */
   --slider-grad: linear-gradient(90deg, #f472b6, #c084fc, #818cf8);
   --glow-rgb: 129 140 248;
@@ -100,39 +113,53 @@
 
 .dark {
   /* 基础 */
-  --background: 12 12 13;
-  --foreground: 245 245 247;
+  --background: 4 5 8;
+  --foreground: 238 241 252;
 
-  /* 面板层级 */
-  --surface: 28 28 30;
-  --surface-muted: 38 38 40;
-  --surface-subtle: 51 51 54;
+  /* 面板层级
+     2026-10-31 「深渊微光 · 蓝中夹黑」二轮(用户: 黑要纯黑不要灰): 底阶压到近纯黑,
+     蓝只剩辉光与发丝里的一丝色偏 —— 画布 #07080C / 灰带 #111216 / 悬停 #1C1D22,
+     间隔差不变 */
+  --surface: 7 8 12;
+  --surface-muted: 17 18 22;
+  --surface-subtle: 28 29 34;
+  /* 深渊微光: 画布静态蓝辉光(左上主光/右下回光) + 细噪点层(防大渐变条带)。
+     只打在画布层,卡片/弹层保持实底 —— 光从卡片后面透出来的层次。
+     变量只定义在 .dark 里: 浅色模式下引用处 var() 无值自动回落 none,天然不生效 */
+  --abyss-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  --abyss-glow: var(--abyss-noise),
+    radial-gradient(1150px 720px at 14% -12%, rgb(94 126 224 / 0.19), transparent 64%),
+    radial-gradient(940px 640px at 106% 116%, rgb(74 96 182 / 0.09), transparent 58%);
+  /* 星空: 420px 确定性散点瓦片(零 JS),亮度 0.16-0.55 不抢内容;
+     --abyss-sky = 星空 + 噪点 + 双辉光,画布层的完整背景栈 */
+  --abyss-stars: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Ccircle cx='23' cy='58' r='0.9' fill='%23fff' opacity='0.3'/%3E%3Ccircle cx='74' cy='149' r='0.7' fill='%23fff' opacity='0.22'/%3E%3Ccircle cx='141' cy='33' r='1.1' fill='%23fff' opacity='0.42'/%3E%3Ccircle cx='167' cy='209' r='0.8' fill='%23fff' opacity='0.24'/%3E%3Ccircle cx='205' cy='120' r='0.6' fill='%23fff' opacity='0.18'/%3E%3Ccircle cx='238' cy='17' r='0.8' fill='%23fff' opacity='0.3'/%3E%3Ccircle cx='263' cy='255' r='1' fill='%23fff' opacity='0.36'/%3E%3Ccircle cx='309' cy='84' r='0.7' fill='%23fff' opacity='0.2'/%3E%3Ccircle cx='334' cy='300' r='0.9' fill='%23fff' opacity='0.28'/%3E%3Ccircle cx='372' cy='187' r='1.2' fill='%23fff' opacity='0.46'/%3E%3Ccircle cx='400' cy='61' r='0.7' fill='%23fff' opacity='0.22'/%3E%3Ccircle cx='56' cy='320' r='0.8' fill='%23fff' opacity='0.26'/%3E%3Ccircle cx='110' cy='392' r='1' fill='%23fff' opacity='0.34'/%3E%3Ccircle cx='190' cy='354' r='0.7' fill='%23fff' opacity='0.2'/%3E%3Ccircle cx='246' cy='398' r='0.8' fill='%23fff' opacity='0.24'/%3E%3Ccircle cx='321' cy='356' r='0.6' fill='%23fff' opacity='0.18'/%3E%3Ccircle cx='390' cy='341' r='0.8' fill='%23fff' opacity='0.26'/%3E%3Ccircle cx='18' cy='196' r='0.6' fill='%23fff' opacity='0.16'/%3E%3Ccircle cx='98' cy='246' r='0.7' fill='%23fff' opacity='0.22'/%3E%3Ccircle cx='170' cy='140' r='0.6' fill='%23fff' opacity='0.16'/%3E%3Ccircle cx='283' cy='158' r='0.8' fill='%23fff' opacity='0.26'/%3E%3Ccircle cx='356' cy='246' r='0.6' fill='%23fff' opacity='0.18'/%3E%3Ccircle cx='300' cy='220' r='1.4' fill='%23CFE0FF' opacity='0.55'/%3E%3Ccircle cx='60' cy='105' r='1.3' fill='%23D6E4FF' opacity='0.5'/%3E%3C/svg%3E");
+  --abyss-sky: var(--abyss-stars), var(--abyss-glow);
   /* 便利贴材质色:深色下退化成「深色牛皮纸」,保留暖调但不再发亮 */
   --note-paper: 59 53 32;
   --note-edge: 85 76 43;
   --note-ink: 243 238 220;
   --note-sub: 180 171 134;
   --note-tape: 85 76 43;
-  --surface-glass: 28 28 30;
+  --surface-glass: 7 8 12;
 
-  /* 边框 */
-  --line: 57 57 60;
-  --line-strong: 74 74 78;
+  /* 边框(随底阶同步压黑,保持与面板的原间隔差) */
+  --line: 39 40 44;
+  --line-strong: 48 49 53;
 
-  /* 文本层级 */
-  --content-primary: 245 245 247;
-  --content-secondary: 160 160 168;
-  --content-muted: 112 112 122;
+  /* 文本层级(随蓝移带一丝蓝,压纯白在蓝底上的生硬感) */
+  --content-primary: 238 241 252;
+  --content-secondary: 154 166 204;
+  --content-muted: 110 122 160;
 
   /* 强调色（中灰体系）*/
-  --accent: 212 212 216;
-  --accent-hover: 228 228 231;
-  --accent-foreground: 28 28 30;
-  --accent-soft: 51 51 54;
+  --accent: 210 217 238;
+  --accent-hover: 226 233 248;
+  --accent-foreground: 30 36 56;
+  --accent-soft: 28 29 34;
 
-  /* 代码块 */
-  --code-header: 44 44 46;
-  --code-bg: 28 28 30;
+  /* 代码块(底色随纸面同档,头部差值原样) */
+  --code-header: 23 24 28;
+  --code-bg: 7 8 12;
 
   /* 试卷标注: 暗色下提亮降饱和,保证对比度 */
   --exam-term: 248 113 113;
@@ -178,7 +205,7 @@
    白天 = 正午窗棂(5600K 顶光,天光从画面外溢入),
    暮色 = 日落窗棂(2400K 左下近地平线,地平线暖带 + 朝右上的长格影),
    晚上 = 深夜窗棂 —— 四个里唯一的深底(冷蓝),且按定稿**不含任何光层**。
-   月白·桂花金只有深色一态(月夜版),浅色态已撤销(见 .fest-night)。
+   (「月白·桂花金」配色已于 2026-10-25 删除)
    取值经 WCAG 对比度校验(实测对照表见 public/preview-midautumn-daylight.html)。 */
 
 /* ── 格子 · 白天 = 正午-格子: 正午白光底 + 中性墨黑强调色 ─────────
@@ -348,43 +375,6 @@
   --fest-gold: 236 206 138;
 }
 
-/* ── 月白·桂花金: 仅深色(月夜版)─────────────────────────────────
-   浅色态(白天-桂花金)已撤销。这里写 [data-pal="guihua"] 而不带 .dark 后缀:
-   该配色只可能在深色下出现(见 theme.ts 的 normalizeAppearance),不带后缀后
-   即便 .dark 晚一拍也不会闪出一套没人设计过的浅色值。 */
-[data-pal="guihua"] {
-  --background: 21 19 15;
-  --foreground: 243 240 231;
-
-  --surface: 32 29 24;
-  --surface-muted: 42 38 31;
-  --surface-subtle: 55 50 41;
-  /* 便利贴材质色:桂花暖调 + 深色 */
-  --note-paper: 61 54 32;
-  --note-edge: 88 78 44;
-  --note-ink: 245 240 222;
-  --note-sub: 182 172 134;
-  --note-tape: 88 78 44;
-  --surface-glass: 32 29 24;
-
-  --line: 62 56 46;
-  --line-strong: 84 76 62;
-
-  --content-primary: 243 240 231;
-  --content-secondary: 170 162 145;
-  --content-muted: 124 117 102;
-
-  --accent: 226 179 90;
-  --accent-hover: 236 194 116;
-  --accent-foreground: 32 29 24;
-  --accent-soft: 58 50 34;
-
-  --code-header: 44 40 33;
-  --code-bg: 32 29 24;
-
-  --fest-gold: 232 192 104;
-}
-
 /* 触屏全局反馈: 去掉 iOS 点按灰色高亮;
    交互元素 touch-action: manipulation 消除双击缩放延迟(保留滚动/捏合) */
 * {
@@ -421,13 +411,17 @@ html {
   --sar: env(safe-area-inset-right, 0px);
 
   /* 手机端顶部 chrome 基线(浮钮簇 / 抽屉头部簇 / 设置面板页头簇共用的同一坐标系)
-     2026-10-05 用户现场改定:去掉原来的 sat+56 空带,三簇一律贴顶;但纯 sat 在真机上是 0
-     (Safari/Chrome 非 PWA 拿不到 safe-area),贴顶=被地址栏压住,所以保底 16px。
-     即:有刘海走安全区,无刘海/浏览器内走 16px,不再有任何一条空带。
+     2026-10-05 用户现场改定:去掉原来的 sat+56 空带,三簇一律贴顶;
+     2026-10-27 用户反馈「像 iPhone 一样,上面离刘海留一点距离」:安全区之上再留 12px 呼吸,
+     sat=0 的浏览器/无刘海设备保底 28px。安卓 WebView 实测 sat=49 → 61(状态栏下沿再留 12)。
      左右内缩 14px 与同排间距 8px 不变。 */
-  --m-chrome-top: max(var(--sat, 0px), 16px);
+  --m-chrome-top: max(calc(var(--sat, 0px) + 12px), 28px);
   --m-chrome-inset: 14px;
   --m-chrome-gap: 8px;
+
+  /* 底部安全区:桌面回落到 sab(不改桌面间距);≤767px 在下方媒体查询里兜底 24px,
+     因为安卓 WebView 的 env(safe-area-inset-bottom) 恒为 0,手势条会压住输入胶囊。 */
+  --m-safe-bottom: var(--sab, 0px);
 
   /* 聊天页顶部渐隐/留白档位(2026-10-07 预览定案落码):全部从浮钮簇基线推导,
      真机 safe-area 变了整组跟着走;浏览器内(sat=0)即 16/44/64。
@@ -463,6 +457,29 @@ html {
   .m-set .text-\[10\.5px\] { font-size: 12.5px; }
   /* 生图模型卡上的 'turbo'/'plus'/'openai' 徽标用的是 text-[9px],不在 11/10 两档里,单独补 */
   .m-set .text-\[9px\] { font-size: 12px; }
+
+  /* 手机端设置页滚动边缘页头(2026-10-22 定案，10-31 扩到二级页)：
+     页头脱离 flex 流盖在列表/详情上，停顶透明与画布融合；当前层下滑 >6px 才浮出毛玻璃
+     与分隔线。JS 只切 .is-scrolled，不走 React state —— 设置弹窗是 7000 行组件，
+     每帧重渲染的代价远高于一个 classList.toggle。
+     一级列表与二级详情各有一个滚动容器，都挂 onScroll 指向同一个 syncMobileHead；
+     二级页不再单独铺 surface 实底，返回箭头浮在内容上，与一级标题同构。 */
+  .m-set-head {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 40;
+    background: transparent;
+    border-bottom-color: transparent;
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    backdrop-filter: blur(28px) saturate(180%);
+    transition: background-color .18s ease, border-color .18s ease;
+  }
+  .m-set-head.is-scrolled {
+    /* 72% 在浅色下会把下面一行字透成明显的灰影(真机实测)；86% 仍能认出字。
+       92% 是暗/浅两边都能压住字形的下限，保留 8% 背透 + 28px 模糊做材质。 */
+    background: rgb(var(--surface) / .92);
+    border-bottom-color: rgb(var(--line) / .6);
+  }
   /* 表单控件同档抬到拇指尺寸:桌面用的 py-1/px-2 + 12px select/input 在手机上既按不准,
      字号又低于 16px —— iOS Safari 对 <16px 的输入框会强制放大页面(聚焦即整屏 zoom)。
      16px 是这个 zoom 的阈值,顺手把 min-height 抬到 44(iOS HIG 命中区)。 */
@@ -529,7 +546,9 @@ body {
   background-color: rgb(var(--content-secondary) / 0.5);
 }
 
-/* Default transitions for interactive elements */
+/* Default transitions for interactive elements
+   时长/曲线走统一 token, 不写字面量: 这条兜底与 Tailwind 的 transition-* 工具类
+   (同样吃 DEFAULT = micro 150ms + standard) 保持一致, 避免出现第二套野生默认值。 */
 @layer base {
   button,
   a,
@@ -537,8 +556,8 @@ body {
   textarea,
   select {
     transition-property: color, background-color, border-color, box-shadow, opacity;
-    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-    transition-duration: 150ms;
+    transition-timing-function: var(--ease);
+    transition-duration: var(--motion-micro);
   }
 
   /* Focus visible ring for all interactive elements */
@@ -576,13 +595,97 @@ body {
     display: none;
   }
 
-  /* ── 统一玻璃配方(全站单一事实源):模糊 20px + 饱和度 180% ──
-     底色不透明度 0.72 烘焙在 Tailwind 的 bg-surface-glass(tailwind.config.ts);
-     各面底色差异(侧栏 muted、遮罩黑)另叠 bg-*,本类只管 backdrop-filter。
-     新增玻璃浮层一律引本类,不要再写 backdrop-blur-* 原子类。 */
+  /* ── 玻璃配方（全站单一事实源）：三档，2026-10-22 第零波 ──
+     panel   .glass-blur        20px / 180%：侧栏、浮窗、搜索、输入区
+     chrome  .glass-blur-chrome 28px / 180%：手机滚动边缘页头（92% 底色由使用处叠）
+     overlay .overlay-dim       12px / 150%：弹窗遮罩（自带底：浅色黑 20%、暗色白 15%）
+     面板底色不透明度 0.72 烘焙在 Tailwind 的 bg-surface-glass(tailwind.config.ts);
+     各面底色差异(侧栏 muted、遮罩黑)另叠 bg-*，面板类只管 backdrop-filter。
+     新增玻璃浮层一律引本类,不要再写 backdrop-blur-* 原子类。
+     替换 overlay 时去掉原 bg-black/20 dark:bg-white/15，避免与本类底色叠加。 */
   .glass-blur {
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     backdrop-filter: blur(20px) saturate(180%);
+  }
+
+  .glass-blur-chrome {
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    backdrop-filter: blur(28px) saturate(180%);
+  }
+
+  .overlay-dim {
+    background: rgb(0 0 0 / 0.20);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    backdrop-filter: blur(12px) saturate(150%);
+  }
+
+  .dark .overlay-dim {
+    background: rgb(255 255 255 / 0.15);
+  }
+
+  /* ── 动效原语（2026-10-22 第零波）：只加不改 ──
+     .press 对应现有 41 处 active:scale-95，统一收一档到 .96；.enter-pop / .slide-in-left
+     补 6 处 animate-in 空转的入场。类名先不替换现有使用点，第一波再逐面迁移。 */
+  .press {
+    transition:
+      transform var(--motion-fast) var(--ease),
+      background-color var(--motion-fast) var(--ease),
+      border-color var(--motion-fast) var(--ease),
+      color var(--motion-fast) var(--ease);
+  }
+  .press:active {
+    transform: scale(0.96);
+  }
+
+  .enter-pop {
+    animation: enter-pop var(--motion-base) var(--ease-enter) both;
+  }
+
+  .slide-in-left {
+    animation: slide-in-left var(--motion-base) var(--ease-enter) both;
+  }
+
+  /* ── 面板开合动效层（2026-10-24）──
+     只负责动画，不接管定位：外层继续用 absolute/bottom-full/-translate-x-1/2 等
+     定位类，内层或自身挂 .panel-motion 即可。用独立 translate/scale 属性，
+     避免覆盖 Tailwind 的 transform 居中；玻璃面板用 data-panel-kind="fade" 只动 opacity。 */
+  .panel-motion {
+    --panel-from-y: 4px;
+    --panel-scale: 0.97;
+    transform-origin: var(--panel-origin, bottom center);
+  }
+
+  .panel-motion[data-panel-side="bottom"] {
+    --panel-from-y: -4px;
+    --panel-origin: top center;
+  }
+
+  .panel-motion[data-panel-kind="fade"] {
+    --panel-from-y: 0px;
+    --panel-scale: 1;
+  }
+
+  .panel-motion[data-panel-kind="sheet"] {
+    --panel-from-y: 16px;
+    --panel-scale: 1;
+    --panel-origin: bottom center;
+  }
+
+  .panel-motion[data-panel-state="open"] {
+    animation: panel-motion-in var(--motion-fast) var(--ease-enter) both;
+  }
+
+  .panel-motion[data-panel-state="closed"] {
+    animation: panel-motion-out var(--motion-fast) var(--ease) both;
+    pointer-events: none;
+  }
+
+  /* 移动端带 backdrop-blur 的面板不值当为 4px 位移付合成层代价，降级为纯淡入 */
+  @media (max-width: 767px) {
+    .panel-motion[data-panel-kind="pop-soft"] {
+      --panel-from-y: 0px;
+      --panel-scale: 1;
+    }
   }
 
   /* 内容区上沿渐隐(仅 ≥md,由使用处加 hidden md:block)。
@@ -650,78 +753,82 @@ body {
   animation: context-menu-in 0.1s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
-/* ── 欢迎页点阵背景 ─────────────────────────────────────
-   极淡中性圆点平铺;radial mask 让中心(内容区)淡出、四周渐显,
-   点阵只填充边缘留白,不与问候语/输入框抢视觉。
-   点色走 --content-muted 变量,明暗主题自动适配。 ───────────── */
-.dot-grid {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image: radial-gradient(circle, rgb(var(--content-muted) / 0.4) 1px, transparent 1px);
-  background-size: 22px 22px;
-  /* 桌面端:内容块垂直居中偏上(translate-y -8vh),淡出椭圆中心跟着略上移 */
-  -webkit-mask-image: radial-gradient(ellipse 62% 58% at 50% 45%, transparent 30%, black 82%);
-  mask-image: radial-gradient(ellipse 62% 58% at 50% 45%, transparent 30%, black 82%);
-}
-
-/* 移动端:内容中间偏上(justify-center + -6vh),淡出中心同步下移跟随内容块,避免点阵侵入问候/输入区 */
-@media (max-width: 767px) {
-  .dot-grid {
-    -webkit-mask-image: radial-gradient(ellipse 92% 46% at 50% 42%, transparent 30%, black 86%);
-    mask-image: radial-gradient(ellipse 92% 46% at 50% 42%, transparent 30%, black 86%);
+/* 入场原语（第零波）：补 animate-in 空转的 6 处，不改现有调用点 */
+@keyframes enter-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
-/* ── 欢迎页壁纸(设置 → 通用开启;图层层级见 WelcomeWallpaperLayer) ──
-   挂在 .app-shell 内首位:z-index:-1 使它铺在 shell 底色之上、
-   侧栏/内容列之下(shell 加 relative isolate 收拢层叠上下文)。
-   可读性蒙版用 linear-gradient 同层合成在图片上 —— 蒙版天然跟随
-   壁纸铺满整窗(含侧栏底下),不会出现「侧栏鲜艳/内容区发白」的分界。 */
-.welcome-wallpaper {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background-image:
-    linear-gradient(rgb(var(--background) / 0.6), rgb(var(--background) / 0.6)),
-    url('/wallpaper/bizhi.jpg');
-  background-size: cover;
-  background-position: center;
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-/* 壁纸激活:内容列放行(壁纸透出),侧栏变毛玻璃卡片 ——
-   aside 自带的 glass-blur 从「纯色上空转」变成吃到壁纸的真玻璃。
-   蒙版已随壁纸垫在侧栏下,这里只补一层浅色调做出卡片感,浓度别太高
-   (会与底层蒙版叠乘)。聊天态/其他 tab 下壁纸层不存在,:has 不命中,
-   两处恢复不透明 */
-.app-shell:has(> .welcome-wallpaper) .app-shell-column {
-  background-color: transparent;
-}
-.app-shell:has(> .welcome-wallpaper) .app-shell-sidebar {
-  background-color: rgb(var(--surface-muted) / 0.35);
+@keyframes panel-motion-in {
+  from {
+    opacity: 0;
+    translate: 0 var(--panel-from-y);
+    scale: var(--panel-scale);
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
 }
 
-/* ── 桌面会话页壁纸压暗（v3，仅 ≥md）─────────────────────────
-   可读性不再靠「在字底下垫东西」，改成把壁纸层本身压到与 --surface 同亮度：
-   saturate .35 + brightness .42 + blur 20。
-   前两版都是在垫：v1 整列半透纱、v2 中间 760px 不透明「实心阅读池」（黑板），
-   两版都被用户判死。v2 除了难看还白铺 —— 它自身的上下渐隐带正压在正文首行上，
-   实测该行次要灰字只有 1.96:1，与裸壁纸（2.13:1）同样不达标。
-   v2 注释里「壁纸要看得见与次要灰字达标不可能同区共存」这句结论是错的：
-   它只在「叠 alpha 蒙版」这一个前提下成立；压亮度 + 模糊（降局部对比而非整体透明）
-   可以让两者同时成立。别再回到叠透明度的老路。
-   实测（1440×900，正文列 max-w-2xl / y 60–780 逐像素合成，WCAG AA 小字 4.5:1）：
-     正文 245/245/247 → 13.04:1；次要灰字 160/160/168 → 5.47:1，达标面积 99.94%
-     侧栏次要灰字 3.10:1 / 23.9% → 5.61:1 / 99.6%（黑板时代从未达标，本改法顺带治好）
-   blur 会在窗口四周吃进约 3×20px 的透明边，故 inset 外扩 4rem 让模糊圈落在窗外。
-   范围（用户拍板）：只桌面会话页。欢迎页那张大图仍按原浓度呈现；手机端由
-   .mobile-page-scrim 三档蒙版负责，不吃这条。会话态判据 = .is-session 类，
-   由 WelcomeWallpaperLayer 按 chatWelcomeActive(= messages.length===0) 挂。 */
-@media (min-width: 768px) {
-  .welcome-wallpaper.is-session {
-    inset: -4rem;
-    filter: saturate(0.35) brightness(0.42) blur(20px);
+@keyframes panel-motion-out {
+  from {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    translate: 0 var(--panel-from-y);
+    scale: var(--panel-scale);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .press:active {
+    transform: none;
+  }
+  /* 装饰性入场/循环一律停;功能型 spinner 保留但放慢,避免加载态看起来卡死 */
+  .panel-motion[data-panel-state="open"],
+  .panel-motion[data-panel-state="closed"],
+  .enter-pop,
+  .slide-in-left,
+  .sidebar-item-enter,
+  .context-menu-enter,
+  .animate-pop-in,
+  .animate-bounce,
+  .animate-pulse {
+    animation: none;
+  }
+  .animate-spin {
+    animation-duration: 2.4s;
+  }
+  .inline-fig-sk {
+    animation: none !important;
+  }
+  .m-set-head {
+    transition: none;
+  }
+  .mdrawer-open .mdr-st {
+    transition: none !important;
   }
 }
 
@@ -729,30 +836,23 @@ body {
    data-pal 由 layout 首帧内联脚本在首次绘制前写好,首帧即正确 ——
    无闪烁、无水合(hydration)分歧,装饰元素也不需要客户端状态。
    ── 门控类族 ──
-   .fest-only   仅 月白·桂花金 可见(无明暗之分的元素,如登录页月夜层)
-   .fest-night  仅 月白·桂花金 可见 —— 该配色只有深色一态(月夜版),
-                故与 .fest-only 同条件,门控留在这里只为语义明确
    .grid-dawn   仅 格子 + 日出 可见 = 晨光-格子
    .grid-day    仅 格子 + 白天 可见 = 正午-格子
    .grid-night  仅 格子 + 暮色 可见 = 日落-格子
                 (历史错名: 它管的是**暮色**不是晚上,晚上见下面那个)
    .grid-nightfall 仅 格子 + 晚上 可见 = 深夜-格子
-   .no-fest     非 月白·桂花金 可见(黑白基线与格子共用同一份文案,如登录页标语)
    .base-only   仅 黑白基线 可见(该处文案在格子下另有专属版本,如欢迎页问候语)
+   (月白·桂花金专属的 .fest-only/.fest-night/.no-fest 门控已随配色删除)
    注意 ① 四个光态里只有「晚上」是深底,由 applyAppearance 为它写 .dark;
         ② 显隐判据**逐个列出目标取值**,不用 :not() 反推 —— 白天那条曾在新增
            「晚上」时把深夜态误落进白天分支,散点那条也曾"只排除 dusk"而把深夜
            一并吃进来。新增「日出」时三处一并改成逐值列举,这个坑到此为止;
         ③ 缺省(未写 data-grid-tone)按白天处理。
    每个格子专属类要排除 3 个"非己"取值,故下面按 4 组 × 3 行逐个列出。 */
-html:not([data-pal="guihua"]) .fest-only,
-html:not([data-pal="guihua"]) .fest-night,
 html:not([data-pal="grid"]) .grid-dawn,
 html:not([data-pal="grid"]) .grid-day,
 html:not([data-pal="grid"]) .grid-night,
 html:not([data-pal="grid"]) .grid-nightfall,
-html[data-pal="guihua"] .no-fest,
-html[data-pal="guihua"] .base-only,
 html[data-pal="grid"] .base-only,
 /* 缺省(未写 data-grid-tone)= 白天: 三个"非白天"类在缺省下也必须收掉 */
 html[data-pal="grid"]:not([data-grid-tone]) .grid-dawn,
@@ -773,36 +873,6 @@ html[data-pal="grid"][data-grid-tone="dusk"] .grid-nightfall {
   display: none !important;
 }
 
-/* 欢迎页右上角月盘(F-1 定稿案): 落在点阵留白的右上空白区。
-   实心金盘 + 柔边光晕 —— 不用多色标渐变(平色底上会出现马赫带光斑轮廓) */
-.moon-corner {
-  position: absolute;
-  right: 64px;
-  top: 44px;
-  width: 108px;
-  height: 108px;
-  border-radius: 50%;
-  pointer-events: none;
-  background: radial-gradient(
-    circle at 38% 32%,
-    rgb(var(--fest-gold) / 0.95) 0%,
-    rgb(var(--fest-gold) / 0.62) 46%,
-    rgb(var(--fest-gold) / 0.18) 78%,
-    transparent 90%
-  );
-  box-shadow: 0 0 80px 26px rgb(var(--fest-gold) / 0.16);
-}
-
-/* 窄屏: 月盘收小贴角,避让居中的问候/输入块 */
-@media (max-width: 767px) {
-  .moon-corner {
-    right: 22px;
-    top: 20px;
-    width: 84px;
-    height: 84px;
-  }
-}
-
 /* 桂花散点(F-3): 3px 金点 + 7px 柔光晕,沿点阵外圈稀疏散布,避开中心内容带 */
 .osmanthus {
   position: absolute;
@@ -818,8 +888,8 @@ html[data-pal="grid"][data-grid-tone="dusk"] .grid-nightfall {
   box-shadow: 0 0 7px rgb(var(--fest-gold) / 0.4);
 }
 
-/* 散点层归属"桂花金 + 格子"两套配色(点色由 --fest-gold 驱动,不用两份 DOM) */
-html:not([data-pal="guihua"]):not([data-pal="grid"]) .osmanthus-layer {
+/* 散点层归属格子配色(点色由 --fest-gold 驱动) */
+html:not([data-pal="grid"]) .osmanthus-layer {
   display: none;
 }
 
@@ -849,16 +919,7 @@ html[data-pal="grid"][data-grid-tone="night"] .osmanthus i {
   box-shadow: 0 0 9px rgb(var(--fest-gold) / 0.45);
 }
 
-/* 日出/白天/暮色三态都是浅底: 收起点阵 —— 背景纹理交由天光层承担(窗棂格影)。
-   圆点(22px)与格线(128/114px)是两套频率,叠着看会互相打架,也容易生摩尔纹。
-   深夜态例外: 它按定稿"删光"、没有天光层,点阵回归,否则背景只剩一块纯色。
-   判据逐个列值(含"未写 data-grid-tone = 白天"这条缺省),不用 :not() 反推 */
-html[data-pal="grid"]:not([data-grid-tone]) .dot-grid,
-html[data-pal="grid"][data-grid-tone="dawn"] .dot-grid,
-html[data-pal="grid"][data-grid-tone="day"] .dot-grid,
-html[data-pal="grid"][data-grid-tone="dusk"] .dot-grid {
-  display: none;
-}
+/* 点阵图层已整体移除(2026-10-27): 四态判据随之删除,背景纹理统一交由天光层/纯色底承担 */
 
 /* ── 晨光-格子 · 天光层（仅 格子 + 日出 可见,由 .grid-dawn 门控）────
    一天的第一缕光: 光源在**右上**画外低角(≈30°),光斑从右上角溢进来。
@@ -1229,29 +1290,6 @@ html.dark .sidebar-panel::after {
     );
 }
 
-/* 侧栏品牌月相徽标(F-4): 15px 圆缺月(CSS 双圆相减)。
-   缺口色取 --surface-muted —— 侧栏面板底色就是它,镂空处必须与面板同色,
-   侧栏换材质时这里要跟着换(旧值是 --surface-glass) */
-.brand-moon {
-  position: relative;
-  overflow: hidden;
-  flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  background: rgb(var(--fest-gold) / 0.85);
-}
-.brand-moon::after {
-  content: '';
-  position: absolute;
-  left: 4.5px;
-  top: -2px;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  background: rgb(var(--surface-muted));
-}
-
 /* 副标题里的金色「中秋」标签(F-2 定稿变体甲副行) */
 .fest-tag {
   color: rgb(var(--fest-gold));
@@ -1533,33 +1571,20 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   }
 }
 
-/* 流式呈现动效:段级上浮 + 句级淡入(preview-stream-effects.html 的 A3 选型)。
-   作用域只有 live 档(.md-live),即「生成中的 assistant 消息」;历史消息与定格后走
-   rich 档,不挂这两个类,因此打开长对话零动画风暴。
-   上浮给块(transform 对 display:inline 不生效)、淡入给句(inline 只吃 opacity),
-   两者都是块/句「首次挂载」跑一次,React 按 index key 复用节点故不会重放。
-   .md-blk-rise 是同一条上浮的独立工具类:思考流是滑动尾切窗,句序不单调,吃不了句级
-   淡入(preview-reason-motion.html 实测「定稿句改写 148 ≫ 淡入 25」= 动效与内容脱钩),
-   只给整块挂一次上浮。 */
+/* 正文是阅读面:生成中的块/句不挂入场动画,避免结构补全后重复透明与位移。
+   思考窗的独立首次入场保留,不影响正文及其排版。 */
 @keyframes md-blk-rise {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-@keyframes md-sent-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
+:where(.md-live, .md-sent) {
+  animation: none;
 }
-.md-live > *,
 .md-blk-rise {
   animation: md-blk-rise 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
-.md-sent {
-  animation: md-sent-fade 0.42s ease-out both;
-}
 @media (prefers-reduced-motion: reduce) {
-  .md-live > *,
-  .md-blk-rise,
-  .md-sent {
+  .md-blk-rise {
     animation: none;
   }
 }
@@ -1655,6 +1680,11 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   border-radius: 0.75rem;
   text-align: center;
 }
+/* 首图右侧文绕图时,公式卡不能把背景延伸到浮动图底下(块盒会穿过 float):
+   升成 BFC 后卡片自动收窄到浮动旁的可用宽度,长公式走内部横向滚动 */
+.rich-md .math-card {
+  overflow-x: auto;
+}
 .rich-md .katex-display:first-child,
 .rich-md .math-card:first-child {
   margin-top: 0;
@@ -1748,6 +1778,26 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
 .rich-md .exam-question .exam-block-tag {
   color: rgb(var(--accent-foreground));
   background: rgb(var(--accent));
+}
+
+/* 卷面题号: 缀在题干首行左侧、与首行基线对齐;tabular 数字让多题纵向成列,
+   题干自带题号时渲染层先剥离再统一发号,不会出现双号 */
+.rich-md .exam-stem-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.rich-md .exam-qno {
+  flex: 0 0 auto;
+  min-width: 1.3em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--content-primary));
+  user-select: none;
+}
+.rich-md .exam-stem-body {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* 字重层级: 设问题干 500 突出题感,选项与作答保持 400;诗块居中疏排（苹方卷面定稿） */
@@ -2112,7 +2162,7 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   font-weight: 100;
 }
 
-/* 认证页左栏点阵：整面均匀铺满、无遮罩（与欢迎页 .dot-grid 的中心淡出版区分），
+/* 认证页左栏点阵：整面均匀铺满、无遮罩（登录页专用，与已移除的欢迎页点阵无关），
    点色用最浅的 --line + 柔边，低调纹理不抢文字 */
 .auth-dot-grid {
   position: absolute;
@@ -2151,35 +2201,6 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
     rgb(var(--surface)) 62%,
     rgb(var(--surface-muted)) 100%
   );
-}
-
-.auth-night-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.auth-night-stars i {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: rgb(var(--content-muted) / 0.6);
-}
-.auth-night-moon {
-  position: absolute;
-  right: 96px;
-  top: 150px;
-  width: 168px;
-  height: 168px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 38% 32%,
-    rgb(var(--fest-gold) / 0.95) 0%,
-    rgb(var(--fest-gold) / 0.55) 52%,
-    rgb(var(--fest-gold) / 0.12) 78%,
-    transparent 88%
-  );
-  box-shadow: 0 0 90px 30px rgb(var(--fest-gold) / 0.22);
 }
 
 /* 入场动画：元素错峰上浮（MacOS 风格缓动） */
@@ -2251,6 +2272,170 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   stroke: rgb(var(--surface));
 }
 
+/* ═══════════════ 三角形题图卡(```triangle 围栏块)═══════════════
+   零依赖 SVG,与 GameGauge 同路线。配色只走中性灰 token:
+   高亮 = 主文字色,不引入第二个彩色语义,避免在推导正文里抢注意力。
+   版式目标:图有存在感但不压过正文 —— 通栏靠左(与正文左边缘对齐),
+   卡片上限 320(2026-10-27 由 400 收回:400 宽时桌面卡高近半屏)。
+   SVG 坐标系仍是 400,字号线宽由组件按 1/k 反补进画布单位(k = 卡内宽/400),
+   视觉尺寸与卡片宽度解耦 —— 以后调卡片宽度不用再动任何字号。
+   不再做 230px 浮动小图(会被 15px 正文压成缩略图)。 */
+.tri-figure {
+  margin: 1.15rem 0 1.3rem;
+  max-width: 320px;
+  padding: 0.7rem 0.9rem 0.8rem;
+  border: 1px solid rgb(var(--line));
+  border-radius: 1rem;
+  background: rgb(var(--surface));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  --tri-edge: rgb(var(--line-strong));
+  --tri-hi: rgb(var(--content-primary));
+}
+.tri-figure:first-child { margin-top: 0; }
+.tri-figure:last-child { margin-bottom: 0; }
+/* 首图被 hoistTriangleFigure 提到消息最顶:图在上、题干/推导在下,教材版式。
+   不做 float 绕排,整卡靠左与题干首字对齐 */
+.rich-md > .tri-figure:first-child {
+  margin: 0.2rem 0 1.2rem;
+}
+.tri-figure-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 20px;
+}
+.tri-figure-tag {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: rgb(var(--content-muted));
+}
+.tri-figure-meta {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: rgb(var(--content-muted));
+  font-variant-numeric: tabular-nums;
+}
+.tri-figure-svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: 0.3rem auto 0;
+  user-select: none;
+}
+.tri-fill { fill: rgb(var(--content-primary) / 0.025); }
+/* 字号/线宽由 TriangleFigure 按「画布→像素」比 1/k 写进 CSS 变量,这里只留兜底默认值 */
+.tri-angle-arc { fill: transparent; stroke: rgb(var(--line-strong)); stroke-width: var(--tri-arc-w, 1.3); opacity: 0.7; }
+.tri-angle-arc-on { fill: rgb(var(--content-primary) / 0.07); stroke: rgb(var(--content-primary)); stroke-width: var(--tri-arc-on-w, 1.6); opacity: 1; }
+/* 直角画 ∟ 方块代替弧线(课本惯例) */
+.tri-right-mark { fill: none; stroke: rgb(var(--line-strong)); stroke-width: var(--tri-arc-w, 1.3); opacity: 0.7; stroke-linejoin: miter; }
+.tri-right-mark-on { stroke: rgb(var(--content-primary)); stroke-width: var(--tri-arc-on-w, 1.6); opacity: 1; }
+.tri-angle-txt {
+  font-size: var(--tri-fs-angle, 14.5px);
+  fill: rgb(var(--content-muted));
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  /* 小角度的数字会贴到边上：给文字加背景色描边（地图标注手法），压线也可读 */
+  paint-order: stroke;
+  stroke: rgb(var(--surface));
+  stroke-width: var(--tri-halo-w, 3.5px);
+  stroke-linejoin: round;
+}
+.tri-angle-txt-on { fill: rgb(var(--content-primary)); font-weight: 500; }
+.tri-vertex-txt {
+  font-size: var(--tri-fs-vertex, 19px);
+  font-weight: 600;
+  fill: rgb(var(--content-primary));
+  font-family: Georgia, "Times New Roman", serif;
+  pointer-events: none;
+}
+.tri-side-txt {
+  font-size: var(--tri-fs-side, 16px);
+  font-style: italic;
+  fill: rgb(var(--content-secondary));
+  font-family: Georgia, "Times New Roman", serif;
+  pointer-events: none;
+}
+.tri-side-txt-on { fill: rgb(var(--content-primary)); font-weight: 600; }
+.tri-dot { fill: rgb(var(--content-secondary)); }
+.tri-dot-on { fill: rgb(var(--content-primary)); }
+
+/* 辅助线(高线/中线/角平分线):虚线 + 淡一档的灰,在边线之上但要一眼认出是「辅助」 */
+.tri-aux {
+  fill: none;
+  stroke: rgb(var(--content-muted));
+  stroke-width: var(--tri-aux-w, 1.2);
+  stroke-dasharray: var(--tri-aux-dash, 6 5);
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+/* 钝角作高时底边的延长段:再淡一档,避免和底边本身看成两条边 */
+.tri-aux-ext { opacity: 0.5; }
+/* 垂足的 ∟ 与中线的等分杠:实线,短促 */
+.tri-aux-right,
+.tri-aux-tick {
+  fill: none;
+  stroke: rgb(var(--content-muted));
+  stroke-width: var(--tri-aux-w, 1.2);
+  stroke-linejoin: miter;
+  opacity: 0.9;
+}
+.tri-aux-dot { fill: rgb(var(--content-secondary)); }
+.tri-aux-txt {
+  font-size: var(--tri-fs-aux, 16px);
+  font-weight: 600;
+  fill: rgb(var(--content-secondary));
+  font-family: Georgia, "Times New Roman", serif;
+  pointer-events: none;
+}
+
+/* 图注即「已知条件」:字号贴近正文(13.5px vs 15px),不再当脚注处理 */
+.tri-caption {
+  margin-top: 0.55rem;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: rgb(var(--content-secondary));
+  font-variant-numeric: tabular-nums;
+}
+.tri-raw {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid rgb(var(--line));
+  border-radius: 0.75rem;
+  background: rgb(var(--code-bg));
+  font-size: 13px;
+  overflow-x: auto;
+}
+/* 流式期:triangle 围栏还没写完时的定高骨架(高度对齐成图后的卡片,避免定格跳动) */
+.tri-live-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 260px;
+  max-width: 320px;
+  margin: 1rem 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid rgb(var(--line));
+  border-radius: 1rem;
+  background: rgb(var(--surface));
+}
+.tri-skeleton-body {
+  flex: 1;
+  border-radius: 0.6rem;
+  background: rgb(var(--content-primary) / 0.03);
+}
+
+@media (max-width: 767px) {
+  /* 手机端同样封顶 320(窄屏再让位于消息列),靠左。
+     字号线宽已由组件按缩放比反补进坐标系,不再需要断点补偿值 */
+  .tri-figure,
+  .rich-md > .tri-figure:first-child {
+    max-width: min(320px, 100%);
+    margin: 1rem 0;
+  }
+}
+
 /* ═══════════════ 方案 C · 手机端壳层(≤767px)═══════════════
    设计来源: D:\项目表1\手机端方案C-完整交互.html(用户定稿原型,2026-10-03)。
    壁纸=全局主视觉:移动端去掉桌面共用的 0.6 基座蒙版,改「每页渐变蒙版」三档 ——
@@ -2262,72 +2447,11 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
      底距只保留 max(软键盘高度, Home Indicator 安全区)叠加在 12px 之上,键盘/刘海仍让得开。 */
   :root {
     --m-input-pad: 12px;
+    /* 安卓 WebView 拿不到底部 safe-area(sab=0),手势条高约 24px:这里兜底,
+       输入胶囊底距 = 12px 呼吸 + 24px 手势条 = 离屏幕底 36px。 */
+    --m-safe-bottom: max(var(--sab, 0px), 24px);
     /* 胶囊内 textarea 的行高下限:桌面 44px 触控高度在单行胶囊里过高,手机端收到 36px */
     --m-ta-min: 36px;
-  }
-
-  /* 壁纸:蒙版职责移交 .mobile-page-scrim,只留原图;定位与原型一致(主体偏上) */
-  .welcome-wallpaper {
-    background-image: url('/wallpaper/bizhi.jpg');
-    background-position: center 20%;
-  }
-
-  /* 每页渐变蒙版:垫在壁纸(z:-1)之上、内容列之下(WelcomeWallpaperLayer DOM 顺序保证) */
-  .mobile-page-scrim {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    display: block;
-  }
-  /* 欢迎页档:问候语(白字)落在 30%-55% 高度带,原 0.10 太透 —— 实测浅色壁纸段白字不可读,
-     把中段抬到 0.30 并把压白提前到 52%,同时保住顶部壁纸的鲜亮度 */
-  .mobile-page-scrim.mps-home {
-    background: linear-gradient(180deg,
-      rgb(var(--background) / 0.40) 0%,
-      rgb(var(--background) / 0.22) 28%,
-      rgb(var(--background) / 0.46) 52%,
-      rgb(var(--background) / 0.80) 74%,
-      rgb(var(--background) / 0.95) 100%);
-  }
-  /* 会话页蒙版:壁纸只留顶部一条光带,消息首行起点即完全收口。
-     浓度与锚点都是扫出来的(scripts/tmp-check-wp-mobile-scrim.cjs,真实渲染像素):
-     手机端壁纸层没有桌面那层 0.6 基座预压(原图直接上屏),而次要灰字 110 在
-     96% 白底上就只剩 4.35:1 —— 正文区只要露一点图必然掉出 AA。上一版按百分比
-     收口(0.72@26%)实测首行只有 2.9:1(浅色)/2.5:1(深色白字压亮图),不可读。
-     只有「首行起 1.0 实底」这一档在两主题 × sat=0/59 四种组合下全 100% 达标
-     (正文 15.5/18,次要 4.7/7.5),且顶带壁纸噪声 15.5 与改版前 17.7 同级。
-     锚点必须走 var(--m-chat-pad-top) 而非百分比:刘海机首行在 107px(=12.7%),
-     百分比收口会甩到正文底下 —— 那正是上一版读不动的根因。 */
-  .mobile-page-scrim.mps-chat {
-    background: linear-gradient(180deg,
-      rgb(var(--background) / 0.26) 0px,
-      rgb(var(--background) / 0.55) calc(var(--m-chat-pad-top) - 32px),
-      rgb(var(--background) / 1) var(--m-chat-pad-top));
-  }
-  .mobile-page-scrim.mps-work {
-    background: linear-gradient(180deg,
-      rgb(var(--background) / 0.68) 0%,
-      rgb(var(--background) / 0.80) 40%,
-      rgb(var(--background) / 0.94) 100%);
-  }
-
-  /* 壁纸在场上时:欢迎页 hero 与功能页页头改白字 + 轻投影(原型定稿);
-     壁纸关(纯色底)时不命中 :has,保持主题字色 —— 与内容列透明同一判据 */
-  .app-shell:has(> .welcome-wallpaper) .m-hero-title {
-    color: #fff;
-    text-shadow: 0 1px 16px rgb(0 0 0 / 0.35);
-  }
-  .app-shell:has(> .welcome-wallpaper) .m-hero-sub {
-    color: rgb(255 255 255 / 0.85);
-    text-shadow: 0 1px 8px rgb(0 0 0 / 0.35);
-  }
-  .app-shell:has(> .welcome-wallpaper) .m-work-title {
-    color: #fff;
-    text-shadow: 0 1px 10px rgb(0 0 0 / 0.3);
-  }
-  .app-shell:has(> .welcome-wallpaper) .m-work-sub {
-    color: rgb(255 255 255 / 0.8);
-    text-shadow: 0 1px 8px rgb(0 0 0 / 0.3);
   }
 
   /* 方案 C 玻璃卡(功能页卡片/横滑最近对话卡共用):近实白玻璃+白描边+18px 圆角+柔投影 */
@@ -2356,11 +2480,17 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
 }
 
 /* 通道① 轻提示:手机端 toast 玻璃胶囊居中(重排 iziToast 宿主;桌面 topRight 不受影响)
-   top 挂 --m-chrome-top 体系(2026-10-17 真机反馈:写死 104px 在部署缺这条规则时退化到
-   iziToast 原生 top:0 贴顶,被刘海/状态栏压住):浏览器内(sat=0)=104px 与原值等值,
-   真机/PWA 全屏 sat>0 时自动下移;bottom 同理让出手势条 Home Indicator。 */
-@media (max-width: 767px) {
-  .iziToast-wrapper-topRight {
+   top 挂 --m-chrome-top 体系,避开刘海/状态栏;bottom 同理让出手势条 Home Indicator。
+
+   2026-10-28 真机「弹窗贴顶压住状态栏」根因:iziToast 在移动端(UA 含 Mobi 或窗口 ≤568px)
+   会把 topRight/topLeft/topCenter 统一重写成 .iziToast-wrapper-topCenter 宿主
+   (dist/js/iziToast.js 的 position 重映射),所以只覆盖 topRight 的规则永远不命中,
+   最终退回内置 top:0 贴顶。两个宿主都要覆盖:手机稳定走 topCenter,
+   569–767px 窄桌面窗口仍走 topRight;横屏/平板宽度超过断点但同属移动 UA,
+   用 hover:none 一并兜住。 */
+@media (max-width: 767px), (hover: none) {
+  .iziToast-wrapper-topRight,
+  .iziToast-wrapper-topCenter {
     left: 0;
     right: 0;
     top: calc(var(--m-chrome-top, 16px) + 88px);
@@ -2370,7 +2500,8 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
     text-align: center; /* capsule 宽度 100%,toast 是其中的 inline-block: 不覆盖原生 right 则胶囊仍靠右,居中意图落空 */
     pointer-events: none;
   }
-  .iziToast-wrapper-topRight .iziToast {
+  .iziToast-wrapper-topRight .iziToast,
+  .iziToast-wrapper-topCenter .iziToast {
     width: max-content;
     max-width: 320px;
     pointer-events: auto;
@@ -2710,4 +2841,855 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   .rt-slider.at-max .rt-thumb::after,
   .rt-burst i { animation: none; }
   .rt-burst i { opacity: var(--o, 0.8); }
+}
+
+/* ═══ 样式维度: html[data-style](与明暗 .dark / 配色 data-pal 正交)════════════
+   classic = 现行基线,本节无任何规则;bigsur = Big Sur 玻璃(2026-10-24 trial 落地)。
+   写入方: layout.tsx 首帧内联脚本 / theme.ts applyAppearance / 设置面板「样式」行;
+   存储键 uiStyle,缺省 bigsur(trial 验收默认新样式,classic 需显式选)。
+   参数定稿自 GitHub 参考实现(预览见 public/preview-ui-style.html):
+     · 窗口双层软阴影(近小远大) → PuruVJ/macos-web Window.svelte 的 --elevated-shadow
+     · 玻璃"双环"描边(内亮圈=厚度高光,外暗圈=边缘定义) → macos-web Dock/Window 的
+       inset 0 0 0 .2~.9px 双环技法
+     · 桌面壳系统材质(transparent 窗口 + body 透明 + Mica/Acrylic/NSVisualEffectView)
+       → tauri-apps/window-vibrancy,二期接 Rust,本节先纯 CSS。
+   规则按生效面分组: ①token ②强调色(仅黑白基线) ③玻璃描边 ④浮层阴影 ⑤侧栏 ⑥输入岛。 */
+
+/* ① 形状/阴影 token。圆角经 tailwind 语义别名(var 引用)整组抬一档:
+   card 12→14 / panel 16→18 / sheet 28→32,组件层零改动 */
+html[data-style="bigsur"] {
+  --radius-card: 0.875rem;
+  --radius-panel: 1.125rem;
+  --radius-sheet: 2rem;
+  --shadow-window: 0 8.5px 10px rgb(0 0 0 / 0.115), 0 68px 80px rgb(0 0 0 / 0.23);
+  --glass-ring: inset 0 0 0 0.5px rgb(255 255 255 / 0.55), 0 0 0 0.5px rgb(0 0 0 / 0.08);
+  --glass-ring-float: var(--glass-ring), 0 8px 32px rgb(0 0 0 / 0.12);
+}
+html[data-style="bigsur"].dark {
+  --glass-ring: inset 0 0 0 0.5px rgb(255 255 255 / 0.09), 0 0 0 0.5px rgb(0 0 0 / 0.42);
+  --glass-ring-float: var(--glass-ring), 0 8px 32px rgb(0 0 0 / 0.4);
+}
+
+/* ② 强调色 → 系统蓝(仅黑白基线;格子/桂花金保留各自强调色,玻璃材质照常生效)。
+   用户气泡/头像/新建按钮/发送键都吃 --accent,换这一组即整体翻蓝 */
+html[data-style="bigsur"]:not([data-pal="grid"]):not([data-pal="guihua"]) {
+  --accent: 0 122 255;
+  --accent-hover: 10 108 244;
+  --accent-foreground: 255 255 255;
+  --accent-soft: 224 237 255;
+}
+html[data-style="bigsur"].dark:not([data-pal="grid"]):not([data-pal="guihua"]) {
+  --accent: 10 132 255;
+  --accent-hover: 42 142 255;
+  --accent-foreground: 255 255 255;
+  --accent-soft: 26 54 93;
+}
+
+/* ③ 玻璃材质统一加双环(三档 blur 配方不动,只添描边) */
+html[data-style="bigsur"] .glass-blur,
+html[data-style="bigsur"] .glass-blur-chrome {
+  box-shadow: var(--glass-ring);
+}
+
+/* ④ 重浮层: shadow-2xl 换双层软阴影(右滑面板/上下文菜单等)。
+   本条特异性(0,2,0)已压过 Tailwind 工具类(0,1,0),不用 !important ——
+   留了会被 ⑦(设置面板停靠)的 box-shadow:none 反压 */
+html[data-style="bigsur"] .shadow-2xl {
+  box-shadow: var(--shadow-window);
+}
+html[data-style="bigsur"] aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
+  box-shadow: none;
+}
+
+/* ⑤ 侧栏(2026-10-24 用户两轮定案): 停靠不悬浮,但毛玻璃要留 ——
+   贴边零边距、直角、右缘发丝分隔线,底色半透明(vibrancy 材质,
+   无壁纸时透出页面底色,有壁纸时透出壁纸,blur 来自组件上的 glass-blur)。
+   box-shadow 保持 none: 通铺面板不描双环,双环只给真正的浮层 */
+html[data-style="bigsur"] .app-shell-sidebar {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: rgb(var(--surface-muted) / 0.68);
+  box-shadow: none;
+}
+/* 停靠形态下关掉旧浮动卡的「右缘入影」渐变(右缘 5% 黑向左渐隐):
+   顶栏垫同底后已与侧栏同色,这层渐变是最后一个色差来源 —— 通铺灰面必须平 */
+html[data-style="bigsur"] .sidebar-panel::after {
+  background-image: none;
+}
+html[data-style="bigsur"].dark .app-shell-sidebar {
+  background-color: rgb(var(--surface-muted) / 0.62);
+}
+
+/* ⑥ 主输入卡: 灰岛(2026-10-26 用户定案:颜色与侧栏一致)。
+   底色用纯 muted —— 半透明叠在白纸(内容浮层)上会偏浅,重蹈顶栏覆辙。
+   卡内原本「白卡灰钮」的小钮/胶囊(bg-surface-muted)反白保持对比 */
+html[data-style="bigsur"] .composer-card {
+  background-color: rgb(var(--surface-muted));
+  box-shadow: var(--glass-ring-float);
+}
+html[data-style="bigsur"] .composer-card .bg-surface-muted {
+  background-color: rgb(var(--surface));
+}
+
+/* ⑥b 玻璃卡统一灰(2026-10-26 用户定案:热力图卡等与侧栏同灰)。
+   bg-surface-glass 的卡(欢迎页热力图卡/底部 dock/搜索弹窗)改纯 muted ——
+   不透明而非半透明:叠在白纸内容浮层上,半透明必偏浅(顶栏/输入岛两次教训)。
+   blur 随之失效但无害;classic 不受影响(规则门在 bigsur) */
+html[data-style="bigsur"] .bg-surface-glass {
+  background-color: rgb(var(--surface-muted));
+}
+
+/* ⑦ 设置面板内部导航列(2026-10-24 用户两轮定案): 与主侧栏同口径 ——
+   停靠(压掉 m-2 圆角玻璃卡的外形)+ 保留毛玻璃半透明底。
+   不写 box-shadow,让 ③ 的双环照常生效 */
+html[data-style="bigsur"] .m-set nav.glass-blur {
+  margin: 0;
+  border: 0;
+  border-right: 1px solid rgb(var(--line) / 0.7);
+  border-radius: 0;
+  background-color: rgb(var(--surface-muted) / 0.6);
+}
+html[data-style="bigsur"].dark .m-set nav.glass-blur {
+  background-color: rgb(var(--surface) / 0.4);
+}
+
+/* ⑨+⑩ 顶栏灰带 + 内容浮层(2026-10-25 用户图二定稿):
+   主列顶部整块灰 chrome(与侧栏同材质连成 L),内容是一张白纸 ——
+   左上角 12px 圆角,灰色从角缺口露出来。白纸用 column 的 z:-1 伪元素画
+   (column 加 isolate 收拢层叠,纸在 column 底色之上、页面内容之下)。
+   顶栏条不再描线/倒角 —— 与灰带融为一体,分界就是纸的圆角。
+   作用面:md+ 且页面渲染了顶栏条(:has 判据,错题本等无顶栏页不受影响);
+   移动端(<md)与壁纸模式(壁纸直透、保持原氛围)均回退 */
+@media (min-width: 768px) {
+  html[data-style="bigsur"] .app-shell-column:has(.topbar-strip) {
+    background-color: rgb(var(--surface-muted));
+    isolation: isolate;
+    /* 内容整体让出灰带的高度: 面具条/滚动区从纸面顶部开始,
+       不再被 absolute 的顶栏条盖住(2026-10-26: 面具条玻璃"看不见"的真因) */
+    padding-top: 44px;
+  }
+  html[data-style="bigsur"] .app-shell-column:has(.topbar-strip)::before {
+    content: '';
+    position: absolute;
+    top: 44px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgb(var(--surface));
+    /* 深渊微光: 辉光变量只在 .dark 定义,浅色模式 var() 无值回落 none。
+       星空瓦片相位对齐列坐标(0 -44px): 纸面从灰带下沿起算,不偏移会在缝线上切出半颗星 */
+    background-image: var(--abyss-sky);
+    background-repeat: repeat, repeat, no-repeat, no-repeat;
+    background-position: 0 -44px, 0 0, 0 0, 0 0;
+    border-top: 1px solid rgb(var(--line) / 0.7);
+    /* 两上角都圆: 深色下灰带比纸亮,右上留直角会出现浅色直角缺口 */
+    border-radius: 12px 12px 0 0;
+    z-index: -1;
+  }
+}
+html[data-style="bigsur"] .topbar-strip {
+  background-color: rgb(var(--surface-muted));
+}
+
+/* ═══ 深渊微光 · 画布辉光(2026-10-31 用户定稿 ④) ════════════════
+   bigsur md+ 的辉光在纸面伪元素上(见上),此处补齐其余画布:
+   移动端(<md)与 classic 桌面的列底直接叠同款辉光。
+   google 深色有自己的皮肤令牌(未蓝移),:not 排除保持其原貌;
+   bigsur md+ 列底虽也命中,但被不透明纸面盖住,无副作用 */
+html.dark:not([data-style="google"]) .app-shell-column {
+  background-image: var(--abyss-sky);
+  background-repeat: repeat, repeat, no-repeat, no-repeat;
+  /* isolate: 让 z:-1 的流星层(.abyss-sky)收进列内层叠,不会坠到列底色之后;
+     侧栏是 z-50 的 fixed 兄弟,不受影响 */
+  isolation: isolate;
+}
+
+/* ═══ 深渊微光 · 流星 ═════════════════════════════════════
+   .abyss-sky 由 (app)/layout.tsx 渲染(三颗 <i>),与纸面同处 z:-1 层带,
+   树序在纸面伪元素之后 → 流星从星星上面划过。
+   动效豁免说明(同 bloom 壁纸先例): 流星是用户显式点单的背景动效,
+   不读 prefers-reduced-motion —— 本机系统动画关闭时浏览器一律上报 reduce,
+   门控等于永远停用;其余装饰动效纪律不变。只动 transform/opacity。 */
+@keyframes abyss-meteor-fall {
+  0% { transform: translate3d(0, 0, 0) rotate(-35deg); opacity: 0; }
+  3% { opacity: 0.9; }
+  9% { transform: translate3d(-320px, 224px, 0) rotate(-35deg); opacity: 0; }
+  100% { transform: translate3d(-320px, 224px, 0) rotate(-35deg); opacity: 0; }
+}
+html.dark:not([data-style="google"]) .abyss-sky {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+html.dark:not([data-style="google"]) .abyss-sky i {
+  position: absolute;
+  width: 130px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: linear-gradient(to right, rgb(235 242 255 / 0.95), rgb(170 196 255 / 0.4) 55%, transparent);
+  opacity: 0;
+  animation: abyss-meteor-fall 11s linear infinite;
+}
+html.dark:not([data-style="google"]) .abyss-sky i:nth-child(1) { top: 12%; left: 68%; }
+html.dark:not([data-style="google"]) .abyss-sky i:nth-child(2) { top: 26%; left: 86%; width: 92px; animation-duration: 14s; animation-delay: 6.8s; }
+html.dark:not([data-style="google"]) .abyss-sky i:nth-child(3) { top: 7%; left: 47%; width: 158px; animation-duration: 17s; animation-delay: 10.5s; }
+
+/* ═══ 深渊微光 · 输入岛提亮 ═════════════════════════════
+   纯黑画布上,输入卡的 muted 底只比画布亮 10 阶,肉眼读不出轮廓(输入框"隐身")。
+   两变体容器共用 [data-composer-anchor] 钩子,统一抬到 slate 档(#181B28,
+   带一点蓝的黑灰,延续「蓝中夹黑」),发丝线提到 line-strong;
+   卡内小钮沿用 bigsur 反白思路改深底(浅色"白卡灰钮"的镜像),对比反而变大 */
+html.dark:not([data-style="google"]) [data-composer-anchor] {
+  background-color: rgb(24 27 40);
+  border-color: rgb(var(--line-strong));
+}
+html.dark:not([data-style="google"]) [data-composer-anchor] .bg-surface-muted {
+  background-color: rgb(var(--surface));
+}
+
+/* ═══ 样式维度: html[data-style="google"]（Google 2020）═══════════════
+   参照 Gmail 2020 改版 + Google Chat 2020：浅灰蓝侧栏、白底内容、8px 卡片、
+   #1A73E8 主色、顶栏搜索框、移动端固定顶栏 + M2 底部导航。
+   所有规则门控在 google，classic / bigsur 完全不受影响。
+   预览页: public/preview-material3.html（文件名沿用旧版，内容是 Google 2020）
+   写入方: layout.tsx 首帧脚本 / theme.ts applyAppearance / 设置面板「样式」行 */
+
+/* ① token: 强调色蓝 + 一组更小的圆角（Gmail 2020：按钮 4 / 卡片 8） */
+html[data-style="google"] {
+  --radius-control: 0.25rem;
+  --radius-card: 0.5rem;
+  --radius-panel: 0.5rem;
+  --radius-sheet: 1rem;
+  --accent: 26 115 232;         /* #1A73E8 */
+  --accent-hover: 23 101 204;   /* #1765CC */
+  --accent-foreground: 255 255 255;
+  --accent-soft: 232 240 254;   /* #E8F0FE */
+
+  /* 基础色阶: Google 2020 的白纸 / 浅灰蓝面 / #DADCE0 线 */
+  --background: 255 255 255;
+  --surface: 255 255 255;
+  --surface-muted: 246 248 252;   /* #F6F8FC 侧栏 / 搜索框底 */
+  --surface-subtle: 241 243 244;  /* #F1F3F4 chips / hover */
+  --surface-glass: 255 255 255;
+  --line: 218 220 224;            /* #DADCE0 */
+  --line-strong: 189 193 198;     /* #BDC1C6 */
+  --content-primary: 32 33 36;    /* #202124 */
+  --content-secondary: 95 99 104; /* #5F6368 */
+  --content-muted: 128 134 139;   /* #80868B */
+}
+html[data-style="google"].dark {
+  --accent: 138 180 248;        /* #8AB4F8 */
+  --accent-hover: 174 203 250;  /* #AECBFA */
+  --accent-foreground: 32 33 36;
+  --accent-soft: 40 55 77;
+
+  /* 深色走 Google 的暖灰,不是项目原来的近纯黑(#0C0C0D) */
+  --background: 32 33 36;         /* #202124 */
+  --foreground: 232 234 237;      /* #E8EAED */
+  --surface: 32 33 36;            /* #202124 */
+  --surface-muted: 41 42 45;      /* #292A2D */
+  --surface-subtle: 48 49 52;     /* #303134 */
+  --surface-glass: 41 42 45;
+  --line: 95 99 104;              /* #5F6368 */
+  --line-strong: 128 134 139;     /* #80868B */
+  --content-primary: 232 234 237;
+  --content-secondary: 154 160 166; /* #9AA0A6 */
+  --content-muted: 128 134 139;
+}
+
+/* ② 外框: Google 产品是整屏白/灰，不要窗口卡片与 6px 外框 */
+html[data-style="google"] .app-frame {
+  padding: 0;
+  background-color: rgb(var(--surface));
+}
+html[data-style="google"] .app-shell {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: rgb(var(--surface));
+}
+
+/* ③ 侧栏: 贴边、选中项右圆角（Gmail 的标志性形态）。
+   2026-10-27 定案：删掉 #F6F8FC 灰底，与内容区同为白纸（深色同为 #202124）；
+   侧栏与顶栏的衔接由下方 ⑤ 的全宽分隔线统一收口 */
+html[data-style="google"] .app-shell-sidebar {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: rgb(var(--surface));
+}
+html[data-style="google"] .app-shell-sidebar:not([data-collapsed]) {
+  width: 16rem;
+}
+html[data-style="google"] .sidebar-panel::after {
+  background-image: none;
+}
+html[data-style="google"] .app-shell-sidebar .bg-accent-soft {
+  border-radius: 0 12px 12px 0;
+  color: rgb(var(--accent));
+}
+html[data-style="google"] .sidebar-material {
+  display: none;
+}
+
+/* ④ 新对话: 白底 + 轻阴影的 pill（Gmail Compose），但收一档尺寸——
+   48px/16px 圆角在 256 侧栏里显得臃肿（2026-10-26 用户反馈） */
+html[data-style="google"] .sidebar-new-chat {
+  height: 2.5rem;
+  border-radius: 0.75rem !important;
+  border-color: transparent !important;
+  background-color: rgb(var(--surface)) !important;
+  box-shadow: 0 1px 2px 0 rgb(60 64 67 / 0.18);
+  padding-left: 0.875rem;
+  padding-right: 0.875rem;
+  font-size: 13px;
+}
+html[data-style="google"].dark .sidebar-new-chat {
+  /* 深色下侧栏也是 #202124，白卡会跟底色贴死；按 Google 深色规范抬到表面 2 级 */
+  background-color: rgb(var(--surface-muted)) !important;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.45);
+}
+html[data-style="google"] .sidebar-new-chat svg {
+  color: rgb(var(--accent));
+}
+
+/* 侧栏品牌行与 Google 顶栏同高（56px），两者在同一水平线上衔接 */
+html[data-style="google"] .sidebar-head {
+  height: 3.5rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom: 1px solid rgb(var(--line));
+}
+
+/* ⑤ 顶栏（结构在 TopBar 的 google 分支里；这里只定材质）
+   2026-10-27：侧栏转白后，顶栏自己的 border-bottom 会在 x=256 处突然收笔，
+   与侧栏头部接不上。改为「一段全宽分隔线」：侧栏头与顶栏都保持 56px，
+   线由 shell 画在两者上方（z 高于侧栏/顶栏底），左右完全一条；
+   错题本（无 .topbar-google）不画，仍由侧栏头自己的描边收口 */
+html[data-style="google"] .topbar-google {
+  background-color: rgb(var(--surface));
+  border-bottom-color: transparent;
+}
+@media (min-width: 768px) {
+  html[data-style="google"] .app-shell:has(.topbar-google)::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(3.5rem - 1px);
+    height: 1px;
+    background-color: rgb(var(--line));
+    pointer-events: none;
+    z-index: 60;
+  }
+}
+/* Google 顶栏在文档流内占 64px，聊天滚动区不再需要浮层让位带；
+   顶部渐隐层也撤掉（顶栏有实底与分割线，不需要渐隐） */
+html[data-style="google"] .chat-scroll-fade {
+  padding-top: 1rem;
+}
+html[data-style="google"] .top-fade {
+  display: none;
+}
+
+/* ⑥ 输入区: 8px 圆角 + 1px 描边 + 聚焦蓝环（Gmail 表单），不是玻璃岛 */
+html[data-style="google"] .composer-card {
+  border-radius: 0.5rem;
+  border-color: rgb(var(--line));
+  background-color: rgb(var(--surface));
+  box-shadow: none;
+}
+html[data-style="google"] .composer-card:focus-within {
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 0 1px rgb(var(--accent));
+}
+
+/* ⑦ 消息: 用户气泡浅蓝 + 8px 圆角；AI 头像 32px（Google Chat 2020） */
+html[data-style="google"] .user-bubble {
+  background-color: rgb(var(--accent-soft));
+  border-radius: 0.5rem 0.5rem 0 0.5rem;
+}
+html[data-style="google"] .user-bubble p {
+  color: rgb(var(--content-primary));
+}
+html[data-style="google"] .msg-avatar {
+  width: 2rem;
+  height: 2rem;
+}
+html[data-style="google"] .msg-avatar svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* ⑧ 欢迎页: 极细字重 → 400（Google 不用 100 字重做标题） */
+html[data-style="google"] .m-hero-title {
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+/* ⑨ 玻璃卡（热力图/搜索面板/底部 dock）→ 白卡 + 轻阴影 + 8px */
+html[data-style="google"] .bg-surface-glass {
+  background-color: rgb(var(--surface));
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 2px 0 rgb(60 64 67 / 0.15);
+}
+html[data-style="google"].dark .bg-surface-glass {
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.45);
+}
+
+/* ⑩ 设置面板: Google 2020 化（2026-10-27）
+   桌面 = 880×608 的 8px 对话框 + 56px 标题条 + 白底贴边导航（右侧 1px 线）；
+   移动端 = 8px 列表卡。红点/玻璃/悬浮槽等 macOS 语义在 google 下全部退场 */
+html[data-style="google"] .m-set {
+  background-color: rgb(var(--surface));
+}
+@media (min-width: 768px) {
+  html[data-style="google"] .m-set:not([data-force-open]) {
+    width: min(880px, calc(100vw - 2rem));
+    height: 38rem;
+    max-height: calc(100dvh - 2rem);
+    border: 1px solid rgb(var(--line));
+    border-radius: 0.5rem;
+    box-shadow: 0 24px 48px rgb(32 33 36 / 0.24), 0 4px 12px rgb(32 33 36 / 0.12);
+  }
+}
+html[data-style="google"].dark .m-set:not([data-force-open]) {
+  box-shadow: 0 24px 48px rgb(0 0 0 / 0.55), 0 4px 12px rgb(0 0 0 / 0.35);
+}
+html[data-style="google"] .m-set .m-set-seam,
+html[data-style="google"] .m-set .m-set-corner {
+  display: none;
+}
+
+/* 导航列:白底、贴边、右侧一条线;去掉毛玻璃与悬浮圆角 */
+html[data-style="google"] .m-set .settings-nav {
+  background-color: rgb(var(--surface));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+@media (min-width: 768px) {
+  html[data-style="google"] .m-set .settings-nav {
+    margin: 0;
+    width: 13rem;
+    border: 0;
+    border-right: 1px solid rgb(var(--line));
+    border-radius: 0;
+    padding: 0.5rem 0 0.75rem;
+  }
+}
+html[data-style="google"] .m-set .settings-nav-group {
+  padding: 1rem 1.25rem 0.375rem !important;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: rgb(var(--content-secondary));
+}
+html[data-style="google"] .m-set .settings-nav-row {
+  min-height: 2.25rem;
+  margin-right: 0.5rem;
+  padding: 0 0.75rem 0 1.25rem !important;
+  border-radius: 0 1.125rem 1.125rem 0;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+  color: rgb(var(--content-primary));
+}
+html[data-style="google"] .m-set .settings-nav-row:hover {
+  background-color: rgb(var(--surface-subtle));
+}
+html[data-style="google"] .m-set .settings-nav-row[data-active] {
+  background-color: rgb(var(--accent-soft));
+  color: rgb(var(--accent));
+  font-weight: 500;
+}
+html[data-style="google"] .m-set .settings-nav-row[data-active] .settings-nav-indicator {
+  display: none;
+}
+html[data-style="google"] .m-set .settings-nav-row svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+/* 内容:加大留白,分区标题 21/400（Gmail 设置页） */
+@media (min-width: 768px) {
+  html[data-style="google"] .m-set .m-set-content {
+    padding-left: 1.75rem;
+    padding-right: 1.75rem;
+  }
+  html[data-style="google"] .m-set .m-set-titlebar {
+    margin-left: -1.75rem;
+    margin-right: -1.75rem;
+    padding-left: 1.75rem;
+    padding-right: 1.75rem;
+    padding-top: 1.25rem;
+  }
+  html[data-style="google"] .m-set .m-set-title {
+    font-size: 1.3125rem;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* 卡片:8px（组件里写的是 rounded-xl，靠样式层压一档）;半透明白卡收成实底 */
+html[data-style="google"] .m-set .rounded-xl {
+  border-radius: 0.5rem;
+}
+html[data-style="google"] .m-set [class*="bg-surface/60"] {
+  background-color: rgb(var(--surface));
+}
+
+/* 分段器:Google 2020 的 4px 方角 + 选中浅蓝（不是实心主色） */
+html[data-style="google"] .m-set .ds-seg {
+  padding: 2px;
+  gap: 2px;
+  border-radius: 0.25rem;
+  background-color: rgb(var(--surface-subtle));
+}
+html[data-style="google"] .m-set .ds-seg > button {
+  border-radius: 0.125rem;
+}
+html[data-style="google"] .m-set .ds-seg > button[aria-pressed="true"] {
+  background-color: rgb(var(--accent-soft));
+  color: rgb(var(--accent));
+  box-shadow: none;
+}
+
+/* 移动端设置列表卡：2026-10-31 阴影代替边框。
+   卡面与列底同属灰阶系，靠外投影分层而不是描边；两层极淡投影——近距定轮廓、远距做浮起。
+   深色下卡面只比列底亮一档，投影须加深才读得出边界。 */
+.m-set .m-set-listcard {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.05),
+    0 6px 16px -8px rgb(0 0 0 / 0.12);
+}
+.dark .m-set .m-set-listcard {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.35),
+    0 8px 20px -10px rgb(0 0 0 / 0.6);
+}
+
+/* 设置二级页卡片：2026-10-31 统一阴影代替边框。
+   纯灰卡一律挂 .set-card（去掉 border），靠两层外投影与列底分层；语义色卡
+   （红/琥珀/紫/蓝/绿提示、选中态 accent）仍保留描边，用来表达状态而非分层。 */
+.set-card {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 6px 16px -8px rgb(0 0 0 / 0.12);
+}
+.dark .set-card {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.35),
+    0 8px 20px -10px rgb(0 0 0 / 0.6);
+}
+
+/* 移动端:Google 列表卡 8px、组标签次级灰;页头回到 400 字重 */
+@media (max-width: 767px) {
+  html[data-style="google"] .m-set .m-set-listcard {
+    border-radius: 0.5rem;
+    border-color: rgb(var(--line) / 0.7);
+  }
+  html[data-style="google"] .m-set .m-set-listgroup {
+    color: rgb(var(--content-secondary));
+    font-size: 12px;
+    padding-left: 0.25rem;
+  }
+  html[data-style="google"] .m-set-head h2,
+  html[data-style="google"] .m-set-head h3 {
+    font-weight: 400;
+  }
+  /* 开关回到 Material 2020 的 32×18（整行可点，触控面积不受影响） */
+  html[data-style="google"] .m-set .ms-switch {
+    height: 1.125rem;
+    width: 2rem;
+  }
+  html[data-style="google"] .m-set .ms-switch .ms-switch-thumb {
+    left: 2px;
+    top: 2px;
+    height: 0.875rem;
+    width: 0.875rem;
+  }
+  html[data-style="google"] .m-set .ms-switch[data-on] .ms-switch-thumb {
+    transform: translateX(14px);
+  }
+}
+
+/* ⑪ 欢迎页装饰（光层 / 桂花散点）在 Google 样式下全部退场：
+   Google 2020 是纯色底，纹理与光层会破坏白纸感。壁纸层保留（用户显式开着） */
+html[data-style="google"] .osmanthus-layer,
+html[data-style="google"] .light-layer {
+  display: none !important;
+}
+
+/* ⑫ 发送钮按 Google Chat 的 36px 档（原 28px 偏小），图标同步放大 */
+html[data-style="google"] .composer-card button[aria-label="发送消息"],
+html[data-style="google"] .composer-card button[aria-label="停止生成"] {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+html[data-style="google"] .composer-card button[aria-label="发送消息"] svg,
+html[data-style="google"] .composer-card button[aria-label="停止生成"] svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+html[data-style="google"] .topbar-google .topbar-actions svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+/* ⑬ 输入区工具钮: 去胶囊/实心，改 Google 2020 的 4px 方钮 + 浅蓝选中 */
+html[data-style="google"] .composer-tool {
+  border-radius: 0.25rem;
+  background-color: transparent;
+}
+html[data-style="google"] .composer-tool:hover {
+  background-color: rgb(var(--surface-muted));
+}
+html[data-style="google"] .composer-tool.bg-accent {
+  background-color: rgb(var(--accent-soft));
+  color: rgb(var(--accent));
+}
+
+/* ⑭ 移动端: Google 顶栏是固定条，不再用浮动圆钮；main 的安全区由顶栏自己承担 */
+html[data-style="google"] .mobile-float-buttons {
+  display: none;
+}
+html[data-style="google"] .app-main {
+  padding-top: 0;
+}
+
+/* ⑯ 移动端输入区: 24px 灰底胶囊(Gmail/Chat 2020 的 m-composer)。
+   桌面 ⑥ 的 8px 白卡 + 描边 + 聚焦蓝环是鼠标形态,手机上沿用会显得又方又重;
+   预览稿移动输入是 surface-2 灰胶囊、无描边无环。特异性(0,2,1)压过组件里
+   的 max-md:rounded-full / max-md:bg-surface/85(max-md 不加权重) */
+@media (max-width: 767.98px) {
+  html[data-style="google"] .composer-card {
+    border-radius: 1.5rem;
+    border-color: transparent;
+    background-color: rgb(var(--surface-subtle));
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  html[data-style="google"] .composer-card:focus-within {
+    border-color: transparent;
+    box-shadow: none;
+  }
+}
+
+/* ═══ 主题: 壁纸 (html[data-wallpaper="on"]) ═══════════════════════
+   用户自拍的那张云(public/wallpaper/cloud-sky.jpg)。与「样式」维度正交:
+   bigsur/classic/google 下都能开,所以所有覆盖都只动底色不透明度,不改形状。
+   写入方: theme.ts 的 applyAppearance / layout.tsx 首帧脚本。
+
+   可读性的唯一支点是下面几个「纸」的浓度 —— 照片只决定观感,纸决定好不好读:
+   对话页铺 0.9 的纸,正文区最坏像素相对纯黑/纯白仍有 19:1(W3C AAA 只要求 7:1);
+   欢迎页相反: 那一片没有字,照片可以尽兴,只在中部盖一层 radial 柔光把标题托住
+   (实测 9.2:1 / 9.9:1)。改观感只需动这几个值。 */
+
+/* ★ 电脑端不显示壁纸: 下面整段只在手机端生效。
+   电脑端这条壁纸链一条都不匹配 —— 照片不渲染、纸不铺、星空/辉光照常、
+   侧栏顶栏输入卡全是普通主题的实底,与「浅色/深色」逐像素一致。
+   电脑端选「壁纸」只是记下这个偏好,界面等同于普通主题(深浅仍由
+   wallpaperScheme 写进 html.dark 决定);照片只在手机端出现。
+   壁纸层在 layout 里是无条件挂载的,所以它的默认显隐写在媒体查询外面。 */
+.sky-wallpaper {
+  display: none;
+}
+/* 中间柔光层默认不出现: 目前只有对话页要它(见壁纸段 ①b),欢迎页一张白纸都不铺 */
+.sky-wallpaper-veil {
+  display: none;
+}
+
+/* 内部规则保持原来的缩进不重排 —— 整段被包住,便于与改动前逐行比对 */
+@media (max-width: 767px) {
+html[data-wallpaper="on"] {
+  --sky-paper: 0.4;          /* 对话区内容列: 用户点名 40%, 照片的蓝白雾要透出来 */
+  --sky-paper-side: 0.72;    /* 侧栏(照片主要从这里露出来) */
+  --sky-paper-chrome: 0.86;  /* 顶栏灰带 */
+  --sky-paper-input: 0.8;    /* 输入卡(手机端): 留 20% 让照片从胶囊里透出来 */
+  --sky-paper-glass: 0.9;    /* 玻璃卡(输入岛/热力图): 不跟欢迎页一起退纸 */
+}
+
+/* ①a 欢迎页: 内容列不铺纸,照片就是背景 —— 这是「壁纸」这个主题存在的理由。
+   标题可读性靠「标题正好落在云体上」+ 深色下照片压暗,不再额外铺一层柔光
+   (那层径向白雾会在屏幕正中印出一个白圆,已删)。
+   只改内容列自己的 --sky-paper: 输入岛与热力图卡走 --sky-paper-glass,
+   侧栏/顶栏各有独立变量,都不受影响。
+   data-chat-state 由 ChatPanel 按 messages.length 写入(空消息 = 欢迎页)。 */
+html[data-wallpaper="on"] .app-shell-column:has([data-chat-state="welcome"]) {
+  --sky-paper: 0;
+}
+/* 欢迎页唯一一条直接压在照片上的小字(日期行/模型名)。它原本用 muted,
+   那是配「白纸/黑底」选的色: 压在亮云上只有 1.3:1、暗云上 3.2:1,等于没字。
+   这里提到 primary —— 实测 7.8:1 / 8.9:1,与标题柔光一起把欢迎页托住。 */
+html[data-wallpaper="on"] .app-shell-column:has([data-chat-state="welcome"]) .m-hero-sub {
+  color: rgb(var(--content-primary));
+}
+
+/* ①b 对话页: 用户点名「对话页用上一版这个, 欢迎页不动」——
+   照片退回上一版的强模糊 + 提亮(那张蓝白雾的观感), 中间那层径向柔光也只在
+   这一页出现(屏幕上盖着纸和消息, 不会再读成一个白圆)。
+   模糊会把图片边缘抹成半透明, 所以 inset 再扩 6% —— 已经糊了, 多裁一圈看不出来。 */
+html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .sky-wallpaper-photo {
+  inset: -6%;
+  filter: blur(30px) saturate(0.7) brightness(1.35);
+}
+html[data-wallpaper="on"].dark .app-shell:has([data-chat-state="thread"]) .sky-wallpaper-photo {
+  filter: blur(30px) saturate(0.6) brightness(0.8);
+}
+html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .sky-wallpaper-veil {
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 62% 58% at 50% 42%,
+    rgb(var(--background) / 0.82) 0%,
+    rgb(var(--background) / 0.59) 62%,
+    rgb(var(--background) / 0) 92%);
+}
+html[data-wallpaper="on"].dark .app-shell:has([data-chat-state="thread"]) .sky-wallpaper-veil {
+  background: radial-gradient(ellipse 62% 58% at 50% 42%,
+    rgb(var(--background) / 0.62) 0%,
+    rgb(var(--background) / 0.45) 62%,
+    rgb(var(--background) / 0) 92%);
+}
+
+/* ① 壁纸层本体: 铺满 shell、垫在所有面板之下(默认显隐见上方全局规则) */
+html[data-wallpaper="on"] .sky-wallpaper {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.sky-wallpaper-photo {
+  position: absolute;
+  /* 不再外扩: inset -6% 是当年给 blur(30px) 用的(避免模糊边缘露白),
+     不模糊后它只剩副作用 —— 容器变大 12%,cover 就要再放大一轮、
+     左右多裁一圈,整个画面更糊更“横” */
+  inset: 0;
+  background-image: url('/wallpaper/cloud-sky.jpg');
+  background-size: cover;
+  /* 云主体偏上,焦段下移一点让天空占比更稳 */
+  background-position: 50% 42%;
+  /* 不做任何滤镜: 照片按原像素上屏。
+     用户反馈“很模糊”——之前加的 blur(1px) 在 3 倍屏上等于 3 个物理像素,
+     叠加 cover 自身的放大,看起来像失焦 */
+  filter: none;
+}
+html.dark .sky-wallpaper-photo {
+  /* 深色: 必须压暗 —— 白字对亮云几乎没有余量(裸白云上只有 2.4:1)。
+     0.5 是量出来的: 标题区最坏像素 5.1:1,仍过 AA(4.5)。再亮白字就被云顶穿 */
+  filter: saturate(0.85) brightness(0.5);
+}
+/* 标题柔光已下线: 原来这层是「椭圆径向白雾」,在屏幕正中间印成一个白圆
+   (0.82 / 深色 0.62),用户一眼看出不对。实测去掉后标题仍可读 ——
+   欢迎页标题正中落在云体上(浅色深墨压亮云 6.0:1 以上,深色白字压暗云 5.1:1),
+   且照片不再被冲淡。该层已从 layout 与 CSS 一起删除。 */
+
+
+/* ② 对话区: 内容列是一张 90% 的纸,照片只当天气
+   (特异性 (0,2,0/1) 压过 layout 上的 Tailwind bg-surface,也压过
+   bigsur 的 :has(.topbar-strip) 覆盖 —— 后者带 html[data-style] 前缀为 (0,3,1),
+   故这里必须同时带 data-wallpaper 与 data-style 两个属性才能胜出) */
+html[data-wallpaper="on"] .app-shell {
+  background-color: transparent;
+}
+html[data-wallpaper="on"] .app-shell-column {
+  z-index: 1;
+  background-color: rgb(var(--surface) / var(--sky-paper));
+}
+/* 壁纸下深渊微光整体退场: 画布辉光与星空是「黑底上的光」,
+   和同一块玻璃下的照片叠在一起会脏 */
+html[data-wallpaper="on"] .abyss-sky {
+  display: none;
+}
+/* 星空与辉光的主画布其实是内容列自己的 background-image(--abyss-sky),
+   原规则 html.dark:not([data-style="google"]) 是 (0,3,1),这里必须同等特异度
+   才能靠「晚出现」胜出 —— 否则深色欢迎页的照片上会浮出一片星。 */
+html[data-wallpaper="on"] .app-shell-column,
+html[data-wallpaper="on"].dark .app-shell-column {
+  background-image: none;
+}
+
+/* ③ 侧栏: 壁纸在对话页的主要露脸处。
+   原 bigsur 侧栏是 0.68 / 深色 0.62,壁纸下统一提到 0.72 ——
+   文字仍是 11.5px,纸不能再薄 */
+html[data-wallpaper="on"][data-style="bigsur"] .app-shell-sidebar,
+html[data-wallpaper="on"][data-style="bigsur"].dark .app-shell-sidebar {
+  background-color: rgb(var(--surface-muted) / var(--sky-paper-side));
+}
+
+/* ④ 顶栏灰带与输入卡: 与纸同方向,略薄/略厚 */
+html[data-wallpaper="on"][data-style="bigsur"] .topbar-strip {
+  background-color: rgb(var(--surface-muted) / var(--sky-paper-chrome));
+}
+html[data-wallpaper="on"][data-style="bigsur"] .composer-card {
+  background-color: rgb(var(--surface-muted) / var(--sky-paper-input));
+}
+html[data-wallpaper="on"] [data-composer-anchor] {
+  background-color: rgb(var(--surface) / var(--sky-paper-input));
+}
+/* 主输入卡内的白卡小钮反向变为深一阶,保持「卡-钮」对比不被纸抹平 */
+html[data-wallpaper="on"][data-style="bigsur"] .composer-card .bg-surface-muted {
+  background-color: rgb(var(--surface) / var(--sky-paper-input));
+}
+
+/* ⑤ 其余玻璃卡(热力卡/底部 dock/搜索弹窗)跟纸一起走,避免浮成死白板 */
+html[data-wallpaper="on"][data-style="bigsur"] .bg-surface-glass {
+  background-color: rgb(var(--surface-muted) / var(--sky-paper-glass));
+}
+
+/* ⑥ 顶栏浮钮(☰ / 刷新 设置): 只有壁纸态才需要胶囊。
+   别的主题底下是纯白/纯黑的列,光秃秃的图标就够分层;壁纸底下是照片,
+   18px 的细线条直接压在云上会糊成一片,所以要给自己一个"底"。
+   底色与输入卡同源(同一个 --sky-paper-input,0.8),毛玻璃同 .glass-blur;
+   但不描边 —— 描边在照片上会变成一圈生硬的白线,改两层极淡外投影定轮廓。 */
+html[data-wallpaper="on"] .mobile-float-buttons button {
+  border-radius: 9999px;
+  background-color: rgb(var(--surface-muted) / var(--sky-paper-input));
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 4px 12px -4px rgb(0 0 0 / 0.16);
+}
+/* 右侧「刷新 + 设置」并成一个胶囊: 底画在容器上, 里面的两颗钮退回透明。
+   否则两个圆各画一片 80% 的纸, 相接处会叠出一条颜色更深的竖缝 */
+html[data-wallpaper="on"] .mobile-float-buttons .m-float-pill {
+  background-color: rgb(var(--surface-muted) / var(--sky-paper-input));
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 4px 12px -4px rgb(0 0 0 / 0.16);
+}
+html[data-wallpaper="on"] .mobile-float-buttons .m-float-pill button {
+  background-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+/* 深色: 卡面(7 8 12)与暗云只差一档,投影必须整体加深才浮得起来 */
+html[data-wallpaper="on"].dark .mobile-float-buttons button,
+html[data-wallpaper="on"].dark .mobile-float-buttons .m-float-pill {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.45), 0 4px 12px -4px rgb(0 0 0 / 0.6);
+}
+html[data-wallpaper="on"].dark .mobile-float-buttons .m-float-pill button {
+  box-shadow: none;
+}
+/* 对话页: 用户点名「欢迎界面不动、保留胶囊, 聊天界面完全去掉胶囊」。
+   这一页顶上就是消息/搜索卡, 两只厚底胶囊压上去会挡内容, 所以四颗钮
+   退回纯图标: 不铺纸、不毛玻瑃、不投影。合并的容器还在, 位置不变。
+   :has() 那一串权重比上面深色那条高, 不用再叠 .dark 也能止住它。 */
+html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .mobile-float-buttons .m-float-pill,
+html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .mobile-float-buttons button {
+  background-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
 }
