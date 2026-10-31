@@ -1,0 +1,119 @@
+.room {
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - var(--keyboard-height, 0px));
+  min-height: 0;
+  min-width: 0;
+  background: rgb(var(--surface));
+  color: rgb(var(--content-primary));
+}
+.room button { touch-action: manipulation; }
+.room button:disabled { opacity: .4; cursor: default; }
+.room button:focus-visible, .room textarea:focus-visible, .dialog button:focus-visible {
+  outline: 2px solid rgb(var(--content-secondary));
+  outline-offset: 3px;
+}
+.header { display: flex; align-items: center; padding: 8px 16px; border-bottom: 1px solid rgb(var(--line)); flex: none; }
+/* 顶栏内容与正文同栏:max-width 收到正文栏净宽(800 - 左右 24 内边距),宽屏下返回键与标题压在正文左竖线上 */
+.headerRow { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; max-width: 752px; margin: 0 auto; }
+.title { flex: 1; min-width: 0; }
+.title h1 { font-size: 1rem; font-weight: 600; }
+.title span { font-size: .75rem; color: rgb(var(--content-secondary)); }
+.completion { width: 100%; max-width: 800px; margin: 0 auto; padding: 32px 24px; outline: none; }
+.completion h2 { font-size: 1.5rem; font-weight: 600; margin: 16px 0 8px; }
+.completionIcon { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid rgb(var(--line)); border-radius: 50%; background: rgb(var(--surface-subtle)); }
+.wrapUp { border-top: 1px solid rgb(var(--line)); padding-top: 24px; margin-top: 28px; overflow-wrap: anywhere; }
+.workspace { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; overflow-anchor: none; }
+.setup, .question, .lesson { width: 100%; max-width: 800px; margin: 0 auto; padding: 28px 24px; }
+.setup { padding-top: 48px; }
+.setup h2, .lesson h2 { font-size: 1.4rem; font-weight: 600; line-height: 1.5; }
+.setup form { margin-top: 28px; }
+.question { border-bottom: 1px solid rgb(var(--line)); padding-top: 8px; padding-bottom: 20px; }
+.questionImage { display: block; max-width: 100%; max-height: 300px; width: auto; height: auto; object-fit: contain; margin: 12px auto; }
+.imageButton { display: block; width: 100%; border-radius: var(--radius-card, 12px); }
+.fileLink { display: block; padding: 12px 0; overflow-wrap: anywhere; text-decoration: underline; }
+.lesson { min-height: 100%; padding-top: 24px; padding-bottom: 40px; outline: none; }
+.muted { font-size: .875rem; color: rgb(var(--content-secondary)); line-height: 1.8; margin: 8px 0 20px; }
+.eyebrow { font-size: .75rem; color: rgb(var(--content-secondary)); letter-spacing: .06em; margin-bottom: 8px; }
+.paths { display: grid; gap: 12px; margin-top: 24px; }
+.path { display: flex; align-items: center; gap: 14px; text-align: left; width: 100%; border: 1px solid rgb(var(--line)); border-radius: var(--radius-card, 12px); padding: 18px 16px; transition: background var(--motion-fast, 180ms); }
+.path:hover { background: rgb(var(--surface-subtle)); }
+.path strong { font-size: 1rem; font-weight: 500; display: block; }
+.path small { display: block; font-size: .8125rem; color: rgb(var(--content-secondary)); margin-top: 4px; line-height: 1.6; }
+.path > svg { margin-left: auto; flex: none; }
+.pathNumber { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid rgb(var(--line)); border-radius: 50%; font-size: .75rem; flex: none; }
+.note { margin: 18px 0; font-size: .75rem; color: rgb(var(--content-secondary)); line-height: 1.8; }
+.sectionHeading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.sectionHeading .eyebrow { margin: 0; }
+.modePill { border-radius: 999px; background: rgb(var(--surface-subtle)); padding: 6px 12px; font-size: .8125rem; }
+.room label:not(:global(.sr-only)) { display: block; margin: 20px 0 8px; font-size: .875rem; }
+.thought { display: block; width: 100%; min-height: 128px; resize: vertical; border: 1px solid rgb(var(--line)); border-radius: var(--radius-card, 12px); padding: 14px; background: rgb(var(--surface-subtle)); font: inherit; font-size: 1rem; line-height: 1.8; margin-bottom: 16px; color: inherit; }
+.userThought { border-left: 2px solid rgb(var(--line)); padding: 8px 14px; margin: 16px 0; color: rgb(var(--content-secondary)); white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 24px; }
+.primary, .secondary, .textButton, .iconButton, .send { min-height: 44px; border-radius: var(--radius-control, 8px); display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: .875rem; transition: background var(--motion-fast, 180ms); }
+.primary { padding: 10px 18px; background: rgb(var(--content-primary)); color: rgb(var(--surface)); }
+.secondary { padding: 8px 14px; border: 1px solid rgb(var(--line)); }
+.textButton { padding: 8px 10px; color: rgb(var(--content-secondary)); }
+.iconButton { width: 44px; flex: none; }
+.secondary:hover, .textButton:hover, .iconButton:hover { background: rgb(var(--surface-subtle)); }
+.primary:hover, .send:hover { opacity: .85; }
+.messages { overflow-wrap: anywhere; }
+.messages[hidden] { display: none; }
+.footer { flex: none; border-top: 1px solid rgb(var(--line)); padding: 8px 12px max(10px, var(--m-safe-bottom, env(safe-area-inset-bottom))); }
+.composer { display: flex; align-items: flex-end; gap: 6px; width: 100%; max-width: 752px; margin: auto; border: 1px solid rgb(var(--line)); border-radius: var(--radius-panel, 16px); padding: 4px; }
+.composer textarea { flex: 1; min-width: 0; width: 0; height: 44px; min-height: max(44px, calc(1.5em + 20px)); max-height: 144px; resize: none; padding: 10px 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 1rem; line-height: 1.5; }
+.send { width: 44px; flex: none; background: rgb(var(--content-primary)); color: rgb(var(--surface)); border-radius: var(--radius-card, 12px); }
+.options { max-width: 752px; margin: 0 auto 8px; max-height: 25dvh; overflow-y: auto; }
+.settings { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+.settings button { min-height: 44px; }
+.dialog { width: calc(100% - 32px); max-width: 640px; max-height: calc(100dvh - 32px); padding: 24px; border: 1px solid rgb(var(--line)); border-radius: var(--radius-sheet, 28px); background: rgb(var(--surface)); color: rgb(var(--content-primary)); overflow-y: auto; }
+.dialog[data-kind="tools"] { max-width: 460px; }
+.dialog::backdrop { background: #0007; }
+.dialog h2 { font-size: 1.125rem; font-weight: 600; }
+.dialog .questionImage { max-height: none; }
+/* 学习工具:条目列表 + 讲题设置 + 底部设置入口(原先是一排裸按钮,只剩大片空白) */
+.sheetHandle { display: none; }
+.tools { display: grid; gap: 8px; margin-top: 4px; }
+.tool { display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; text-align: left; border: 1px solid rgb(var(--line)); border-radius: var(--radius-card, 12px); transition: background var(--motion-fast, 180ms); }
+.tool:hover { background: rgb(var(--surface-subtle)); }
+.toolIcon { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border: 1px solid rgb(var(--line)); border-radius: 50%; background: rgb(var(--surface-subtle)); color: rgb(var(--content-secondary)); }
+.toolText { min-width: 0; }
+.toolText strong { display: block; font-size: .9375rem; font-weight: 500; }
+.toolText small { display: block; margin-top: 3px; font-size: .8125rem; line-height: 1.5; color: rgb(var(--content-secondary)); }
+.toolChevron { margin-left: auto; flex: none; color: rgb(var(--content-muted)); }
+.toolSection { margin-top: 22px; padding-top: 18px; border-top: 1px solid rgb(var(--line)); }
+.toolSection .settings { margin: 0; }
+.toolLink { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; margin-top: 6px; padding: 0 4px; font-size: .8125rem; color: rgb(var(--content-secondary)); border-radius: var(--radius-control, 8px); }
+.toolLink:hover { background: rgb(var(--surface-subtle)); }
+@media (min-width: 700px) {
+  .header { padding: 10px 24px; }
+  .setup, .question, .lesson { padding-left: 40px; padding-right: 40px; }
+  .footer { padding: 10px 24px 12px; }
+}
+@media (max-width: 767px) {
+  .header { padding: 8px; }
+  .headerRow { gap: 4px; flex-wrap: wrap; }
+  .title span { display: none; }
+  .header .secondary { padding: 8px; }
+  /* 手机端学习工具落成底部弹层,与模型快切同一形态 */
+  .dialog[data-kind="tools"] {
+    position: fixed;
+    inset: auto 0 0 0;
+    margin: 0;
+    width: 100%;
+    max-width: none;
+    max-height: 86dvh;
+    padding: 6px 20px calc(14px + env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: var(--radius-sheet, 28px) var(--radius-sheet, 28px) 0 0;
+  }
+  .dialog[data-kind="tools"] .sheetHandle { display: block; width: 40px; height: 4px; margin: 4px auto 10px; border-radius: 999px; background: rgb(var(--line-strong)); }
+}
+@media (max-height: 500px) {
+  .header { padding-top: 4px; padding-bottom: 4px; }
+  .title span { display: none; }
+  .footer { padding-top: 4px; padding-bottom: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .room *, .dialog * { transition: none !important; scroll-behavior: auto !important; }
+}

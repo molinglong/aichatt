@@ -14,6 +14,7 @@ interface NoteRow {
   topic: string | null
   title: string
   content: string
+  imageUrl: string | null
   analysis: string | null
   mastery: number
   dueAt: string | null
@@ -23,12 +24,13 @@ interface NoteRow {
   sourceQuestionId: string | null
 }
 
-export function NoteList() {
+export function NoteList({ onChanged }: { onChanged?: () => void }) {
   const [notes, setNotes] = useState<NoteRow[]>([])
   const [loading, setLoading] = useState(true)
   const [subject, setSubject] = useState('') // '' = 全部
   const [q, setQ] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [retaggingId, setRetaggingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -60,11 +62,29 @@ export function NoteList() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setNotes((prev) => prev.filter((n) => n.id !== id))
       toast.hint('已删除')
+      onChanged?.()
     } catch (err) {
       console.error('[NoteList] delete failed:', err)
       toast.error('删除失败', { title: '错题本' })
     }
-  }, [])
+  }, [onChanged])
+
+  const handleRetag = useCallback(async (id: string) => {
+    if (retaggingId) return
+    setRetaggingId(id)
+    try {
+      const res = await fetch(`/api/study/notes/${id}/retag`, { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      toast.success('已重新标注')
+      await load()
+      onChanged?.()
+    } catch (err) {
+      console.error('[NoteList] retag failed:', err)
+      toast.error('标注失败，请稍后再试', { title: '错题本' })
+    } finally {
+      setRetaggingId(null)
+    }
+  }, [retaggingId, load, onChanged])
 
   const isOverdue = (dueAt: string | null) => !!dueAt && new Date(dueAt).getTime() <= Date.now()
 
@@ -117,12 +137,14 @@ export function NoteList() {
           <div className="py-10 text-center text-xs text-content-muted">
             还没有错题
             <br />
-            <span className="opacity-70">在聊天里点消息工具栏的「存错题本」即可收集</span>
+            <span className="opacity-70">
+              结课后会自动收进这里；也可以右键消息手动存入
+            </span>
           </div>
         )}
         {notes.map((n) => {
           const expanded = expandedId === n.id
-          const subjectLabel = n.subject ? SUBJECT_LABELS[n.subject as keyof typeof SUBJECT_LABELS] ?? '其他' : '其他'
+          const subjectLabel = n.subject ? SUBJECT_LABELS[n.subject as keyof typeof SUBJECT_LABELS] ?? '其他' : '未标注'
           return (
             <div key={n.id} className="rounded-lg border border-line/60 hover:border-line transition-colors">
               <button
@@ -140,6 +162,9 @@ export function NoteList() {
                   )}
                   {n.sourceQuestionId && (
                     <span className="px-1.5 py-0.5 rounded border border-line/60 text-[10px] text-content-muted shrink-0" title="来自题库练习">题库</span>
+                  )}
+                  {n.imageUrl && (
+                    <span className="px-1.5 py-0.5 rounded border border-line/60 text-[10px] text-content-muted shrink-0" title="题目带截图">截图</span>
                   )}
                   {isOverdue(n.dueAt) && (
                     <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0 ml-auto" title="待复习" />
@@ -160,6 +185,23 @@ export function NoteList() {
               </button>
               {expanded && (
                 <div className="px-2.5 pb-2.5 space-y-2 border-t border-line/40 pt-2">
+                  {n.imageUrl && (
+                    <a
+                      href={n.imageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block rounded-lg overflow-hidden border border-line/60 bg-surface-subtle/30"
+                      title="点击查看原图"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={n.imageUrl}
+                        alt="题目截图"
+                        loading="lazy"
+                        className="block w-full max-h-64 object-contain"
+                      />
+                    </a>
+                  )}
                   <div className="text-xs text-content-secondary whitespace-pre-wrap break-words leading-relaxed">
                     {n.content}
                   </div>
@@ -169,7 +211,21 @@ export function NoteList() {
                       <MarkdownRenderer content={n.analysis} messageId={`study-${n.id}`} rich />
                     </div>
                   )}
-                  <div className="flex justify-end">
+                  <div className="flex items-center justify-end gap-1">
+                    {!n.subject && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void handleRetag(n.id)
+                        }}
+                        disabled={retaggingId === n.id}
+                        className="flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] text-content-muted hover:text-content-primary hover:bg-surface-subtle transition-colors disabled:opacity-50"
+                        title="重新打标"
+                      >
+                        <RefreshCw className={cn('w-3 h-3', retaggingId === n.id && 'animate-spin')} />
+                        重试标注
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation()

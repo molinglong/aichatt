@@ -14,6 +14,7 @@ interface QueueItem {
   topic: string | null
   title: string
   content: string
+  imageUrl: string | null
   analysis: string | null
   mastery: number
   reps: number
@@ -22,7 +23,7 @@ interface QueueItem {
   sourceQuestionId: string | null
 }
 
-export function ReviewCard() {
+export function ReviewCard({ onChanged }: { onChanged?: () => void }) {
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -65,6 +66,7 @@ export function ReviewCard() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         setRevealed(false)
         setIndex((i) => i + 1)
+        onChanged?.()
       } catch (err) {
         console.error('[ReviewCard] rate failed:', err)
         toast.error('提交失败,请重试', { title: '复习' })
@@ -72,7 +74,7 @@ export function ReviewCard() {
         setSubmitting(false)
       }
     },
-    [current, submitting],
+    [current, submitting, onChanged],
   )
 
   const handleDelete = useCallback(async () => {
@@ -84,6 +86,7 @@ export function ReviewCard() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setQueue((prev) => prev.filter((n) => n.id !== current.id))
       setRevealed(false)
+      onChanged?.()
       // index 不动:删除后当前位次自动指向下一张
     } catch (err) {
       console.error('[ReviewCard] delete failed:', err)
@@ -91,7 +94,7 @@ export function ReviewCard() {
     } finally {
       setSubmitting(false)
     }
-  }, [current, submitting])
+  }, [current, submitting, onChanged])
 
   if (loading) {
     return <div className="h-full flex items-center justify-center text-xs text-content-muted">加载中...</div>
@@ -101,19 +104,19 @@ export function ReviewCard() {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-2 text-center p-6">
         <div className="text-3xl">✓</div>
-        <div className="text-sm text-content-primary">今日复习完成</div>
+        <div className="text-sm text-content-primary">这批看完了</div>
         <button
           onClick={() => void load()}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-xs text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-colors"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          检查新到期题目
+          检查待回看
         </button>
       </div>
     )
   }
 
-  const subjectLabel = current.subject ? SUBJECT_LABELS[current.subject as keyof typeof SUBJECT_LABELS] ?? '其他' : '其他'
+  const subjectLabel = current.subject ? SUBJECT_LABELS[current.subject as keyof typeof SUBJECT_LABELS] ?? '其他' : '未标注'
 
   return (
     <div className="h-full flex flex-col max-w-2xl w-full mx-auto">
@@ -158,6 +161,23 @@ export function ReviewCard() {
             掌握 {Math.round(current.mastery * 100)}% · 第 {current.reps + 1} 次
           </span>
         </div>
+        {current.imageUrl && (
+          <a
+            href={current.imageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block rounded-xl overflow-hidden border border-line/60 bg-surface-subtle/30"
+            title="点击查看原图"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={current.imageUrl}
+              alt="题目截图"
+              loading="lazy"
+              className="block w-full max-h-72 object-contain"
+            />
+          </a>
+        )}
         <div className="text-sm font-medium text-content-primary leading-relaxed">{current.title}</div>
         <div className="text-sm text-content-secondary whitespace-pre-wrap break-words leading-relaxed">
           {current.content}
