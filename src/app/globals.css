@@ -2120,6 +2120,227 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   color: rgb(var(--content-secondary));
 }
 
+/* 闲鱼推荐卡（E · 闲鱼同款行卡）: 大图在左 + 卖家原话标题 + 灰色看点 + 价格/⚠风险同行 + 头像·地区底行；
+   行间留白无框，视觉走应用 token（2026-11-04 预览页 E 方案拍板落地） */
+.rich-md .exam-yellow-fish {
+  padding: 13px 15px 14px;
+  /* 容器对齐拍板样张: 中性面板替代 exam-paper 纸底 —— 浅色=白面板, 深色=surface-muted 提亮档 */
+  background: rgb(var(--surface));
+  border-color: rgb(var(--line));
+  border-radius: 0.75rem;
+}
+html.dark .rich-md .exam-yellow-fish {
+  background: rgb(var(--surface-muted));
+}
+.rich-md .exam-yellow-fish .exam-block-tag {
+  margin-bottom: 0.625rem;
+  /* 标签对齐拍板样张: 闲鱼蓝药丸(两主题同色), 字距收紧 */
+  padding: 3px 10px;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  background: #3d6bff;
+}
+/* 折叠开关＝标题行整行可点:默认展开,箭头朝下;收起后只剩一行标题条,箭头转正并透出「共 N 件」 */
+.rich-md .exam-yellow-fish-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.rich-md .exam-yellow-fish-header[aria-expanded="false"] {
+  margin-bottom: 0;
+}
+.rich-md .exam-yellow-fish-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(var(--content-primary));
+}
+.rich-md .exam-yellow-fish-chevron {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: rgb(var(--content-muted));
+  transform: rotate(90deg);
+  transition: transform 160ms ease;
+}
+.rich-md .exam-yellow-fish-header[aria-expanded="false"] .exam-yellow-fish-chevron {
+  transform: rotate(0deg);
+}
+.rich-md .exam-yellow-fish-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.rich-md .exam-yellow-fish-item {
+  position: relative;
+  display: flex;
+  gap: 0.75rem;
+  align-items: stretch;
+  padding: 0.625rem;
+  border-radius: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+  /* 锁行内节奏: 不随 rich-md 正文行高浮动, 与拍板样张一致 */
+  line-height: 1.5;
+}
+.rich-md .exam-yellow-fish-item:hover {
+  background: #f0f0f2;
+}
+html.dark .rich-md .exam-yellow-fish-item:hover {
+  background: rgb(var(--surface-subtle));
+}
+/* 行内收藏星标: 手机端主力入口(tap), 桌面同形(右键菜单仍保留)。
+   触屏命中区放大到 40px(视觉钮仍 28px,靠负 margin 保持贴角), 与「手机端两钮」口径一致 */
+.rich-md .exam-yellow-fish-fav {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: rgb(var(--content-muted));
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 180ms ease, background-color 180ms ease;
+}
+.rich-md .exam-yellow-fish-fav:hover {
+  color: rgb(var(--content-primary));
+  background: rgba(0, 0, 0, 0.06);
+}
+html.dark .rich-md .exam-yellow-fish-fav:hover {
+  background: rgb(var(--surface-subtle));
+}
+@media (pointer: coarse) {
+  .rich-md .exam-yellow-fish-fav {
+    top: 0;
+    right: 0;
+    width: 40px;
+    height: 40px;
+  }
+}
+.rich-md .exam-yellow-fish-thumb {
+  width: 6rem;
+  height: 6rem;
+  border-radius: 0.75rem;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgb(var(--surface-subtle));
+}
+.rich-md .exam-yellow-fish-thumb-empty {
+  display: inline-block;
+}
+.rich-md .exam-yellow-fish-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.rich-md .exam-yellow-fish-name {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: rgb(var(--content-primary));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 让出右上角星标位: 标题截断不钻到星底下 */
+  padding-right: 30px;
+}
+.rich-md .exam-yellow-fish-reason {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: rgb(var(--content-muted));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rich-md .exam-yellow-fish-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 5px;
+  min-width: 0;
+}
+.rich-md .exam-yellow-fish-price {
+  flex-shrink: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: rgb(var(--content-primary));
+  font-variant-numeric: tabular-nums;
+}
+.rich-md .exam-yellow-fish-risk {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  /* 风险色对齐拍板样张: 浅色 #c2372a / 深色 #e8745c, 不走 exam-term 考卷红 */
+  color: #c2372a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.dark .rich-md .exam-yellow-fish-risk {
+  color: #e8745c;
+}
+.rich-md .exam-yellow-fish-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: rgb(var(--content-muted));
+}
+.rich-md .exam-yellow-fish-avatar {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgb(var(--surface-subtle));
+}
+.rich-md .exam-yellow-fish-meta {
+  font-size: 11px;
+  color: rgb(var(--content-muted));
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rich-md .exam-yellow-fish-miss {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 0.2rem 0;
+  font-size: 12px;
+  color: rgb(var(--content-secondary));
+}
+.rich-md .exam-yellow-fish-miss-no {
+  font-size: 11px;
+  color: rgb(var(--content-muted));
+  font-variant-numeric: tabular-nums;
+}
+.rich-md .exam-yellow-fish-note {
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed rgb(var(--exam-paper-line));
+  font-size: 12px;
+  color: rgb(var(--content-secondary));
+}
+
 /* 关键词双色: 红=荧光笔（必背得分点），蓝=批注笔（材料对应） */
 .rich-md mark.exam-term,
 .rich-md mark.exam-mat {

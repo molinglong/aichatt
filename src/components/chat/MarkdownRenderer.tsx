@@ -12,8 +12,10 @@ import type { Components } from 'react-markdown'
 import type { PluggableList } from 'unified'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
-import { BookPlus, Check, ChevronDown, ChevronUp, Copy, ImageOff, Sparkles, Wrench, StickyNote, Eye, Gauge, Zap } from 'lucide-react'
-import { parseExamSegments, parseChoice, parseEssay, parseTimeline, parseSentence, parseSourceRefLine, countEssayChars, essayToPlainText, parseGameStatus, parseGameChoice, type ExamKind, type ExamSourceRef, type ExamChoiceOption, type ExamSentencePart, type GameStat } from '@/lib/ai/exam-markdown'
+import { BookPlus, Check, ChevronDown, ChevronRight, ChevronUp, Copy, ImageOff, Sparkles, Wrench, StickyNote, Eye, Gauge, Zap, Star, Link2 } from 'lucide-react'
+import { useYellowFishFavorites } from '@/hooks/useYellowFishFavorites'
+import { parseExamSegments, parseChoice, parseEssay, parseTimeline, parseSentence, parseSourceRefLine, countEssayChars, essayToPlainText, parseGameStatus, parseGameChoice, parseYellowFish, forceRankLineBreaks, promoteRankRunsToBlocks, type ExamKind, type ExamSourceRef, type ExamChoiceOption, type ExamSentencePart, type GameStat } from '@/lib/ai/exam-markdown'
+import type { YellowFishItemBrief } from '@/lib/ai/yellow-fish-tool'
 import { useContextMenuStore, type ContextMenuItem } from '@/store/contextMenuStore'
 import { insertTextToInput, sendTextAsUser } from '@/lib/input-bridge'
 import { useChatStore } from '@/store/chat-store'
@@ -69,6 +71,8 @@ interface MarkdownRendererProps {
    * 正文 [图N] 占位符据此替换成内联图卡。不传/空 = 无图,占位符原样保留。
    */
   inlineImages?: InlineImageRef[]
+  /** 闲鱼推荐卡 hydrate 数据源：本条消息里 get_yellow_fish_market 的 recentItems（按 no 索引）。不传 = 推荐块只显理由 */
+  yellowFishItems?: YellowFishItemBrief[]
 }
 
 // ── 试卷块（材料/设问/作答）与关键词双色标注 ────────────────────────
@@ -311,6 +315,10 @@ const INLINE_IMG_TOKEN_RE = /\[图\s*(\d+)\]/g
 const EMPTY_INLINE_IMAGES: InlineImageRef[] = []
 
 const InlineImagesContext = createContext<InlineImageRef[]>(EMPTY_INLINE_IMAGES)
+
+// 闲鱼推荐块数据源：get_yellow_fish_market 返回的 recentItems（含 no），ExamYellowFishBody 按 no hydrate 出真实商品。
+const EMPTY_YELLOW_FISH_ITEMS: YellowFishItemBrief[] = []
+const YellowFishItemsContext = createContext<YellowFishItemBrief[]>(EMPTY_YELLOW_FISH_ITEMS)
 
 function formatImgBytes(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.round(bytes / 1024)} KB`
@@ -982,7 +990,9 @@ const RichSegment = memo(function RichSegment({ content, promote = true }: { con
   // 在正文里是美化,在选项里每个选项一张大卡是灾难;定界符归一化对选项同样需要,不受 promote 开关影响
   const promoted = useMemo(() => {
     const normalized = normalizeMathDelimiters(content)
-    return promote ? promoteStandaloneMath(normalized) : normalized
+    const withMath = promote ? promoteStandaloneMath(normalized) : normalized
+    // 「序号｜」行兜底硬换行：模型漏写 :::yellow-fish 块时防分档条目被段落合并黏成一片
+    return forceRankLineBreaks(withMath)
   }, [content, promote])
   return (
     <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>
@@ -991,7 +1001,7 @@ const RichSegment = memo(function RichSegment({ content, promote = true }: { con
   )
 })
 
-const EXAM_TAG: Record<ExamKind, string> = { choice: '选择题', material: '材料', question: '设问', answer: '作答', poem: '诗句', lyrics: '歌词', essay: '作文', timeline: '时间轴', translate: '译文', sentence: '成分分析', gamestatus: '状态', gamechoice: '行动' }
+const EXAM_TAG: Record<ExamKind, string> = { choice: '选择题', material: '材料', question: '设问', answer: '作答', poem: '诗句', lyrics: '歌词', essay: '作文', timeline: '时间轴', translate: '译文', sentence: '成分分析', gamestatus: '状态', gamechoice: '行动', 'yellow-fish': '闲鱼推荐' }
 
 /** 题干自带题号（1. / 1、/ 1））: 题库原题逐字转写时常见。剥离后统一走卷面题号，
  *  既避免「1. 1. 题干」双号，也避免「1. 」被 markdown 解析成有序列表；后随数字不剥（「1.5万」不是题号） */
@@ -1196,6 +1206,147 @@ function ExamTimelineBody({ text }: { text: string }) {
         ))}
       </div>
       {note && <div className="exam-timeline-note">{withInlineMarks(note)}</div>}
+    </>
+  )
+}
+
+/** 闲鱼推荐卡分区: 模型只给「序号+理由+风险」,商品真实标题/价格/图/链接从 YellowFishItemsContext hydrate。
+ *  序号对不上（模型编了不存在的 no）时退回纯理由行,不编造商品。
+ *  折叠：标题行即开关,默认展开；收起后只留一行标题条（共 N 件提示数量）,商品列表和尾注一起藏起。 */
+function ExamYellowFishBody({ text }: { text: string }) {
+  const { title, items, note } = useMemo(() => parseYellowFish(text), [text])
+  const all = useContext(YellowFishItemsContext)
+  const [open, setOpen] = useState(true)
+  const { isFavorited, toggle } = useYellowFishFavorites()
+  // 卡片 → 收藏入参: itemId 从链接解析; region 是「位置 · 卖家」拼接串,拆回两字段喂收藏池
+  // (监控快照只有位置时 seller 为空)。解析不出 id 返回 null,调用方不给入口。
+  const buildListing = useCallback((it: YellowFishItemBrief) => {
+    const itemId = it.link.match(/[?&]id=(\d{5,20})/)?.[1] ?? ''
+    if (!itemId) return null
+    const [location, seller] = (it.region ?? '').split(' · ')
+    return {
+      itemId,
+      title: it.title,
+      price: it.price,
+      priceDisplay: it.priceDisplay,
+      url: it.link,
+      pic: it.image,
+      location: location || undefined,
+      seller: seller || undefined,
+    }
+  }, [])
+  // 星标按钮: 手机端主力入口(tap 即收藏,长按对链接只有原生「打开/复制链接」),
+  // 桌面同形。必须 preventDefault+stopPropagation,否则点星标会触发外层 <a> 导航。
+  const handleStarClick = useCallback(
+    (e: React.MouseEvent, listing: NonNullable<ReturnType<typeof buildListing>>) => {
+      e.preventDefault()
+      e.stopPropagation()
+      void toggle(listing)
+    },
+    [toggle]
+  )
+  // 卡片右键=商品级菜单(收藏/复制链接),与消息级右键分工:命中卡片时 stopPropagation,
+  // 不再弹消息菜单。触屏端(pointer:coarse)沿用消息侧口径交回原生长按,不做自定义。
+  const handleItemContextMenu = useCallback(
+    (e: React.MouseEvent, it: YellowFishItemBrief) => {
+      if (window.matchMedia('(pointer: coarse)').matches) return
+      const listing = buildListing(it)
+      if (!listing) return
+      e.preventDefault()
+      e.stopPropagation()
+      const favorited = isFavorited(listing.itemId)
+      const menuItems: ContextMenuItem[] = [
+        {
+          id: 'favorite-item',
+          label: favorited ? '取消收藏商品' : '收藏商品',
+          icon: <Star className={cn('w-3.5 h-3.5', favorited && 'fill-current text-accent')} />,
+          onSelect: () => void toggle(listing),
+        },
+        {
+          id: 'copy-item-link',
+          label: '复制商品链接',
+          icon: <Link2 className="w-3.5 h-3.5" />,
+          onSelect: () => {
+            if (!navigator.clipboard?.writeText) {
+              toast.error('当前浏览器不支持自动复制', { title: '复制失败' })
+              return
+            }
+            navigator.clipboard.writeText(it.link).then(
+              () => toast.hint('已复制商品链接'),
+              () => toast.error('复制失败，请重试'),
+            )
+          },
+        },
+      ]
+      useContextMenuStore.getState().openContextMenu({ x: e.clientX, y: e.clientY }, menuItems, 'YellowFish 商品')
+    },
+    [buildListing, isFavorited, toggle]
+  )
+  return (
+    <>
+      <button type="button" className="exam-yellow-fish-header" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <span className="exam-yellow-fish-title">{title || `闲鱼推荐 · 共 ${items.length} 件`}</span>
+        <ChevronRight className="exam-yellow-fish-chevron" strokeWidth={2} />
+      </button>
+      {open && (
+        <>
+          <div className="exam-yellow-fish-list">
+        {items.map((r, i) => {
+          const it = all.find((x) => x.no === r.no)
+          if (!it) {
+            return (
+              <div key={i} className="exam-yellow-fish-miss">
+                <span className="exam-yellow-fish-miss-no">#{r.no}</span>
+                <span className="exam-yellow-fish-miss-reason">{r.reason || '（未匹配到具体商品）'}</span>
+              </div>
+            )
+          }
+          const meta = [it.region, it.publishTime ? String(it.publishTime).slice(5, 10) : ''].filter(Boolean).join(' · ')
+          const listing = buildListing(it)
+          const favorited = !!listing && isFavorited(listing.itemId)
+          return (
+            <a key={i} href={it.link} target="_blank" rel="noreferrer" className="exam-yellow-fish-item" onContextMenu={(e) => handleItemContextMenu(e, it)}>
+              {it.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={it.image} alt="" loading="lazy" referrerPolicy="no-referrer" className="exam-yellow-fish-thumb" />
+              ) : (
+                <span className="exam-yellow-fish-thumb exam-yellow-fish-thumb-empty" aria-hidden />
+              )}
+              <span className="exam-yellow-fish-main">
+                <span className="exam-yellow-fish-name">{it.title}</span>
+                {r.reason ? <span className="exam-yellow-fish-reason">{r.reason}</span> : null}
+                <span className="exam-yellow-fish-head">
+                  <span className="exam-yellow-fish-price">{it.price != null ? `¥${it.price}` : (it.priceDisplay || '—')}</span>
+                  {r.risk ? <span className="exam-yellow-fish-risk">⚠ {r.risk}</span> : null}
+                </span>
+                {meta || it.avatar ? (
+                  <span className="exam-yellow-fish-foot">
+                    {it.avatar ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={it.avatar} alt="" loading="lazy" referrerPolicy="no-referrer" className="exam-yellow-fish-avatar" />
+                    ) : null}
+                    {meta ? <span className="exam-yellow-fish-meta">{meta}</span> : null}
+                  </span>
+                ) : null}
+              </span>
+              {listing && (
+                <button
+                  type="button"
+                  className="exam-yellow-fish-fav"
+                  aria-label={favorited ? '取消收藏该商品' : '收藏该商品'}
+                  title={favorited ? '取消收藏' : '收藏'}
+                  onClick={(e) => handleStarClick(e, listing)}
+                >
+                  <Star className={cn('w-3.5 h-3.5', favorited && 'fill-current text-accent')} strokeWidth={1.8} />
+                </button>
+              )}
+            </a>
+          )
+        })}
+          </div>
+          {note && <div className="exam-yellow-fish-note">{note}</div>}
+        </>
+      )}
     </>
   )
 }
@@ -1405,7 +1556,8 @@ function ExamBlock({
         joinBottom && 'exam-join-bottom',
       )}
     >
-      <span className="exam-block-tag">{EXAM_TAG[kind]}</span>
+      {/* 闲鱼推荐卡不显示块标签（用户点名删掉，商品卡自身已有完整视觉） */}
+      {kind !== 'yellow-fish' && <span className="exam-block-tag">{EXAM_TAG[kind]}</span>}
       {sourceRef && quizAnswerText && !isBankRef && (
         <QuizRefBadge
           refName={sourceRef.ref}
@@ -1422,6 +1574,8 @@ function ExamBlock({
         <ExamChoiceBody text={displayText} startNo={questionNo} />
       ) : kind === 'timeline' ? (
         <ExamTimelineBody text={text} />
+      ) : kind === 'yellow-fish' ? (
+        <ExamYellowFishBody text={text} />
       ) : kind === 'poem' || kind === 'lyrics' ? (
         <ExamPoemBody text={text} />
       ) : kind === 'essay' ? (
@@ -1711,8 +1865,9 @@ function MarkdownRendererInner({
   inlineImages,
 }: MarkdownRendererProps) {
   useRenderProbe('MarkdownRenderer')
-  // 首个 triangle 围栏提升到消息最前,三档共用文本;另保留原始源位置供 live key 使用。
-  const finalContent = useMemo(() => hoistTriangleFigure(content), [content])
+  // 内容层两步预处理: 先把漏写块语法的「序号｜」分档段落升级合成 :::yellow-fish 块
+  // (定案: 分档输出必须结构化卡片流), 再提升首个 triangle 围栏到消息最前;另保留原始源位置供 live key 使用。
+  const finalContent = useMemo(() => hoistTriangleFigure(promoteRankRunsToBlocks(content)), [content])
 
   // 纯文本/熔断口径不变。
   if (!RICH_RENDER_ENABLED || (!rich && !live)) {
@@ -1742,6 +1897,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   rich,
   live,
   inlineImages,
+  yellowFishItems,
 }: MarkdownRendererProps) {
   // MessageBubble 的 message 快照每次改变都会提取新数组(包括空数组)。
   // 按实际数据稳定 context,否则它会绕过每个 LiveBlockView 的 memo。
@@ -1750,9 +1906,16 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
     () => imagesKey === '[]' ? EMPTY_INLINE_IMAGES : JSON.parse(imagesKey),
     [imagesKey],
   )
+  const yellowFishKey = JSON.stringify(yellowFishItems ?? EMPTY_YELLOW_FISH_ITEMS)
+  const stableYellowFish = useMemo<YellowFishItemBrief[]>(
+    () => yellowFishKey === '[]' ? EMPTY_YELLOW_FISH_ITEMS : JSON.parse(yellowFishKey),
+    [yellowFishKey],
+  )
   return (
     <InlineImagesContext.Provider value={stableImages}>
-      <MarkdownRendererInner content={content} className={className} rich={rich} live={live} inlineImages={stableImages} />
+      <YellowFishItemsContext.Provider value={stableYellowFish}>
+        <MarkdownRendererInner content={content} className={className} rich={rich} live={live} inlineImages={stableImages} />
+      </YellowFishItemsContext.Provider>
     </InlineImagesContext.Provider>
   )
 })

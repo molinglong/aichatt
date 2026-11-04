@@ -18,7 +18,7 @@
  * 关键词双色标注（==术语== / @@材料词@@）在渲染层处理，见 MarkdownRenderer.tsx。
  */
 
-export type ExamKind = 'choice' | 'material' | 'question' | 'answer' | 'poem' | 'lyrics' | 'essay' | 'timeline' | 'translate' | 'sentence' | 'gamestatus' | 'gamechoice'
+export type ExamKind = 'choice' | 'material' | 'question' | 'answer' | 'poem' | 'lyrics' | 'essay' | 'timeline' | 'translate' | 'sentence' | 'gamestatus' | 'gamechoice' | 'yellow-fish'
 
 export type ExamSegment =
   | { type: 'md'; text: string }
@@ -49,7 +49,7 @@ const CHOICE_OPTION_RE = /^\s*([A-Fa-f])[.、．:：]\s*(.+)$/
 /** 题号行：1. / 1、 / 1) 等前缀（数字后紧跟分隔符，避免误伤「755 年乱起」类正文） */
 const QUESTION_NO_RE = /^\s*\d{1,3}[.、．)]\s*(\S.*)$/
 
-const EXAM_OPEN_RE = /^:::(choice|material|question|answer|poem|lyrics|essay|timeline|translate|sentence|gamestatus|gamechoice)(?:\s+(.*?))?\s*$/
+const EXAM_OPEN_RE = /^:::(choice|material|question|answer|poem|lyrics|essay|timeline|translate|sentence|gamestatus|gamechoice|yellow-fish)(?:\s+(.*?))?\s*$/
 const EXAM_CLOSE_RE = /^:::\s*$/
 
 /**
@@ -212,6 +212,159 @@ export function parseTimeline(text: string): ExamTimeline {
     else noteBuf.push(line)
   }
   return { title, events, note: noteBuf.join('\n') }
+}
+
+/** 闲鱼推荐块 :::yellow-fish：首行可选标题，之后每行「序号｜一句话理由｜风险提示（可省）」。
+ *  序号对应 get_yellow_fish_market 返回的 recentItems 里的 no，渲染层据此 hydrate 出真实标题/价格/图/链接。 */
+export interface YellowFishRecItem {
+  no: number
+  reason: string
+  risk: string
+}
+export interface YellowFishRec {
+  title: string
+  items: YellowFishRecItem[]
+  note: string
+}
+export function parseYellowFish(text: string): YellowFishRec {
+  const items: YellowFishRecItem[] = []
+  const noteBuf: string[] = []
+  let title = ''
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    const parts = line.split(/[｜|]/).map((p) => p.trim())
+    const noNum = Number(parts[0])
+    // 首字段是正整数且至少两段 → 推荐行
+    if (parts.length >= 2 && parts[0] && Number.isFinite(noNum) && noNum >= 1) {
+      items.push({ no: noNum, reason: parts[1] ?? '', risk: parts[2] ?? '' })
+      continue
+    }
+    // 非推荐行：首个且尚无条目时当标题，其余入尾注
+    if (!title && !items.length) title = line
+    else noteBuf.push(line)
+  }
+  return { title, items, note: noteBuf.join('\n') }
+}
+
+/** 行首「序号｜」行（闲鱼分档条目行，全角/半角竖线都认） */
+const RANK_LINE_RE = /^\s{0,3}\d{1,2}\s*[｜|]/
+
+/**
+ * 兜底硬换行：模型漏写 :::yellow-fish 块、把分档条目当普通段落输出时，
+ * Markdown 会把单换行合并成空格，一档商品全黏成一段（2026-11-05 deepseek-flash 实例）。
+ * 规则：相邻两行都以「序号｜」开头时，给上一行行尾补两个空格（CommonMark 硬换行），
+ * 让每条独占一行。只在普通 md 段落层调用（::: 块已被 parseExamSegments 拆走，不受影响）。
+ */
+export function forceRankLineBreaks(text: string): string {
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (RANK_LINE_RE.test(lines[i]) && RANK_LINE_RE.test(lines[i + 1])) {
+      lines[i] = lines[i].replace(/\s+$/, '') + '  '
+    }
+  }
+  return lines.join('\n')
+}
+
+/** ::: 容器开标记（:::yellow-fish 等，裸 ::: 是闭合不算） */
+const CONTAINER_OPEN_RE = /^\s{0,3}:::[a-z]/
+
+/**
+ * 分档段落升级合成 :::yellow-fish 块：模型漏写块语法、把「序号｜理由」条目当普通段落输出时，
+ * 在内容层把连续的「序号｜」行包进 :::yellow-fish 块，让现有卡片渲染与按序号带
+ * 图/价/标题/链接的 hydrate 链路照常生效（2026-11-05 定案：分档输出必须结构化卡片流）。
+ * 规则：
+ * - 只扫普通 md 层：跳过 ``` 围栏与 ::: 容器（模型写对了块的部分原样保留，天然幂等）
+ * - 条目行之间允许夹最多 1 个空行（模型常按段落分段输出）；run ≥2 行才合成，
+ *   单行「序号｜」可能只是正文里的普通引用，不动
+ * - 标题取 run 前最近的一个非空非条目行，且 trim 后 ≤40 字（长开场白不当标题），
+ *   剥掉行首 # 与行尾冒号；找不到标题就不加，条目照常成块
+ * - 合成的块由 parseExamSegments 正常拆出，forceRankLineBreaks 兜底仍覆盖未升级的散行
+ */
+export function promoteRankRunsToBlocks(text: string): string {
+  const lines = text.split('\n')
+  const out: string[] = []
+  let i = 0
+  let inFence = false
+  let fenceChar = ''
+  let inContainer = false
+  while (i < lines.length) {
+    const line = lines[i]
+    if (inContainer) {
+      out.push(line)
+      if (/^\s{0,3}:::\s*$/.test(line)) inContainer = false
+      i++
+      continue
+    }
+    const fence = line.trim().match(/^(`{3,}|~{3,})/)
+    if (fence) {
+      if (!inFence) {
+        inFence = true
+        fenceChar = fence[1][0]
+      } else if (fence[1][0] === fenceChar) {
+        inFence = false
+        fenceChar = ''
+      }
+      out.push(line)
+      i++
+      continue
+    }
+    if (inFence) {
+      out.push(line)
+      i++
+      continue
+    }
+    if (CONTAINER_OPEN_RE.test(line)) {
+      inContainer = true
+      out.push(line)
+      i++
+      continue
+    }
+    if (!RANK_LINE_RE.test(line)) {
+      out.push(line)
+      i++
+      continue
+    }
+    // 条目行 run 收集：允许夹 ≤1 个空行，遇到非条目非空行即止
+    const run: string[] = []
+    let gap: string[] = []
+    let j = i
+    while (j < lines.length) {
+      if (RANK_LINE_RE.test(lines[j])) {
+        run.push(...gap, lines[j])
+        gap = []
+        j++
+      } else if (!lines[j].trim() && gap.length < 1 && run.length > 0) {
+        gap.push(lines[j])
+        j++
+      } else {
+        break
+      }
+    }
+    if (run.length < 2) {
+      out.push(lines[i])
+      i++
+      continue
+    }
+    // 标题回看：最近的一个非空非条目行，≤40 字才采纳；
+    // 跳过容器标记行（上一轮自己合成的 ::: 闭合不是标题）
+    let title: string | null = null
+    for (let k = out.length - 1; k >= 0; k--) {
+      const raw = out[k]
+      const cand = raw.trim()
+      if (!cand) continue
+      if (RANK_LINE_RE.test(raw) || CONTAINER_OPEN_RE.test(raw) || /^\s{0,3}:::\s*$/.test(raw)) break
+      if (cand.length <= 40) {
+        title = cand.replace(/^#+\s*/, '').replace(/[:：]\s*$/, '')
+      }
+      break
+    }
+    if (title) out.push(':::yellow-fish', title)
+    else out.push(':::yellow-fish')
+    out.push(...run, ...gap, ':::')
+    i = j
+  }
+  return out.join('\n')
 }
 
 export interface ExamSentencePart {
