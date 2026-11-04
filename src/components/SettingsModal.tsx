@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { Save, Trash2, Loader2, Timer, CheckCircle, AlertCircle, Key, KeyRound, Eye, EyeOff, Zap, ExternalLink, Brain, Plus, Settings2, HelpCircle, Info, MessageSquare, GitBranch, Cpu, Wrench, BarChart3, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Filter, LayoutDashboard, Sparkles, ImageIcon, Check, RefreshCw, Globe, Search, LogOut, User, CalendarDays, Pencil, X, FileUp, Download, Copy, VenetianMask, RotateCcw, Plug, MapPin, FolderOpen, Gauge, Ticket, Gift, Smartphone, FileJson, Watch as WatchIcon } from 'lucide-react'
+import { Save, Trash2, Loader2, Timer, CheckCircle, AlertCircle, Key, KeyRound, Eye, EyeOff, Zap, ExternalLink, Brain, Plus, Settings2, HelpCircle, Info, MessageSquare, GitBranch, Cpu, Wrench, BarChart3, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Filter, LayoutDashboard, Sparkles, ImageIcon, Check, RefreshCw, Globe, Search, LogOut, User, CalendarDays, Pencil, X, FileUp, Download, Copy, VenetianMask, RotateCcw, Plug, MapPin, FolderOpen, Gauge, Ticket, Gift, Smartphone, FileJson, Watch as WatchIcon, Fish } from 'lucide-react'
 import { signOut, useSession } from 'next-auth/react'
 import { cn } from '@/lib/utils'
 import {
@@ -41,6 +41,7 @@ import { parseMemoryText, COMMON_IMPORT_SOURCES, MEMORY_IMPORT_REFERENCE, type P
 import MasksSettings from '@/components/settings/MasksSettings'
 import { PortableSettings } from '@/components/settings/PortableSettings'
 import { WatchSettings } from '@/components/settings/WatchSettings'
+import { YellowFishSection } from '@/components/settings/YellowFishSection'
 import { DefaultModelSetting } from '@/components/settings/DefaultModelSetting'
 import QuotaAdminSection from '@/components/settings/QuotaAdminSection'
 import QuotaPersonalCard from '@/components/settings/QuotaPersonalCard'
@@ -541,7 +542,7 @@ const PROVIDER_URL: Record<string, string> = {
   yi: 'https://platform.lingyiwanwu.com/apikeys',
 }
 
-type SectionId = 'overview' | 'session' | 'providers' | 'models' | 'search' | 'memory' | 'clarify' | 'localfiles' | 'masks' | 'mcp' | 'general' | 'help' | 'mobileapp' | 'about' | 'usage' | 'image' | 'buddy' | 'account' | 'apitokens' | 'portable' | 'quota' | 'redeem' | 'regcodes' | 'watch'
+type SectionId = 'overview' | 'session' | 'providers' | 'models' | 'search' | 'memory' | 'clarify' | 'localfiles' | 'masks' | 'mcp' | 'general' | 'help' | 'mobileapp' | 'about' | 'usage' | 'image' | 'buddy' | 'account' | 'apitokens' | 'portable' | 'quota' | 'redeem' | 'regcodes' | 'watch' | 'yellowfish'
 
 type NavItem = { id: SectionId; label: string; icon: typeof Key; adminOnly?: boolean }
 type NavGroup = { title: string; items: NavItem[] }
@@ -564,6 +565,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'localfiles', label: '本地文件', icon: FolderOpen },
       { id: 'masks', label: '面具管理', icon: VenetianMask },
       { id: 'mcp', label: 'MCP 工具', icon: Plug },
+      { id: 'yellowfish', label: 'YellowFish', icon: Fish },
     ],
   },
   {
@@ -5002,6 +5004,7 @@ export function SettingsModal({
                 {/* 对话搬运(本地 dev ↔ 线上 的会话导出/导入) */}
                 {activeSection === 'portable' && <PortableSettings />}
                 {activeSection === 'watch' && <WatchSettings />}
+                {activeSection === 'yellowfish' && <YellowFishSection />}
 
                 {/* 管理(管理员专属):号池 / 激活码 / 注册码三 tab 共用同一组件按视图切片;接口自行验权,非管理员只会看到 403 降级态 */}
                 {activeSection === 'quota' && <QuotaAdminSection view="pool" />}

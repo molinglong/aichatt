@@ -131,6 +131,11 @@ import { CALC_TOOL_NAME, CALC_TOOL_PROMPT } from "@/lib/ai/calc-tool"
 import { createCalcTool } from "@/lib/ai/calc-tool.server"
 import { TIME_TOOL_NAME, TIME_TOOL_PROMPT } from "@/lib/ai/time-tool"
 import { createTimeTool } from "@/lib/ai/time-tool.server"
+import { YELLOW_FISH_TOOL_NAME, YELLOW_FISH_TOOL_PROMPT, YELLOW_FISH_WATCH_TOOL_NAME, YELLOW_FISH_WATCH_PROMPT } from "@/lib/ai/yellow-fish-tool"
+import { YELLOW_FISH_LIVE_TOOL_NAME, YELLOW_FISH_LIVE_PROMPT } from "@/lib/ai/yellow-fish-live-tool"
+import { createYellowFishTool } from "@/lib/ai/yellow-fish-tool.server"
+import { createYellowFishWatchTool } from "@/lib/ai/yellow-fish-watch.server"
+import { createYellowFishLiveTool } from "@/lib/ai/yellow-fish-live.server"
 import { buildMcpPromptSection } from "@/lib/ai/mcp/mcp-constants"
 import {
   loadMcpToolsForUser,
@@ -1345,6 +1350,27 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     systemParts.push(TIME_TOOL_PROMPT)
   }
 
+  // 闲鱼行情工具(get_yellow_fish_market):只读,服务端直连本机闲鱼监控服务的现成接口;
+  // 闸门与 time 一致。反映已监控关键词的历史抓取汇总,服务未启动时优雅降级、不编造。
+  const yellowFishTool = !isGameMask ? createYellowFishTool() : null
+  if (yellowFishTool) {
+    systemParts.push(YELLOW_FISH_TOOL_PROMPT)
+  }
+
+  // 闲鱼建监控闭环(add_yellow_fish_watch):写工具(自动建 keyword 任务+开爬+等数据,内置查重护栏),
+  // 闸门与 market 一致;只在监控连通时有意义,超时/失败在工具内优雅降级、绝不编价格。
+  const yellowFishWatchTool = !isGameMask ? createYellowFishWatchTool() : null
+  if (yellowFishWatchTool) {
+    systemParts.push(YELLOW_FISH_WATCH_PROMPT)
+  }
+
+  // 闲鱼实时价(get_yellow_fish_live):goofish-cli 桥(真实浏览器路径、只读纪律),
+  // 服务端硬限频 10 分钟 2 次;闸门与 market 一致,失败降级退回监控快照。
+  const yellowFishLiveTool = !isGameMask ? createYellowFishLiveTool() : null
+  if (yellowFishLiveTool) {
+    systemParts.push(YELLOW_FISH_LIVE_PROMPT)
+  }
+
   // MCP 外部工具:非临时非对比模式加载用户启用的 server(配置即全局生效)。
   // 连接失败只记入 failures,随能力段注入降级提示,不阻塞主流程;
   // 连接在 onFinish 统一 close(临时模式/对比模式根本不加载);游戏回合同样不加载。
@@ -2093,7 +2119,7 @@ const result = streamText({
     (cmSupportsReasoning || /dashscope\.aliyuncs\.com/i.test(cmBaseURL))
       ? { providerOptions: { openai: { reasoningEffort: "medium" } } }
       : {}),
-    ...((searchTool || urlReaderTool || calcTool || timeTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
+    ...((searchTool || urlReaderTool || calcTool || timeTool || yellowFishTool || yellowFishWatchTool || yellowFishLiveTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
       ? {
           tools: {
             ...(searchTool ? { web_search: searchTool } : {}),
@@ -2101,6 +2127,9 @@ const result = streamText({
             ...(urlReaderTool ? { [URL_READER_TOOL_NAME]: urlReaderTool } : {}),
             ...(calcTool ? { [CALC_TOOL_NAME]: calcTool } : {}),
             ...(timeTool ? { [TIME_TOOL_NAME]: timeTool } : {}),
+            ...(yellowFishTool ? { [YELLOW_FISH_TOOL_NAME]: yellowFishTool } : {}),
+            ...(yellowFishWatchTool ? { [YELLOW_FISH_WATCH_TOOL_NAME]: yellowFishWatchTool } : {}),
+            ...(yellowFishLiveTool ? { [YELLOW_FISH_LIVE_TOOL_NAME]: yellowFishLiveTool } : {}),
             ...(knowledgeTool ? { [KNOWLEDGE_TOOL_NAME]: knowledgeTool } : {}),
             ...(knowledgeOutlineTool ? { [KNOWLEDGE_OUTLINE_TOOL_NAME]: knowledgeOutlineTool } : {}),
             ...(practiceTool ? { [PRACTICE_TOOL_NAME]: practiceTool } : {}),

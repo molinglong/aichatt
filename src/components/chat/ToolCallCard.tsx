@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useState } from 'react'
-import { BookOpen, Brain, Calculator, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Globe, Link2, ListTodo, Loader2, Plug, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
+import { BookOpen, Brain, Calculator, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Fish, Globe, Link2, ListTodo, Loader2, Plug, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UIMessage } from 'ai'
 import { ClarifyCard } from './ClarifyCard'
@@ -40,10 +40,14 @@ import { TODO_TOOL_NAME, type TodoToolOutput } from '@/lib/ai/todo-tool'
 import { URL_READER_TOOL_NAME, type UrlReaderOutput } from '@/lib/ai/url-reader'
 import { CALC_TOOL_NAME, type CalcOutput } from '@/lib/ai/calc-tool'
 import { TIME_TOOL_NAME, type TimeToolOutput } from '@/lib/ai/time-tool'
+import { YELLOW_FISH_TOOL_NAME, YELLOW_FISH_WATCH_TOOL_NAME, type YellowFishToolOutput, type YellowFishWatchToolOutput } from '@/lib/ai/yellow-fish-tool'
+import { YELLOW_FISH_LIVE_TOOL_NAME, type YellowFishLiveToolOutput } from '@/lib/ai/yellow-fish-live-tool'
+import { YellowFishLiveListings } from './YellowFishLiveListings'
 import { parseMcpToolDisplay } from '@/lib/ai/mcp/mcp-constants'
 import { getSettingDef, formatSettingValue } from '@/lib/settings/registry'
 import { isRevertableSetting, revertSettingsOp } from '@/lib/settings/executor'
 import { MiniSwitch } from '@/components/settings/MiniSwitch'
+import { useChatStore } from '@/store/chat-store'
 
 /**
  * 工具调用卡片 —— 渲染 AI 工具调用过程,让"模型查资料"对用户可见可信。
@@ -305,6 +309,118 @@ function mcpErrBrief(err: string | undefined | null): string {
   if (!err) return ''
   const s = err.replace(/\s+/g, ' ').trim()
   return s.length > 60 ? `${s.slice(0, 60)}…` : s
+}
+
+/** 闲鱼行情详情区（行情概览/每日走势/最近商品/note）—— get_yellow_fish_market 与
+ *  add_yellow_fish_watch 两个分支共用的渲染；两工具的行情子字段同形（见 yellow-fish-tool.ts）。 */
+function YellowFishMarketDetails({
+  out,
+}: {
+  out: Pick<
+    YellowFishToolOutput,
+    'keyword' | 'matchedKeyword' | 'market' | 'history' | 'dailyTrend' | 'recentItems' | 'note'
+  >
+}) {
+  const yuan = (v?: number | null) => (v == null ? '—' : String(v))
+  const money = (v?: number | null) => (v == null ? '—' : `¥${v}`)
+  const m = out.market
+  return (
+    <div className="space-y-3 py-0.5">
+      {/* 行情概览：拆成均价/中位/区间/样本四个指标块，黑白灰分层 */}
+      <div>
+        <div className="mb-2 text-[11px] font-medium tracking-wide text-content-muted">
+          行情概览 · {out.matchedKeyword || out.keyword}
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-4">
+          {[
+            { label: '均价', value: money(m?.avg) },
+            { label: '中位', value: money(m?.median) },
+            { label: '区间', value: m?.min != null && m?.max != null ? `${money(m.min)}~${money(m.max)}` : '—' },
+            { label: '样本', value: String(m?.sampleCount ?? 0) },
+          ].map((c) => (
+            <div key={c.label}>
+              <div className="text-[11px] text-content-muted">{c.label}</div>
+              <div className="mt-0.5 text-sm font-medium tabular-nums text-content-primary">{c.value}</div>
+            </div>
+          ))}
+        </div>
+        {m?.snapshotTime ? (
+          <div className="mt-2 text-[11px] text-content-muted">
+            抓取时间 {String(m.snapshotTime).slice(0, 16).replace('T', ' ')}
+          </div>
+        ) : null}
+      </div>
+
+      {/* 每日均价走势：≥2 天才展示 */}
+      {out.dailyTrend && out.dailyTrend.length > 1 ? (
+        <div className="border-t border-line/50 pt-2.5">
+          <div className="mb-2 text-[11px] font-medium tracking-wide text-content-muted">每日均价走势</div>
+          <ul className="space-y-1">
+            {out.dailyTrend.map((p) => (
+              <li key={p.day} className="flex items-baseline gap-2 text-xs">
+                <span className="tabular-nums text-content-secondary">{p.day}</span>
+                <span className="font-medium tabular-nums text-content-primary">¥{yuan(p.avg)}</span>
+                <span className="tabular-nums text-content-muted">¥{yuan(p.min)}~¥{yuan(p.max)} · {p.sampleCount}件</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {/* 最近商品：缩略图 + 价格/地区/时间顶栏 + 两行标题 */}
+      {out.recentItems && out.recentItems.length > 0 ? (
+        <div className="border-t border-line/50 pt-2.5">
+          <div className="mb-2 text-[11px] font-medium tracking-wide text-content-muted">最近商品</div>
+          <ul className="space-y-2.5">
+            {out.recentItems.map((it, idx) => {
+              const metaParts = [it.region, it.publishTime ? String(it.publishTime).slice(5, 10) : ''].filter(Boolean)
+              return (
+                <li key={it.link || idx} className="flex items-start gap-2.5">
+                  {it.image ? (
+                    <img
+                      src={it.image}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      className="h-12 w-12 shrink-0 rounded-md object-cover bg-black/5 dark:bg-white/10 select-none"
+                    />
+                  ) : (
+                    <div className="h-12 w-12 shrink-0 rounded-md bg-black/5 dark:bg-white/10" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-sm font-medium tabular-nums text-content-primary">
+                        {it.price != null ? `¥${it.price}` : (it.priceDisplay || '—')}
+                      </span>
+                      {metaParts.length > 0 ? (
+                        <span className="shrink-0 text-[11px] tabular-nums text-content-muted">{metaParts.join(' · ')}</span>
+                      ) : null}
+                    </div>
+                    {it.link ? (
+                      <a
+                        href={it.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-0.5 line-clamp-2 text-xs leading-snug text-content-secondary hover:underline"
+                      >
+                        {it.title}
+                      </a>
+                    ) : (
+                      <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-content-secondary">{it.title}</div>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ) : null}
+
+      {out.note ? (
+        <div className="border-t border-line/50 pt-2 text-[11px] leading-relaxed text-content-muted">{out.note}</div>
+      ) : null}
+    </div>
+  )
 }
 
 /** ToolCallCard 渲染入参:除工具视图外,携带澄清卡片的交互回调与已答状态 */
@@ -696,6 +812,160 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
         text={text}
         streaming={pending}
         failed={failed}
+      />
+    )
+  }
+
+  // 闲鱼行情：一行式「关键词 · 均价」，展开看区间/每日走势/最近商品（走 ToolRow 详情区）。
+  // 未连通（available=false）只给一行式降级卡，具体原因由模型正文解释。
+  if (view.tool === YELLOW_FISH_TOOL_NAME) {
+    const input = view.input as { keyword?: string } | undefined
+    const out = view.output as YellowFishToolOutput | undefined
+    const pending = view.state === 'input-streaming' || view.state === 'input-available'
+    const keyword = out?.keyword || input?.keyword || ''
+    const failed = view.state === 'output-error' || (out ? out.available === false : false)
+    const avg = out?.market?.avg
+    const text = pending
+      ? `正在查闲鱼行情${keyword ? ` · ${keyword}` : ''}…`
+      : failed
+        ? `闲鱼行情未连通${keyword ? ` · ${keyword}` : ''}`
+        : out?.available && avg != null
+          ? `YellowFish 行情 · ${out.matchedKeyword || keyword} · 均价 ¥${avg}`
+          : out?.available
+            ? `YellowFish 行情 · ${out.matchedKeyword || keyword} · 暂无价格样本`
+            : '已查询闲鱼行情'
+    return (
+      <ToolRow
+        icon={<Fish className="w-3.5 h-3.5" />}
+        text={text}
+        streaming={pending}
+        failed={failed}
+        details={out && out.available ? <YellowFishMarketDetails out={out} /> : undefined}
+      />
+    )
+  }
+
+  // 闲鱼建监控闭环：一行式「建好/在爬/失败」，出行情时复用行情详情区。
+  // 软状态（已开爬/任务在跑/超时兜底）不算失败，给正常色 + 说明；只有 error 才标红。
+  if (view.tool === YELLOW_FISH_WATCH_TOOL_NAME) {
+    const input = view.input as { keyword?: string } | undefined
+    const out = view.output as YellowFishWatchToolOutput | undefined
+    const pending = view.state === 'input-streaming' || view.state === 'input-available'
+    const keyword = out?.keyword || input?.keyword || ''
+    const failed = view.state === 'output-error' || !!out?.error
+    const waiting = !!out && !out.available && !out.error
+    const avg = out?.market?.avg
+    const text = pending
+      ? `正在建闲鱼监控${keyword ? ` · ${keyword}` : ''}…`
+      : failed
+        ? `建监控未成功${keyword ? ` · ${keyword}` : ''}`
+        : out?.available && avg != null
+          ? `监控行情 · ${out.matchedKeyword || keyword} · 均价 ¥${avg}`
+          : out?.available
+            ? `监控行情 · ${out.matchedKeyword || keyword} · 暂无价格样本`
+            : waiting
+              ? `监控已开跑 · ${keyword} · 稍后问行情`
+              : '已处理监控任务'
+    return (
+      <ToolRow
+        icon={<Fish className="w-3.5 h-3.5" />}
+        text={text}
+        streaming={pending}
+        failed={failed}
+        details={
+          out && out.available ? (
+            <YellowFishMarketDetails out={out} />
+          ) : waiting && out?.note ? (
+            <div className="py-0.5 text-[11px] leading-relaxed text-content-muted">{out.note}</div>
+          ) : undefined
+        }
+      />
+    )
+  }
+
+  // YellowFish 实时价（goofish-cli 桥）：一行式「区间 · 采样」，展开看在售列表。
+  // 限频/失败一行式降级；真实搜索样本与推荐流在列表里区分标注。
+  if (view.tool === YELLOW_FISH_LIVE_TOOL_NAME) {
+    const input = view.input as { keyword?: string } | undefined
+    const out = view.output as YellowFishLiveToolOutput | undefined
+    const pending = view.state === 'input-streaming' || view.state === 'input-available'
+    const keyword = out?.keyword || input?.keyword || ''
+    const cookieExpired = out?.cookieExpired === true
+    const failed = view.state === 'output-error' || !!out?.error || out?.rateLimited === true || cookieExpired
+    const s = out?.stats
+    const text = pending
+      ? `正在搜 YellowFish 实时价${keyword ? ` · ${keyword}` : ''}…`
+      : cookieExpired
+        ? `YellowFish 实时 · ${keyword} · 登录已过期`
+        : failed
+          ? `YellowFish 实时价未拿到${keyword ? ` · ${keyword}` : ''}`
+          : out?.available && s
+            ? `YellowFish 实时 · ${keyword} · ¥${s.min ?? '—'}~¥${s.max ?? '—'} · ${s.sampleCount}条在售`
+            : '已搜索YellowFish 实时价'
+    return (
+      <ToolRow
+        icon={<Fish className="w-3.5 h-3.5" />}
+        text={text}
+        streaming={pending}
+        failed={failed}
+        details={
+          cookieExpired ? (
+            <div className="space-y-2 py-0.5">
+              {out?.note ? (
+                <div className="text-[11px] leading-relaxed text-content-muted">{out.note}</div>
+              ) : (
+                <div className="text-[11px] leading-relaxed text-content-muted">
+                  YellowFish 登录态已失效，实时价查不了。到「设置 → YellowFish」点扫码修复即可（会弹登录窗口）；监控快照不受影响。
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  useChatStore.getState().setSettingsSection('yellowfish')
+                  useChatStore.getState().setSettingsOpen(true)
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-medium text-accent-foreground transition hover:opacity-90"
+              >
+                去修复登录
+              </button>
+            </div>
+          ) : out && out.available && s ? (
+            <div className="space-y-3 py-0.5">
+              <div>
+                <div className="mb-2 text-[11px] font-medium tracking-wide text-content-muted">
+                  实时在售采样 · {keyword}
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-4">
+                  {[
+                    { label: '最低', value: s.min != null ? `¥${s.min}` : '—' },
+                    { label: '中位', value: s.median != null ? `¥${s.median}` : '—' },
+                    { label: '最高', value: s.max != null ? `¥${s.max}` : '—' },
+                    { label: '样本', value: `${s.sampleCount}（搜索${s.searchCount}）` },
+                  ].map((c) => (
+                    <div key={c.label}>
+                      <div className="text-[11px] text-content-muted">{c.label}</div>
+                      <div className="mt-0.5 text-sm font-medium tabular-nums text-content-primary">{c.value}</div>
+                    </div>
+                  ))}
+                </div>
+                {out.recommendationHeavy ? (
+                  <div className="mt-2 text-[11px] text-content-muted">推荐流占比高，结论可信度有限</div>
+                ) : null}
+              </div>
+              {out.listings && out.listings.length > 0 ? (
+                <div className="border-t border-line/50 pt-2.5">
+                  <div className="mb-2 text-[11px] font-medium tracking-wide text-content-muted">在售商品</div>
+                  <YellowFishLiveListings listings={out.listings} keyword={keyword} />
+                </div>
+              ) : null}
+              {out.note ? (
+                <div className="border-t border-line/50 pt-2 text-[11px] leading-relaxed text-content-muted">{out.note}</div>
+              ) : null}
+            </div>
+          ) : out?.note && !failed ? (
+            <div className="py-0.5 text-[11px] leading-relaxed text-content-muted">{out.note}</div>
+          ) : undefined
+        }
       />
     )
   }
