@@ -21,6 +21,7 @@ import {
   History,
   Loader2,
   X,
+  Fish,
 } from 'lucide-react'
 import { cn, splitReasoningTail } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
@@ -29,6 +30,9 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import { ChartCard } from './ChartCard'
 import { ChatImageLightbox } from './ChatImageLightbox'
 import { ToolCallCard, extractToolCallViews, extractInlineImages } from './ToolCallCard'
+import { YELLOW_FISH_TOOL_NAME, type YellowFishToolOutput, type YellowFishItemBrief } from '@/lib/ai/yellow-fish-tool'
+import { YELLOW_FISH_LIVE_TOOL_NAME, type YellowFishLiveToolOutput } from '@/lib/ai/yellow-fish-live-tool'
+import { isYellowFishAutoFollowText } from './useYellowFishAutoFollow'
 import { TurnFileSummary } from './TurnFileSummary'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
 import { useQueryClient } from '@tanstack/react-query'
@@ -340,6 +344,37 @@ function MessageBubbleInner({
     () => (isAssistant ? extractInlineImages(message) : []),
     [message, isAssistant]
   )
+  // 闲鱼推荐卡 hydrate 数据源:本条消息里 get_yellow_fish_live 的实时采样优先(最新鲜),
+  // 映射成 recentItems 同构形状喂给 :::yellow-fish 块;否则退回 get_yellow_fish_market 的 recentItems
+  const yellowFishItems = useMemo(() => {
+    let marketItems: YellowFishItemBrief[] | null = null
+    for (const v of toolCallViews) {
+      if (v.tool === YELLOW_FISH_LIVE_TOOL_NAME) {
+        const out = v.output as YellowFishLiveToolOutput | null | undefined
+        if (out?.available && Array.isArray(out.listings) && out.listings.length) {
+          return out.listings.map(
+            (it): YellowFishItemBrief => ({
+              no: it.no,
+              title: it.title,
+              price: it.price,
+              priceDisplay: it.priceDisplay,
+              link: it.url,
+              // 小卡 meta 行:位置 · 卖家(实时采样没有发布时间字段)
+              region: [it.location, it.seller].filter(Boolean).join(' · ') || undefined,
+              image: it.pic,
+              avatar: it.avatar,
+            }),
+          )
+        }
+        continue
+      }
+      if (v.tool === YELLOW_FISH_TOOL_NAME && !marketItems) {
+        const out = v.output as YellowFishToolOutput | null | undefined
+        if (out?.available && Array.isArray(out.recentItems) && out.recentItems.length) marketItems = out.recentItems
+      }
+    }
+    return marketItems ?? []
+  }, [toolCallViews])
 
   // content-visibility 裁剪:屏外消息跳过布局/绘制,是长会话滚动性能的基石。
   // 占位尺寸优先用真实测量值(chat-list-bridge 缓存,下方 RO 回填),估算值只兜首帧 ——
@@ -1148,6 +1183,7 @@ function MessageBubbleInner({
                   rich={isAssistant && !isTyping && (!isStreaming || !isLastMessage)}
                   live={isAssistant}
                   inlineImages={inlineImages}
+                  yellowFishItems={yellowFishItems}
                 />
                 {showCursor && (
                   <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-content-secondary animate-pulse align-middle" />
@@ -1236,9 +1272,21 @@ function MessageBubbleInner({
                 导入时未迁移 {importSkipped.count} 个附件
               </div>
             )}
-            <div className="user-bubble rounded-2xl bg-accent px-4 py-2.5">
-              <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.75] text-accent-foreground">{text}</p>
-            </div>
+            {isUser && isYellowFishAutoFollowText(text) ? (
+              // 闲鱼监控自动回报(系统注入的用户消息):渲染成居中 chip,不展示给模型的指令正文
+              <div
+                data-yellow-fish-auto="1"
+                className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-subtle/70 px-3 py-1.5 text-xs text-content-secondary"
+                title="监控抓取完成后由系统自动发起的行情查询"
+              >
+                <Fish className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                监控抓取完成 · 自动查询行情
+              </div>
+            ) : (
+              <div className="user-bubble rounded-2xl bg-accent px-4 py-2.5">
+                <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.75] text-accent-foreground">{text}</p>
+              </div>
+            )}
             {/* 应用内图片浏览器: portal 到 body,点缩略图开 */}
             {lightboxIndex != null && imageAtts.length > 0 && (
               <ChatImageLightbox

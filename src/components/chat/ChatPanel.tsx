@@ -25,6 +25,7 @@ import { ChatPreviewPanel } from './ChatPreviewPanel'
 import { WorkSidePane } from '@/components/workspace/WorkSidePane'
 import { OutlineSidebar } from './OutlineSidebar'
 import { useChatScroll } from './useChatScroll'
+import { useYellowFishAutoFollow } from './useYellowFishAutoFollow'
 import { INPUT_SEND_EVENT } from '@/lib/input-bridge'
 import { InfoAsidePanel, INFO_PANEL_WIDTH, INFO_TAB_WIDTH } from './InfoAsidePanel'
 import { ContextMeter } from './ContextMeter'
@@ -1525,6 +1526,20 @@ export function ChatPanel({
     window.addEventListener(INPUT_SEND_EVENT, onSend)
     return () => window.removeEventListener(INPUT_SEND_EVENT, onSend)
   }, [handleSend])
+
+  // 闲鱼监控自动回报：add_yellow_fish_watch 超时软状态（crawlPending）后，前端每 15s 轮询
+  // /api/yellow-fish/watch/status，爬完自动发一条【监控回报】user 消息让模型当场查行情补报
+  // ——用户不必手动追问（渲染端把该消息显示为 chip，见 MessageBubble）。
+  const handleYellowFishAutoFollow = useCallback(
+    (text: string) => handleSend(text, undefined, undefined, true),
+    [handleSend]
+  )
+  useYellowFishAutoFollow({
+    messages,
+    canSend: !isLoading,
+    conversationId: initialConversationId,
+    onFire: handleYellowFishAutoFollow,
+  })
 
   // local_file 决策:卡片上用户点「批准」→ 按动作执行(delete=移入回收站;
   // create=覆盖写入)并回填;「拒绝」→ 回填 denied。回填后由 sendAutomaticallyWhen
