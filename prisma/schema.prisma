@@ -58,6 +58,7 @@ model User {
   uploadFiles   UploadFile[]
   studyNotes    StudyNote[]
   favorites     Favorite[]
+  favoriteItems FavoriteItem[]
   knowledgeDocs KnowledgeDoc[]
   questions      Question[]
   papers         Paper[]
@@ -598,6 +599,38 @@ model Favorite {
 
   // 同一条消息幂等:重复收藏命中唯一约束,不产生副本
   @@unique([userId, sourceMessageId])
+  @@index([userId, createdAt])
+}
+
+// ===================== 商品收藏(YellowFish 在售商品快照) =====================
+// 定位:闲鱼商品归档层——"这件在售商品以后还想看/想买"。
+// 与 Favorite(消息收藏)彻底分家:这里字段是商品链接+价格快照,不是正文。
+// 与 monitor 关键词监控也分家:这里收藏具体某一件商品,不自动爬价、不参与回报。
+// itemId 用 goofish 商品的数字 id(来自 CLI item_id,即搜索 url 的 id= 参数),稳定键。
+model FavoriteItem {
+  id           String   @id @default(cuid())
+  userId       String
+  itemId       String   // goofish 商品数字 id(收藏的稳定键)
+  title        String
+  price        Float?   // 收藏时售价(元);解析不出为 null
+  priceDisplay String?  // 收藏时原样价("¥1199" / "1.5万")
+  url          String   // 商品链接 goofish.com/item?id=xxx
+  pic          String?  // 封面图 CDN 直链(可能缺省)
+  location     String?
+  seller       String?
+  keyword      String?  // 收藏时的搜索词,便于回看上下文
+  note         String?  // 用户备注(可选)
+  // ── 下架/现价检测(手动「查现价」+ 打开收藏池渐进体检一件) ──
+  status       String?  // null=未检测过 | 'onSale'=在售 | 'off'=已下架/删除 | 'unknown'=查询失败(不误标)
+  statusText   String?  // 状态原文透传(如"已下架/删除"、非"在线"的其他状态词)
+  checkedPrice Float?   // 最近一次检测到的现价(元)
+  checkedAt    DateTime? // 最近一次检测时间
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 同一件商品幂等:重复收藏命中唯一约束,不产生副本
+  @@unique([userId, itemId])
   @@index([userId, createdAt])
 }
 

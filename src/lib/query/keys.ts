@@ -90,6 +90,10 @@ export const queryKeys = {
     list: (conversationId: string | null) =>
       [...queryKeys.all, 'code', 'list', { conversationId }] as const,
   },
+  yellowFish: {
+    /** 商品收藏列表(实时价卡片星标 + 设置节收藏池共享同一份缓存) */
+    favorites: () => [...queryKeys.all, 'yellowFish', 'favorites'] as const,
+  },
 } as const
 
 export type QueryKeyOf<T extends readonly unknown[]> = T
