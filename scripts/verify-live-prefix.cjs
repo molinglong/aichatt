@@ -27,7 +27,7 @@ async function main() {
   const processed=await postcss([tailwind(path.join(ROOT,'tailwind.config.ts'))]).process(fs.readFileSync(path.join(ROOT,'src/app/globals.css'),'utf8'),{from:path.join(ROOT,'src/app/globals.css')})
   processed.root.walkAtRules('import',r=>r.remove())
   const css=processed.root.toString()
-  const html='<!doctype html><html lang="zh-CN" class="dark"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/fonts-subset/400/result.css"><link rel="stylesheet" href="/fonts-subset/600/result.css"><style>body{margin:0;padding:15px}#root{width:100%}#root,#root *{font-family:"PingFang SC Sub",sans-serif!important}</style></head><body><div id="root"></div><script src="/app.js"></script></body></html>'
+  const html='<!doctype html><html lang="zh-CN" class="dark"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/fonts-subset/400/result.css"><link rel="stylesheet" href="/fonts-subset/600/result.css"><style>body{margin:0;padding:15px}#root{width:100%}#root,#root *{font-family:"MiSans",sans-serif!important}</style></head><body><div id="root"></div><script src="/app.js"></script></body></html>'
   const server=http.createServer((req,res)=>{
     const u=new URL(req.url,'http://localhost').pathname
     const staticData={'/':[html,'text/html; charset=utf-8'],'/app.js':[js,'text/javascript'],'/app.css':[css,'text/css']}
@@ -42,7 +42,7 @@ async function main() {
     const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,deviceScaleFactor:2,reducedMotion:'no-preference'})
     const errors=[];page.on('pageerror',e=>errors.push(e.message))
     await page.goto('http://127.0.0.1:'+server.address().port)
-    await page.evaluate(async text=>{await Promise.all([400,600].map(w=>document.fonts.load(w+' 15px "PingFang SC Sub"',text)));await document.fonts.ready},fixtures.map(f=>f.text).join(''))
+    await page.evaluate(async text=>{await Promise.all([400,600].map(w=>document.fonts.load(w+' 15px "MiSans"',text)));await document.fonts.ready},fixtures.map(f=>f.text).join(''))
     await page.evaluate(()=>{
       const ids=new WeakMap();let next=1
       const id=n=>{if(!n)return null;if(!ids.has(n))ids.set(n,next++);return ids.get(n)}
@@ -70,7 +70,7 @@ async function main() {
     const cdp=await page.context().newCDPSession(page);await cdp.send('DOM.enable');await cdp.send('CSS.enable')
     const {root}=await cdp.send('DOM.getDocument');const {nodeId}=await cdp.send('DOM.querySelector',{nodeId:root.nodeId,selector:'#root p'})
     const fonts=await cdp.send('CSS.getPlatformFontsForNode',{nodeId});await cdp.detach()
-    if(!fonts.fonts.some(f=>f.isCustomFont&&/PingFang/i.test(f.familyName)))throw Error('Real PingFang not active')
+    if(!fonts.fonts.some(f=>f.isCustomFont&&/MiSans/i.test(f.familyName)))throw Error('Real MiSans not active')
     const regressions=await page.evaluate(({advice,price,ending})=>{
       const failures=[];
       for(const text of [advice,price,ending]){

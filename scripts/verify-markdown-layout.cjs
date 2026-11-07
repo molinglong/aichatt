@@ -128,7 +128,7 @@ async function main() {
     })
     const wraps = fontFailures.filter(f=>f.before.map(l=>l.text).join('|')!==f.after.map(l=>l.text).join('|'))
     const fontInfo = await cold.evaluate(() => ({family:getComputedStyle(document.body).fontFamily,loaded:[...document.fonts].filter(f=>f.status==='loaded').length}))
-    if (!fontInfo.family.includes('PingFang SC Sub') || !fontInfo.loaded) throw new Error('Font fixture did not load real project fonts')
+    if (!fontInfo.family.includes('MiSans') || !fontInfo.loaded) throw new Error('Font fixture did not load real project fonts')
     console.log('FONT', JSON.stringify({shiftedWidths:fontFailures.length, changedWraps:wraps.length, example:wraps[0], info:fontInfo}))
     results.push({ name: 'font-arrival', checked:beforeFont.length, changedWraps:wraps.length, failures:fontFailures })
     // Streaming/render-mode updates must not activate a late font on existing lines either.
@@ -142,9 +142,9 @@ async function main() {
       console.log(`${changed?'FAIL':'PASS'} late font ${rich?'finalize':'stream'}: ${changed} shifted characters`)
     }
     await cold.close()
-    // Preload before first text paint: verify live/rich using real PingFang, not optional fallback.
+    // Preload before first text paint: verify live/rich using real MiSans, not optional fallback.
     await page.evaluate(async text => {
-      await Promise.all([400,600].map(w=>document.fonts.load(w+' 15px "PingFang SC Sub"',text)))
+      await Promise.all([400,600].map(w=>document.fonts.load(w+' 15px "MiSans"',text)))
     }, cases.map(c=>c.text).join(''))
     // Geometry checks isolate renderer differences, not animation progress/font swap.
     await page.addStyleTag({ content: '*,*::before,*::after { animation: none !important; transition: none !important }' })
@@ -154,9 +154,9 @@ async function main() {
     const {root:dom} = await cdp.send('DOM.getDocument')
     const {nodeId} = await cdp.send('DOM.querySelector',{nodeId:dom.nodeId,selector:'#root p'})
     const {fonts} = await cdp.send('CSS.getPlatformFontsForNode',{nodeId})
-    const pingfangUsed = fonts.some(f=>f.isCustomFont && /PingFang/i.test(f.familyName) && f.glyphCount>0)
-    if (!pingfangUsed) throw new Error('Warm-cache fixture did not actually render with PingFang: '+JSON.stringify(fonts))
-    console.log('PASS warm PingFang:',JSON.stringify(fonts))
+    const misansUsed = fonts.some(f=>f.isCustomFont && /MiSans/i.test(f.familyName) && f.glyphCount>0)
+    if (!misansUsed) throw new Error('Warm-cache fixture did not actually render with MiSans: '+JSON.stringify(fonts))
+    console.log('PASS warm MiSans:',JSON.stringify(fonts))
     results.push({name:'warm-font',fonts})
     await cdp.detach()
     for (const fixture of cases) {
