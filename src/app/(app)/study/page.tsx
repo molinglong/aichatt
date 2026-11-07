@@ -1,175 +1,270 @@
 'use client'
 
-import { useState, useEffect, useRef, Suspense, useMemo } from 'react'
-import { BookOpen, CalendarClock, NotebookPen, Star, X } from 'lucide-react'
-import { useSearchParams, usePathname, useRouter } from 'next/navigation'
-import type { UIMessage } from 'ai'
-import { ChatPanel } from '@/components/chat/ChatPanel'
+/**
+ * /study · 学习模式 v2(独立体系):
+ * - 学习台首屏(E+ 三宫格):复习到期卡 / 继续上次 / 学新题;左栏学习会话历史
+ * - setup:题目/题图/起点/模型 → POST /api/study 建会话 → stream(start) 开讲
+ * - 讲义卡流:一步一卡 + 操作条(懂了继续/没懂换说法/直接要答案) + 追问输入框
+ * - 结课:总结卡 + 自动归档错题本;右侧抽屉复用错题本/回看/收藏
+ * 学习会话与聊天会话彻底分家:不再走 ChatPanel / /api/chat,历史列表由 /api/conversations 过滤。
+ */
+import { useState, Suspense, useEffect, useMemo, useRef } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { ChevronDown, X } from 'lucide-react'
+import { useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
+import { useSession } from 'next-auth/react'
 import { NoteList } from '@/components/study/NoteList'
 import { FavoriteList } from '@/components/study/FavoriteList'
 import { ReviewCard } from '@/components/study/ReviewCard'
+import { StudyHome, type StudySessionListItem } from '@/components/study/StudyHome'
+import { StudyWorkspace } from '@/components/study/StudyWorkspace'
+import { FileUpload } from '@/components/chat/FileUpload'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
 import { ClientOnly } from '@/components/ClientOnly'
-import { useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
-import { useSession } from 'next-auth/react'
-import { useChatStore } from '@/store/chat-store'
-import { providersModelsQuery } from '@/lib/query/providers'
-import { fetchJson, NotFoundError } from '@/lib/query/fetcher'
-import { queryKeys, STALE } from '@/lib/query/keys'
-import { clearStudyLesson, loadStudyLesson, patchStudyLesson } from '@/lib/study/lesson-session'
-import type { Attachment } from '@/lib/attachment-types'
+import { useStudySession } from '@/hooks/useStudyStream'
+import { providersModelsQuery, isModelAvailable, providerKeysStatusQuery } from '@/lib/query/providers'
+import { fetchJson } from '@/lib/query/fetcher'
+import { queryKeys } from '@/lib/query/keys'
 import { cn } from '@/lib/utils'
+import type { Attachment } from '@/lib/attachment-types'
 
-const CHIP =
-  'px-2.5 py-1 rounded-full text-xs bg-surface-subtle/60 border border-line/60 text-content-secondary'
+const CHIP = 'px-2.5 py-1 rounded-full text-xs bg-surface-subtle/60 border border-line/60 text-content-secondary'
 
-interface StudyMessageRow {
-  id: string
-  role: string
-  content: string
-  reasoning?: string | null
-  model?: string | null
-  groupId?: string | null
-  streaming?: boolean
-  attachments?: unknown
-  metadata?: unknown
-  favoriteId?: string | null
-  createdAt?: string
+interface StudyListResp {
+  items: StudySessionListItem[]
+  total: number
+  hasMore: boolean
+  meta?: { dueCount: number; noteCount?: number; weak: Array<{ topic: string | null; title: string; mastery: number }> }
 }
 
-interface StudyConversation {
-  id: string
-  title: string
-  model: string
-  messages: StudyMessageRow[]
-}
+function StudySetup({ onBack, onCreated, studyModels, defaultModelId, initialQuestion }: {
+  onBack: () => void
+  onCreated: (id: string, question: string) => void
+  studyModels: Array<{ id: string; name?: string; publicPool?: boolean }>
+  defaultModelId: string
+  initialQuestion?: string
+}) {
+  const [question, setQuestion] = useState(initialQuestion ?? '')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [level, setLevel] = useState<'beginner' | 'partial' | 'review'>('beginner')
+  /** 「只会一点」起点的思路备注:用户已做的过程/卡点,模型据此定位真实卡点 */
+  const [notes, setNotes] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [modelId, setModelId] = useState<string>('')
+  const [modelOpen, setModelOpen] = useState(false)
+  const modelWrapRef = useRef<HTMLDivElement>(null)
 
-/** 会话行 → UIMessage(与 /chat/c/[id] 的 adapter 同形,只保留学习室用得到的字段) */
-function studyMessageToUI(msg: StudyMessageRow): UIMessage {
-  const parts: UIMessage['parts'] = []
-  if (msg.reasoning) parts.push({ type: 'reasoning' as const, text: msg.reasoning, state: 'done' as const })
-  parts.push({ type: 'text' as const, text: msg.content ?? '', state: 'done' as const })
-  const attachments = Array.isArray(msg.attachments)
-    ? (msg.attachments as Attachment[]).filter(
-        (a) => !!a && typeof a.url === 'string' && typeof a.name === 'string'
-      )
-    : []
-  const meta =
-    msg.metadata && typeof msg.metadata === 'object' && !Array.isArray(msg.metadata)
-      ? (msg.metadata as Record<string, unknown>)
-      : null
-  const metadata = msg.streaming ? { ...(meta ?? {}), streaming: true } : meta
-  return {
-    id: msg.id,
-    role: msg.role as 'user' | 'assistant' | 'system',
-    parts,
-    ...(msg.createdAt ? { createdAt: new Date(msg.createdAt) } : {}),
-    ...(attachments.length > 0 ? { attachments } : {}),
-    ...(metadata ? { metadata } : {}),
-    favoriteId: msg.favoriteId ?? null,
-  } as UIMessage
+  // 弹层外点击关闭
+  useEffect(() => {
+    if (!modelOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (!modelWrapRef.current?.contains(e.target as Node)) setModelOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [modelOpen])
+
+  const effectiveModelId = modelId || defaultModelId
+  const canSubmit = question.trim().length > 0 && !creating
+
+  const submit = async () => {
+    if (!canSubmit) return
+    setCreating(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: question.trim(),
+          images: attachments.map((a) => a.url).filter((u) => typeof u === 'string' && u.startsWith('/')),
+          notes: level === 'partial' && notes.trim() ? notes.trim() : undefined,
+          startLevel: level,
+          modelId: effectiveModelId,
+        }),
+      })
+      if (!res.ok) {
+        const e = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(e.error || `HTTP ${res.status}`)
+      }
+      const d = (await res.json()) as { session: { id: string } }
+      onCreated(d.session.id, question.trim())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建失败')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[720px] px-7 py-7">
+          <button
+            type="button"
+            onClick={onBack}
+            className="mb-4 inline-flex items-center gap-1 text-[13px] text-content-muted transition-colors hover:text-content-primary"
+          >
+            ← 返回
+          </button>
+          <label className="mb-2 block text-[13px] font-semibold">题目</label>
+          <textarea
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            maxLength={20000}
+            placeholder="输入或粘贴题目,也可以只上传题图…"
+            className="min-h-[110px] w-full rounded-[14px] border border-line bg-surface px-3.5 py-2.5 text-[14px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-2.5">
+            <FileUpload
+              attachments={attachments}
+              onAttachmentsChange={setAttachments}
+              variant="pill"
+              pillClassName="min-h-11 px-4"
+            />
+            {/* 模型选项框:附件右侧,自定义弹层向下弹出(原生 select 弹出位置系统控制,会压到起点卡) */}
+            <div ref={modelWrapRef} className="relative min-w-0 max-w-full flex-1 sm:flex-none sm:basis-[280px]">
+              <button
+                type="button"
+                onClick={() => setModelOpen((v) => !v)}
+                aria-haspopup="listbox"
+                aria-expanded={modelOpen}
+                title="讲解模型 · 开讲后不可换"
+                className="flex h-11 w-full items-center gap-2 rounded-full border border-line bg-surface px-4 text-[13px] text-content-secondary transition-colors hover:border-line-strong focus:border-accent focus:outline-none"
+              >
+                <span className="min-w-0 flex-1 truncate text-left">
+                  {studyModels.find((m) => m.id === effectiveModelId)?.name || effectiveModelId}
+                </span>
+                <ChevronDown
+                  className={cn('h-3.5 w-3.5 shrink-0 transition-transform', modelOpen && 'rotate-180')}
+                  aria-hidden
+                />
+              </button>
+              {modelOpen && (
+                <div
+                  role="listbox"
+                  aria-label="讲解模型"
+                  className="absolute left-0 top-full z-30 mt-2 max-h-64 w-full overflow-y-auto rounded-xl border border-line bg-surface py-1 shadow-lg"
+                >
+                  {studyModels.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      role="option"
+                      aria-selected={m.id === effectiveModelId}
+                      onClick={() => {
+                        setModelId(m.id)
+                        setModelOpen(false)
+                      }}
+                      className={cn(
+                        'w-full px-4 py-2 text-left text-[13px] transition-colors hover:bg-surface-subtle',
+                        m.id === effectiveModelId ? 'bg-accent-soft font-medium text-accent' : 'text-content-secondary'
+                      )}
+                    >
+                      {m.name || m.id}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <label className="mb-2 mt-6 block text-[13px] font-semibold">从哪个起点讲</label>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            {(
+              [
+                ['beginner', '完全不会', '从零开始,一次一小步,不跳'],
+                ['partial', '只会一点', '先看我卡在哪,再接着讲'],
+                ['review', '都会了复习', '直接过思路,重点查漏'],
+              ] as const
+            ).map(([v, label, desc]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setLevel(v)}
+                className={cn(
+                  'rounded-[14px] border p-3 text-left transition-colors',
+                  level === v
+                    ? 'border-accent bg-accent-soft'
+                    : 'border-line bg-surface hover:border-line-strong'
+                )}
+              >
+                <b className={cn('block text-[14px]', level === v && 'text-accent')}>{label}</b>
+                <span className="text-xs text-content-muted">{desc}</span>
+              </button>
+            ))}
+          </div>
+
+          {level === 'partial' && (
+            <div className="mt-4">
+              <label className="mb-2 block text-[13px] font-semibold">
+                你的思路 / 已做到哪一步
+                <span className="ml-1.5 font-normal text-content-muted">让导师看清你真实卡在哪</span>
+              </label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                maxLength={5000}
+                placeholder="把你的解题过程、已经试过的做法、卡住的地方贴上来…(可留空,导师会先问)"
+                className="min-h-[90px] w-full rounded-[14px] border border-line bg-surface px-3.5 py-2.5 text-[14px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+              />
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-[13px] text-destructive">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={!canSubmit}
+            onClick={submit}
+            className="mt-6 inline-flex items-center gap-1.5 rounded-full bg-content-primary px-7 py-3 text-sm font-semibold text-surface transition-opacity disabled:opacity-40"
+          >
+            {creating ? '创建中…' : '选个学习起点 ›'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function StudyContent() {
   const { status } = useSession()
-  // 与 /chat 同源的"开新课"信号:侧栏「新对话」bump 后本页面也重挂载回空白会话
-  const newChatNonce = useChatStore((s) => s.newChatNonce)
-  const setCurrentConversationId = useChatStore((s) => s.setCurrentConversationId)
-  const setConversationTitle = useChatStore((s) => s.setConversationTitle)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [drawerTab, setDrawerTab] = useState<'review' | 'notes' | 'favorites'>('notes')
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
-  const refreshStudyCounts = () => {
-    void queryClient.invalidateQueries({ queryKey: ['study', 'queue'] })
-    void queryClient.invalidateQueries({ queryKey: ['study', 'notes-count'] })
-    void queryClient.invalidateQueries({ queryKey: ['favorites', 'count'] })
-  }
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerTab, setDrawerTab] = useState<'review' | 'notes' | 'favorites'>('notes')
 
-  // ── 续课:刷新后接着上同一道题 ─────────────────────────────────
-  // 会话 id 优先取 URL(?c=,浏览器前进后退也成立),没有则回落本地快照
-  // (直接重开 /study 时也能接上上次那堂课)。
-  const [resumeId, setResumeId] = useState<string | null>(
-    () => searchParams.get('c') || loadStudyLesson().conversationId
-  )
+  // 视图状态:学习台 / 学新题 / 会话中(本地状态;刷新回学习台,继续上次一键回)
+  const [view, setView] = useState<{ kind: 'home' } | { kind: 'setup'; draft?: string } | { kind: 'session'; id: string }>({ kind: 'home' })
 
-  // 从侧栏历史直接切到另一堂课(/study?c= 变化)时换课:
-  // resumeId 只在挂载时读一次,不跟着查询参数走就会停在上一堂课上。
-  const urlConversationId = searchParams.get('c')
-  useEffect(() => {
-    if (!urlConversationId) return
-    setResumeId((prev) => (prev === urlConversationId ? prev : urlConversationId))
-  }, [urlConversationId])
-
-  // 开新课信号(侧栏「新对话」/结课「再学一道」)→ 丢弃续课。
-  // 侧栏「新对话」还会把页面导航去 /chat,那种情况只清快照,不能反手把地址栏改回 /study
-  const pathname = usePathname()
-  const nonceRef = useRef(newChatNonce)
-  useEffect(() => {
-    if (nonceRef.current === newChatNonce) return
-    nonceRef.current = newChatNonce
-    clearStudyLesson()
-    setResumeId(null)
-    if (pathname !== '/study') return
-    const panel = searchParams.get('panel')
-    window.history.replaceState(null, '', panel ? `/study?panel=${panel}` : '/study')
-  }, [newChatNonce, searchParams, pathname])
-
-  const conversationQuery = useQuery({
-    queryKey: queryKeys.conversations.detail(resumeId ?? ''),
-    queryFn: ({ signal }) => fetchJson<StudyConversation>(`/api/conversations/${resumeId}`, { signal }),
-    enabled: status === 'authenticated' && !!resumeId,
-    staleTime: STALE.conversation,
+  // 会话列表 + 学习台元数据
+  const listQuery = useQuery({
+    queryKey: ['study', 'sessions'],
+    queryFn: () => fetchJson<StudyListResp>('/api/study?withMeta=1&limit=50'),
+    staleTime: 15_000,
   })
+  const sessions = listQuery.data?.items ?? []
+  const meta = listQuery.data?.meta
 
-  // 会话已不存在(被删/换了账号)→ 丢掉续课,回起始页重新开始
-  useEffect(() => {
-    if (!(conversationQuery.error instanceof NotFoundError)) return
-    clearStudyLesson()
-    setResumeId(null)
-    window.history.replaceState(null, '', '/study')
-  }, [conversationQuery.error])
+  const activeSessionId = view.kind === 'session' ? view.id : null
+  const { session, steps, loading, loadError, busy, streamError, reload, postTo, complete } = useStudySession(activeSessionId)
 
-  const conversation = conversationQuery.data
+  // 模型清单(学习台/setup/重学共用):已配 Key 的模型优先
+  const { data: allModels } = useQuery({ ...providersModelsQuery })
+  const { data: keyProviders } = useQuery<Set<string>>({ ...providerKeysStatusQuery })
+  const studyModels = useMemo(() => {
+    if (!allModels) return []
+    if (!keyProviders) return allModels
+    return allModels.filter((m) => isModelAvailable(m, keyProviders))
+  }, [allModels, keyProviders])
+  const defaultModelId = studyModels.find((m) => m.publicPool)?.id || studyModels[0]?.id || ''
 
-  // 让顶栏标题与侧栏高亮跟恢复的会话对上(与 /chat/c/[id] 行为一致)
-  useEffect(() => {
-    if (!conversation) return
-    setCurrentConversationId(conversation.id)
-    setConversationTitle(conversation.title)
-    // 快照丢过/清过时也从会话回填归属,保证下次从侧栏进 /study 仍能续同一堂课
-    patchStudyLesson({ conversationId: conversation.id })
-  }, [conversation, setCurrentConversationId, setConversationTitle])
-
-  // 可见过滤与 /chat/c/[id] 同口径(单聊:其他模型的回复不下发)
-  const resumedMessages = useMemo<UIMessage[] | null>(() => {
-    if (!conversation) return null
-    return conversation.messages
-      .filter((m) => m.role === 'user' || m.groupId == null || m.model === conversation.model)
-      .map(studyMessageToUI)
-  }, [conversation])
-
-  // 扩展等外部入口可直接落到错题本抽屉:/study?panel=notes
-  useEffect(() => {
-    const panel = searchParams.get('panel')
-    if (panel === 'notes' || panel === 'review' || panel === 'favorites') {
-      setDrawerTab(panel)
-      setDrawerOpen(true)
-    }
-  }, [searchParams])
-
-  // 抽屉每次打开/切换都刷新计数,避免「刚存完卡 chip 还是旧数字」
-  useEffect(() => {
-    if (drawerOpen) refreshStudyCounts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drawerOpen])
-
-  const { data: allModels } = useSuspenseQuery(providersModelsQuery)
-  // 首跑默认模型优先公共池门面档,与 /chat 同规则(见 chat/page.tsx 注释)
-  const defaultModel =
-    allModels.find((m) => m.publicPool)?.id || allModels[0]?.id || 'gpt-5.4-mini'
-
-  // 状态条计数:与 /api/study/queue、服务端学情回灌同口径(到期含新卡;薄弱=lapses>=1 或掌握度<0.3)
+  // 计数(错题本/到期/收藏/课本)——复用旧页的取数口径
   const { data: queue } = useQuery({
     queryKey: ['study', 'queue'],
     queryFn: () => fetchJson<Array<{ id: string }>>('/api/study/queue'),
@@ -180,18 +275,14 @@ function StudyContent() {
     queryFn: () => fetchJson<Array<{ id: string; lapses: number; mastery: number }>>('/api/study/notes'),
     staleTime: 30_000,
   })
-  const dueCount = queue?.length ?? 0
-  const weakCount = notes?.filter((n) => n.lapses >= 1 || n.mastery < 0.3).length ?? 0
-
-  // 收藏计数:与错题本/复习队列完全独立,只用于抽屉状态条与工具入口文案
+  const dueCount = queue?.length ?? meta?.dueCount ?? 0
+  const noteCount = notes?.length ?? 0
   const { data: favoritesCount } = useQuery({
     queryKey: ['favorites', 'count'],
     queryFn: () => fetchJson<{ count: number }>('/api/favorites?count=1'),
     staleTime: 30_000,
   })
   const favoriteCount = favoritesCount?.count ?? 0
-
-  // 可翻原文的课本数(书架入口文案);只取 id 逻辑上等价于整个轻量列表,直接复用书架 API
   const router = useRouter()
   const { data: kbDocs } = useQuery({
     queryKey: queryKeys.kb.docs(),
@@ -200,71 +291,157 @@ function StudyContent() {
   })
   const kbCount = kbDocs?.length ?? 0
 
+  const refreshAll = () => {
+    void queryClient.invalidateQueries({ queryKey: ['study', 'sessions'] })
+    void queryClient.invalidateQueries({ queryKey: ['study', 'queue'] })
+    void queryClient.invalidateQueries({ queryKey: ['study', 'notes-count'] })
+    void queryClient.invalidateQueries({ queryKey: ['favorites', 'count'] })
+  }
+
+  // 复习到期 → 主对话 ping(服务端 24h 去重,挂载时调用是安全的)
+  useEffect(() => {
+    if (!meta || (meta.dueCount ?? 0) <= 0) return
+    void fetch('/api/main-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'review_due',
+        payload: { count: meta.dueCount, items: (meta.weak ?? []).map((w) => w.topic || w.title).slice(0, 3).join(' · ') },
+      }),
+    }).catch(() => {})
+  }, [meta])
+
+  // 扩展等外部入口直落抽屉:/study?panel=notes
+  useEffect(() => {
+    const panel = searchParams.get('panel')
+    if (panel === 'notes' || panel === 'review' || panel === 'favorites') {
+      setDrawerTab(panel)
+      setDrawerOpen(true)
+    }
+  }, [searchParams])
+
   if (status === 'loading') return null
 
-  // 续课请求没回来前先挡一帧骨架:直接渲染学习室会闪一次「从一道题开始」再跳回讲解
-  if (resumeId && status === 'authenticated' && !conversation && !conversationQuery.error) {
-    return (
-      <div className="flex h-full items-center justify-center text-content-muted">
-        <div className="flex items-center gap-3">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-content-muted border-t-transparent" />
-          <span>正在续上这道题…</span>
-        </div>
-      </div>
-    )
+  const handleCreated = async (id: string, _question: string) => {
+    refreshAll()
+    setView({ kind: 'session', id })
+    // 先把新会话的空步载入,再发起 start 流(载入完成后再发,避免快照把流式占位覆盖掉)
+    await reload(id)
+    void postTo(id, 'start')
+  }
+
+  const handleManualComplete = async () => {
+    if (activeSessionId) {
+      await complete()
+      refreshAll()
+    }
+  }
+
+  /** 复习卡「重新学这道」:以错题内容开一个新学习会话,起点=只会一点 */
+  const handleRestudy = async (note: { id: string; title: string; content: string; imageUrl?: string | null }) => {
+    if (!defaultModelId) return
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: note.content,
+          images: note.imageUrl ? [note.imageUrl] : [],
+          startLevel: 'partial',
+          modelId: defaultModelId,
+        }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const d = (await res.json()) as { session: { id: string } }
+      refreshAll()
+      setDrawerOpen(false)
+      setView({ kind: 'session', id: d.session.id })
+      await reload(d.session.id)
+      void postTo(d.session.id, 'start')
+    } catch (err) {
+      console.error('[study] restudy failed:', err)
+    }
+  }
+
+  const openSession = (id: string) => {
+    setView({ kind: 'session', id })
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      {/* 导师会话流(全宽主体) */}
-      <div className="flex-1 min-h-0 relative overflow-hidden">
-        <ChatPanel
-          key={`study-${newChatNonce}-${conversation?.id ?? 'new'}`}
-          studyMode
-          conversationId={conversation?.id}
-          initialMessages={resumedMessages ?? []}
-          initialModel={conversation?.model ?? defaultModel}
-          studyTools={[
-            {
-              id: 'notes',
-              label: '错题本',
-              description: notes && notes.length > 0
-                ? `共 ${notes.length} 道${weakCount > 0 ? `，${weakCount} 道待巩固` : ''}`
-                : '结课后会自动收进这里',
-              icon: <NotebookPen size={18} />,
-              onClick: () => { setDrawerTab('notes'); setDrawerOpen(true) },
-            },
-            {
-              id: 'review',
-              label: '错题回看',
-              description: dueCount > 0 ? `待回看 ${dueCount} 道` : '暂无待回看的错题',
-              icon: <CalendarClock size={18} />,
-              onClick: () => { setDrawerTab('review'); setDrawerOpen(true) },
-            },
-            {
-              id: 'favorites',
-              label: '收藏',
-              description: favoriteCount > 0 ? `已收藏 ${favoriteCount} 条` : '星标消息会收进这里',
-              icon: <Star size={18} />,
-              onClick: () => { setDrawerTab('favorites'); setDrawerOpen(true) },
-            },
-            {
-              id: 'books',
-              label: '课本',
-              description: kbCount > 0 ? `${kbCount} 本教材 · 翻原文页面` : '导入教材后可翻原文',
-              icon: <BookOpen size={18} />,
-              onClick: () => router.push('/kb'),
-            },
-          ]}
-          allModels={allModels}
-        />
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="relative min-h-0 flex-1">
+        {view.kind === 'home' && (
+          <StudyHome
+            sessions={sessions}
+            dueCount={dueCount}
+            noteCount={noteCount}
+            favoriteCount={favoriteCount}
+            kbCount={kbCount}
+            loading={listQuery.isLoading}
+            onResume={openSession}
+            onNew={(text) => setView({ kind: 'setup', draft: text })}
+            onOpenDrawer={(tab) => {
+              setDrawerTab(tab)
+              setDrawerOpen(true)
+            }}
+          />
+        )}
+
+        {view.kind === 'setup' && (
+          <StudySetup
+            onBack={() => setView({ kind: 'home' })}
+            onCreated={handleCreated}
+            studyModels={studyModels}
+            defaultModelId={defaultModelId}
+            initialQuestion={view.draft}
+          />
+        )}
+
+        {view.kind === 'session' && (
+          <>
+            {loadError ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-content-muted">
+                <div>{loadError === 'not_found' ? '这道题的学习会话不存在或已被删除' : loadError}</div>
+                <button
+                  type="button"
+                  onClick={() => setView({ kind: 'home' })}
+                  className="rounded-full border border-line px-4 py-1.5 text-sm text-content-secondary hover:text-content-primary"
+                >
+                  返回学习台
+                </button>
+              </div>
+            ) : !session ? (
+              <div className="flex h-full items-center justify-center text-content-muted">
+                <div className="flex items-center gap-3">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-content-muted border-t-transparent" />
+                  <span>正在续上这道题…</span>
+                </div>
+              </div>
+            ) : (
+              <StudyWorkspace
+                session={session}
+                steps={steps}
+                busy={busy}
+                streamError={streamError}
+                onAction={(action, opts) => {
+                  if (activeSessionId) void postTo(activeSessionId, action, opts)
+                }}
+                onManualComplete={() => void handleManualComplete()}
+                onBack={() => {
+                  refreshAll()
+                  setView({ kind: 'home' })
+                }}
+              />
+            )}
+          </>
+        )}
 
         {/* 错题本/复习抽屉:后台沉淀的备查视图 */}
         {drawerOpen && (
           <div className="absolute inset-0 z-40">
             <div className="absolute inset-0 bg-black/25" onClick={() => setDrawerOpen(false)} />
-            <aside className="absolute right-0 top-0 bottom-0 w-full max-w-[400px] bg-surface border-l border-line shadow-xl flex flex-col">
-              <div className="shrink-0 flex items-center gap-1 px-3 py-2 border-b border-line">
+            <aside className="absolute bottom-0 right-0 top-0 flex w-full max-w-[400px] flex-col border-l border-line bg-surface shadow-xl">
+              <div className="flex flex-none items-center gap-1 border-b border-line px-3 py-2">
                 {(
                   [
                     ['review', '错题回看'],
@@ -277,9 +454,9 @@ function StudyContent() {
                     type="button"
                     onClick={() => setDrawerTab(tab)}
                     className={cn(
-                      'px-3 py-1.5 rounded-lg text-xs transition-colors',
+                      'rounded-lg px-3 py-1.5 text-xs transition-colors',
                       drawerTab === tab
-                        ? 'bg-surface-subtle text-content-primary font-medium'
+                        ? 'bg-surface-subtle font-medium text-content-primary'
                         : 'text-content-muted hover:text-content-primary'
                     )}
                   >
@@ -289,24 +466,33 @@ function StudyContent() {
                 <button
                   type="button"
                   onClick={() => setDrawerOpen(false)}
-                  className="ml-auto p-1.5 rounded-md text-content-muted hover:text-content-primary hover:bg-surface-subtle transition-colors"
+                  className="ml-auto rounded-md p-1.5 text-content-muted transition-colors hover:bg-surface-subtle hover:text-content-primary"
                   aria-label="关闭抽屉"
                 >
                   <X size={16} />
                 </button>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 <div className="flex flex-wrap gap-2 px-4 py-3">
                   {drawerTab === 'favorites' ? (
                     <span className={CHIP}>已收藏 <b>{favoriteCount}</b></span>
                   ) : (
                     <>
                       <span className={CHIP}>待回看 <b>{dueCount}</b></span>
-                      <span className={CHIP}>薄弱考点 <b>{weakCount}</b></span>
+                      <span className={CHIP}>薄弱考点 <b>{noteCount > 0 ? notes?.filter((n) => n.lapses >= 1 || n.mastery < 0.3).length ?? 0 : 0}</b></span>
                     </>
                   )}
                 </div>
-                {drawerTab === 'notes' ? <NoteList onChanged={refreshStudyCounts} /> : drawerTab === 'review' ? <ReviewCard onChanged={refreshStudyCounts} /> : <FavoriteList onChanged={refreshStudyCounts} />}
+                {drawerTab === 'notes' ? (
+                  <NoteList onChanged={refreshAll} />
+                ) : drawerTab === 'review' ? (
+                  <ReviewCard
+                    onChanged={refreshAll}
+                    onRestudy={(note) => void handleRestudy(note)}
+                  />
+                ) : (
+                  <FavoriteList onChanged={refreshAll} />
+                )}
               </div>
             </aside>
           </div>

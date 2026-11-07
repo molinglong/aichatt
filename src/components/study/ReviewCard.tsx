@@ -23,7 +23,7 @@ interface QueueItem {
   sourceQuestionId: string | null
 }
 
-export function ReviewCard({ onChanged }: { onChanged?: () => void }) {
+export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; onRestudy?: (note: { id: string; title: string; content: string; imageUrl?: string | null }) => void }) {
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -182,6 +182,16 @@ export function ReviewCard({ onChanged }: { onChanged?: () => void }) {
         <div className="text-sm text-content-secondary whitespace-pre-wrap break-words leading-relaxed">
           {current.content}
         </div>
+
+        {onRestudy && (
+          <button
+            type="button"
+            onClick={() => onRestudy({ id: current.id, title: current.title, content: current.content, imageUrl: current.imageUrl })}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-foreground text-xs font-medium transition-opacity hover:opacity-85"
+          >
+            🎓 重新学这道(开一次针对性讲解)
+          </button>
+        )}
 
         {current.analysis ? (
           revealed ? (

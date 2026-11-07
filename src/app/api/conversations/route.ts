@@ -41,6 +41,8 @@ export async function GET(req: Request) {
   const where = {
     userId,
     isEphemeral: listEphemeral,
+    // 学习模式 v2:学习会话走独立体系(/api/study),聊天列表一律不再出现
+    studyMode: false,
     ...(maskFilter
       ? maskFilter === 'none'
         ? { maskId: null }
@@ -68,7 +70,7 @@ export async function GET(req: Request) {
     prisma.conversation.count({ where }),
     prisma.conversation.findMany({
       where,
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ isMain: 'desc' }, { updatedAt: 'desc' }],
       select: {
         id: true,
         title: true,
@@ -76,6 +78,7 @@ export async function GET(req: Request) {
         mode: true,
         maskId: true, // 列表尾随面具徽标用(ConversationItem)
         studyMode: true, // 学习会话:会话页据此在 /chat/c/[id] 原地渲染学习流
+        isMain: true, // 主对话:侧栏置顶 + 🏠 头像(ConversationItem)
         updatedAt: true,
       },
       skip: offset,

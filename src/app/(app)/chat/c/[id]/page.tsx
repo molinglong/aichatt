@@ -177,13 +177,12 @@ function ConversationClientContent() {
 
   const conversation = conversationQuery.data
 
-  // 学习模式会话:普通聊天地址一律改道学习室(/study?c=id)。
-  // 侧栏/收藏/未读通知等入口只认会话 id,这里兜住所有漏改道的情况,
-  // 否则学习室会被当成普通消息流打开,讲解卡片与学习工具全部丢失。
+  // 学习模式 v2 起学习会话走独立体系(/study);旧的 studyMode 会话已弃用,
+  // 普通聊天地址遇到它们一律回学习台(不带参数,旧会话不续),避免被当成消息流打开。
   const redirectToStudy = conversation?.studyMode === true
   useEffect(() => {
     if (!redirectToStudy || !conversation) return
-    router.replace(`/study?c=${conversation.id}`)
+    router.replace('/study')
   }, [redirectToStudy, conversation, router])
 
   // ── 首屏分页:更早消息续载(仅单聊;对比模式端点恒全量下发) ──
