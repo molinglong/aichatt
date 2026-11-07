@@ -32,6 +32,7 @@ interface ContextMeterProps {
 /**
  * 上下文用量仪表:输入区上方的小 pill,点击展开明细与"立即压缩"。
  * 占用比例与自动压缩阈值(60%)同口径估算,>60% 琥珀、>80% 红色警示。
+ * 手机端(≤md)整颗不渲染(max-md:hidden):按用户要求从手机端撤下,桌面端行为不变。
  */
 export function ContextMeter({ conversationId, contextWindow, refreshSignal }: ContextMeterProps) {
   useRenderProbe('ContextMeter')
@@ -101,7 +102,7 @@ export function ContextMeter({ conversationId, contextWindow, refreshSignal }: C
   }
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative max-md:hidden">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}

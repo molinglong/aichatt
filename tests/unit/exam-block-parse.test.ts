@@ -6,8 +6,9 @@ import { parseExamSegments, parseChoice, parseYellowFish, forceRankLineBreaks, p
  * 试卷块切分（parseExamSegments）的回归口径：
  *   ① 规范协议（每块独立闭合）必须原样切块，不许被容错逻辑误伤
  *   ② 尾随闭合容错：闭合 ::: 写在内容行尾时拆开入块再闭合
- *   ③ 兜底不吞内容：真正未闭合的块整段还原纯文本
- *   （注：「开块容错／孤儿选项归位」属试卷线另一批未落地改动，本文件暂不覆盖）
+ *   ③ 开块容错：上一块漏写结束行、块内直接另起 :::answer 等新块时，
+ *      先关当前块再开新块——否则答案开标记被吞进题干、原样剧透且折叠失效
+ *   ④ 兜底不吞内容：真正未闭合的块整段还原纯文本
  */
 
 const exams = (md: string) => parseExamSegments(md).filter((s): s is Extract<ExamSegment, { type: 'exam' }> => s.type === 'exam')
@@ -33,6 +34,50 @@ test('规范协议：choice/answer 各自闭合，切块与正文不受容错影
   assert.ok(!segs[0].text.includes('答案：D'), 'choice 块内不得混入答案（防剧透）')
   assert.ok(segs[1].text.includes('**答案：D**'))
   assert.ok(segs[1].text.includes('A 错'))
+})
+
+test('开块容错：choice 漏写结束行、块内直接另起 :::answer（线上剧透 bug 场景）', () => {
+  const segs = exams([
+    ':::choice',
+    '参考 教材 §4.1 牛顿第一定律',
+    '关于牛顿第一定律，下列说法正确的是',
+    ':::answer',
+    '**答案：D**',
+    'A 错：不能直接用实验验证。C 错，D 对。',
+    ':::',
+    'A. 牛顿第一定律可以通过实验直接验证',
+    'B. 物体不受外力时一定处于静止状态',
+    'C. 力是维持物体运动状态的原因',
+    'D. 牛顿第一定律揭示力是改变物体运动状态的原因',
+    ':::',
+  ].join('\n'))
+  // 题干被掠断、选项落在 answer 之后的 md 段——归位后应合成一张完整题卡
+  const choices = segs.filter((s) => s.kind === 'choice')
+  assert.equal(choices.length, 1, '题干与选项应归位为同一张题卡')
+  const parsed = parseChoice(choices[0].text)
+  assert.equal(parsed.options.length, 4, '四个选项必须全部归位为题卡选项')
+  assert.ok(parsed.stem.includes('下列说法正确的是'))
+  assert.ok(!parsed.stem.includes('答案：D'), '答案不得吞进题干（剧透）')
+  // 非题干内容不丢：解析说明仍在 answer 块里
+  const answer = segs.find((s) => s.kind === 'answer')
+  assert.ok(answer, '必须切出独立 answer 块')
+  assert.ok(answer.text.includes('**答案：D**'))
+  assert.ok(answer.text.includes('A 错'))
+})
+
+test('开块容错：新块开标记同行带正文时，正文归新块', () => {
+  const segs = exams([':::choice', '题干', ':::answer **答案：B**', '解析', ':::'].join('\n'))
+  const answer = segs.find((s) => s.kind === 'answer')
+  assert.ok(answer)
+  assert.ok(answer.text.startsWith('**答案：B**'), '行内余料作新块首行')
+  assert.ok(answer.text.includes('解析'))
+})
+
+test('开块容错：同类型块漏闭合（第二个 :::choice 开新题）也能断开', () => {
+  const segs = exams([':::choice', '第一题', ':::choice', '第二题', ':::'].join('\n'))
+  assert.equal(segs.length, 2)
+  assert.equal(segs[0].text.trim(), '第一题')
+  assert.equal(segs[1].text.trim(), '第二题')
 })
 
 test('尾随闭合容错：闭合 ::: 写在内容行尾时拆开入块再闭合', () => {

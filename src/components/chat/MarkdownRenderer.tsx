@@ -1022,23 +1022,72 @@ function ExamStemRow({ no, stem }: { no?: number; stem: string }) {
   )
 }
 
-/** 单组题面: 题干 + 试卷式选项（长选项通栏，全部短选项时自动两列）；选项内高亮照常生效 */
+/**
+ * 选择题「可作答答题卡」上下文：状态挂在每条消息（RichMarkdown）内部。
+ * 纸面（isPaper）下的选择题选项渲染为可点按钮，单选；卷末汇总「题号+我的选项」
+ * 发回 AI 逐题批改。按消息正文哈希持久化到 localStorage，刷新/切走再回选中项仍在。
+ */
+interface QuizAnswerCtxValue {
+  /** 本消息为可选答的成卷，且至少含一道有选项的选择题 */
+  paper: boolean
+  pickedOf: (qno: number) => string | undefined
+  onPick: (qno: number, letter: string) => void
+}
+const QuizAnswerCtx = createContext<QuizAnswerCtxValue | null>(null)
+
+/** 正文 djb2 短哈希作持久化键（同一条消息内容不变 → 同键，无需透传 message id） */
+function quizStoreKey(content: string): string {
+  let h = 5381
+  for (let i = 0; i < content.length; i++) h = ((h << 5) + h + content.charCodeAt(i)) | 0
+  return `quiz-picks:${(h >>> 0).toString(36)}`
+}
+
+function readQuizPicks(key: string): Record<number, string> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as Record<number, string>) : {}
+  } catch {
+    return {}
+  }
+}
+
+/** 单组题面: 题干 + 试卷式选项（长选项通栏，全部短选项时自动两列）；选项内高亮照常生效。
+ *  成卷（quiz.paper）且本组有题号时，选项转为可点按钮：点中高亮、再点取消（单选） */
 function ChoiceGroupView({ stem, options, no }: { stem: string; options: ExamChoiceOption[]; no?: number }) {
+  const quiz = useContext(QuizAnswerCtx)
   if (!options.length) return <ExamStemRow no={no} stem={stem} />
   // 试卷排版启发: 短选项（如古文化常识/词语判断）两列更像卷面，长句选项通栏易读
   const twoCol = options.length > 2 && options.every((o) => o.text.length <= 14)
+  const selectable = !!(quiz?.paper && no != null)
+  const picked = selectable ? quiz!.pickedOf(no as number) : undefined
   return (
     <div className="exam-choice-group">
       {stem && <ExamStemRow no={no} stem={stem} />}
       <div className={cn('exam-options', twoCol && 'exam-options-2col')}>
-        {options.map((o) => (
-          <div key={o.letter} className="exam-option">
-            <span className="exam-option-letter" aria-hidden>{o.letter}</span>
-            <div className="flex-1 min-w-0">
-              <RichSegment content={o.text} promote={false} />
-            </div>
-          </div>
-        ))}
+        {options.map((o) => {
+          const body = (
+            <>
+              <span className="exam-option-letter" aria-hidden>{o.letter}</span>
+              <div className="flex-1 min-w-0">
+                <RichSegment content={o.text} promote={false} />
+              </div>
+            </>
+          )
+          if (!selectable) return <div key={o.letter} className="exam-option">{body}</div>
+          const isPicked = picked === o.letter
+          return (
+            <button
+              key={o.letter}
+              type="button"
+              className={cn('exam-option exam-option-btn', isPicked && 'is-picked')}
+              aria-pressed={isPicked}
+              onClick={() => quiz!.onPick(no as number, isPicked ? '' : o.letter)}
+            >
+              {body}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -1773,6 +1822,57 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
     })
     return map
   }, [segments])
+  // 可答题集: 本消息内「有选项的选择题」对应的题号（单题 1 个、一块多题按组递增），供交卷汇总
+  const answerable = useMemo<number[]>(() => {
+    if (!isPaper) return []
+    const list: number[] = []
+    segments.forEach((s, i) => {
+      if (s.type !== 'exam' || s.kind !== 'choice') return
+      const start = stemNos.get(i)
+      if (start == null) return
+      const { options, groups } = parseChoice(s.text)
+      if (!options.length) return
+      const count = Math.max(1, groups.length)
+      for (let k = 0; k < count; k++) list.push(start + k)
+    })
+    return list
+  }, [segments, stemNos, isPaper])
+  // 点选草稿: 按正文哈希持久化，刷新/切走再回保留；空选清除避免脏键堆积
+  const storeKey = useMemo(() => quizStoreKey(content), [content])
+  const [picks, setPicks] = useState<Record<number, string>>(() => readQuizPicks(storeKey))
+  useEffect(() => {
+    setPicks(readQuizPicks(storeKey))
+  }, [storeKey])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const clean: Record<number, string> = {}
+      for (const [k, v] of Object.entries(picks)) if (v) clean[Number(k)] = v
+      if (Object.keys(clean).length) window.localStorage.setItem(storeKey, JSON.stringify(clean))
+      else window.localStorage.removeItem(storeKey)
+    } catch {
+      /* 隐私模式/超额写入失败静默忽略，不影响本页点选 */
+    }
+  }, [picks, storeKey])
+  const onPick = useCallback((qno: number, letter: string) => {
+    setPicks((prev) => {
+      const next = { ...prev }
+      if (letter) next[qno] = letter
+      else delete next[qno]
+      return next
+    })
+  }, [])
+  const pickedOf = useCallback((qno: number) => picks[qno], [picks])
+  const quizValue = useMemo<QuizAnswerCtxValue>(
+    () => ({ paper: isPaper && answerable.length > 0, pickedOf, onPick }),
+    [isPaper, answerable.length, pickedOf, onPick],
+  )
+  const chosen = answerable.reduce((n, q) => n + (picks[q] ? 1 : 0), 0)
+  const submitSheet = useCallback(() => {
+    if (!answerable.length) return
+    const lines = answerable.map((n) => `${n}. ${picks[n] ?? '未作答'}`)
+    sendTextAsUser(`我的作答：\n${lines.join('\n')}`)
+  }, [answerable, picks])
   const nodes: React.ReactNode[] = []
   let mdRun: string[] = []
   const flushMd = () => {
@@ -1854,7 +1954,21 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
     )
   })
   flushMd()
-  return <div className="rich-md">{nodes}</div>
+  return (
+    <QuizAnswerCtx.Provider value={quizValue}>
+      <div className="rich-md">
+        {nodes}
+        {quizValue.paper && (
+          <div className="exam-answer-sheet">
+            <span className="exam-answer-sheet-progress">已选 {chosen}/{answerable.length}</span>
+            <button type="button" className="exam-answer-sheet-btn" onClick={submitSheet} disabled={chosen === 0}>
+              交卷并让我批改
+            </button>
+          </div>
+        )}
+      </div>
+    </QuizAnswerCtx.Provider>
+  )
 }
 
 function MarkdownRendererInner({

@@ -79,7 +79,8 @@ test("前台恢复不会重复追加本页刚生成的回复", async ({ page }) 
 
 test("学习模式前台恢复不会重复追加回复", async ({ page }) => {
   await mockConversation(page, STUDY_CONV, STUDY_ASSISTANT_ROW, STUDY_TEXT)
-  await page.goto("/study")
+  // 2026-11-02:/study 独立页下线,学习室由 /chat?study=1 承载
+  await page.goto("/chat?study=1")
   const question = page.locator("#study-question")
   await expect(question).toBeVisible({ timeout: 30_000 })
   await question.fill("1+1 等于几")

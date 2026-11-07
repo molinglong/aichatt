@@ -75,7 +75,7 @@ export async function GET(req: Request) {
         model: true,
         mode: true,
         maskId: true, // 列表尾随面具徽标用(ConversationItem)
-        studyMode: true, // 学习会话:历史入口据此跳 /study?c=id
+        studyMode: true, // 学习会话:会话页据此在 /chat/c/[id] 原地渲染学习流
         updatedAt: true,
       },
       skip: offset,

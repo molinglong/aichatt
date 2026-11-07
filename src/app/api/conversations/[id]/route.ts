@@ -90,7 +90,7 @@ export async function GET(
       replyLength: true,
       maskId: true,
       compareModels: true,
-      studyMode: true, // 学习会话:普通聊天页据此改道 /study?c=id
+      studyMode: true, // 学习会话:普通聊天页据此在 /chat/c/[id] 原地渲染学习流
     },
   })
 

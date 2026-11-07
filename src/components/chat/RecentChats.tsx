@@ -21,7 +21,7 @@ interface ConversationData {
   id: string
   title: string
   mode?: string
-  /** 学习模式会话:快捷条目据此跳 /study?c=id */
+  /** 学习模式会话:点进 /chat/c/id 后由会话页渲染学习室 */
   studyMode?: boolean
   maskId?: string | null
   updatedAt: string
@@ -100,7 +100,7 @@ export function RecentChats() {
         {items.map((c) => (
           <button
             key={c.id}
-            onClick={() => router.push(c.studyMode ? `/study?c=${c.id}` : `/chat/c/${c.id}`)}
+            onClick={() => router.push(`/chat/c/${c.id}`)}
             aria-label={`打开对话：${c.title || '未命名对话'}`}
             className="flex h-11 w-full items-center gap-2 rounded-lg px-2.5 text-left
               bg-surface-muted/75 border border-line/40 backdrop-blur-sm

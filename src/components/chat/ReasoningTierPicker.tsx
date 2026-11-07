@@ -151,7 +151,17 @@ export function ReasoningTierPicker({
         aria-expanded={open}
         aria-pressed={deepThink}
       >
-        <Brain className="w-3.5 h-3.5" />
+        <svg width="0" height="0" aria-hidden="true" focusable="false" style={{ position: 'absolute' }}>
+          {/* 与 --slider-grad 同色的渐变,供 MAX 档脑图标描边 stroke=url(#rt-grad) 用 */}
+          <defs>
+            <linearGradient id="rt-grad" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#f472b6" />
+              <stop offset="50%" stopColor="#c084fc" />
+              <stop offset="100%" stopColor="#818cf8" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <Brain className="w-3.5 h-3.5 rt-ico-brain" />
         <span className="rt-val">{TIERS[tierIdx]}</span>
         <ChevronDown className="rt-chev" />
       </button>

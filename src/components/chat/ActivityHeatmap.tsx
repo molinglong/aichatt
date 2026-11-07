@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 interface DayStat {
   date: string
@@ -50,6 +51,16 @@ export function ActivityHeatmap({ weeks = 52 }: ActivityGridProps) {
   const [data, setData] = useState<ActivityStatsResponse | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [availW, setAvailW] = useState(0)
+  // 悬浮小卡片: 格子 onMouseEnter 时记录日期/次数与格子视口坐标(fixed 定位,不受滚动容器裁剪)
+  const [hoverInfo, setHoverInfo] = useState<{
+    date: string
+    count: number
+    x: number
+    y: number
+  } | null>(null)
+  // 悬浮卡必须 Portal 到 body: 祖先链上的壁纸 filter/backdrop-filter 会接管 position:fixed
+  // 的参照系(变成祖先盒子),卡片会漂到壳角上;挂在 body 下 fixed 才真正相对视口
+  const portalEl = useRef(typeof document !== 'undefined' ? document.body : null)
 
   useEffect(() => {
     let cancelled = false
@@ -201,8 +212,17 @@ export function ActivityHeatmap({ weeks = 52 }: ActivityGridProps) {
                   return (
                     <div
                       key={cell.date}
-                      title={cell.count > 0 ? `${cell.date} · ${cell.count} 次提问` : `${cell.date} · 无提问`}
                       style={{ width: cellSize, height: cellSize }}
+                      onMouseEnter={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect()
+                        setHoverInfo({
+                          date: cell.date,
+                          count: cell.count,
+                          x: r.left + r.width / 2,
+                          y: r.top,
+                        })
+                      }}
+                      onMouseLeave={() => setHoverInfo(null)}
                       className={`rounded-[2px] cursor-help transition-transform hover:scale-125 ${LEVEL_CLASSES[level]}${
                         isToday ? ' ring-1 ring-inset ring-[rgb(var(--content-secondary))]' : ''
                       }`}
@@ -228,6 +248,35 @@ export function ActivityHeatmap({ weeks = 52 }: ActivityGridProps) {
           </span>
         </div>
       </div>
+
+      {/* 悬浮小卡片: 纯色卡面 + 外投影分层(半透明灰底会把浮起感拉平);micro 150ms 淡入淡出。
+          水平位置钳制在距视口边缘 64px 内,最右列格子不会被卡片自身宽度撑出屏外 */}
+      {portalEl.current &&
+        createPortal(
+          <div
+            role="tooltip"
+            aria-hidden={!hoverInfo}
+            style={{
+              position: 'fixed',
+              left: hoverInfo ? Math.min(Math.max(hoverInfo.x, 64), window.innerWidth - 64) : 0,
+              top: (hoverInfo?.y ?? 0) - 8,
+              transform: `translate(-50%, ${hoverInfo ? '-100%' : '-96%'}) scale(${hoverInfo ? 1 : 0.97})`,
+            }}
+            className={`pointer-events-none z-[57] rounded-lg border border-line/60 bg-surface px-2.5 py-1.5 shadow-[0_8px_28px_rgb(0_0_0_/_12%)] transition-[opacity,transform] duration-150 whitespace-nowrap ${
+              hoverInfo ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
+            <p className="text-[11px] font-medium leading-snug text-content-primary">
+              {hoverInfo?.count
+                ? `${hoverInfo.count} 次提问`
+                : '无提问'}
+            </p>
+            <p className="text-[10px] leading-snug text-content-muted font-mono">
+              {hoverInfo?.date ?? ''}
+            </p>
+          </div>,
+          portalEl.current,
+        )}
     </div>
   )
 }

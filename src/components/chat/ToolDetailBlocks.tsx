@@ -11,7 +11,7 @@
  * - 目录:docs → 章 → 节 → 框题三级缩进,框题悬停看该框题开头 160 字预览。
  */
 import { MarkdownRenderer } from './MarkdownRenderer'
-import type { KnowledgeHit, KnowledgeOutlineDoc } from '@/lib/ai/knowledge-tool'
+import { knowledgeVolumeLabel, type KnowledgeHit, type KnowledgeOutlineDoc } from '@/lib/ai/knowledge-tool'
 import type { PracticeItem } from '@/lib/ai/practice-tool'
 
 const KIND_LABEL: Record<string, string> = { textbook: '课本', material: '资料' }
@@ -23,19 +23,29 @@ function MetaChip({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** 查课本:每条命中的出处(书 / 章·节) + 框题 + 正文 */
+/** 查课本:每条命中的出处(书 / 册别 / 章·节) + 框题 + 正文;按页导入的书附「看原文」跳阅读器对应页 */
 export function KnowledgeDetail({ results }: { results: KnowledgeHit[] }) {
   return (
     <div className="flex flex-col gap-3">
       {results.map((r, i) => {
         const place = [r.chapter, r.section].filter(Boolean).join(' / ')
+        const volume = knowledgeVolumeLabel(r)
         return (
           <div key={`${r.doc}-${r.heading}-${i}`} className="flex flex-col gap-1">
             <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-content-muted">
               <span className="shrink-0 font-mono">[{i + 1}]</span>
               <span className="text-content-secondary">{r.doc}</span>
+              {volume && <span>· {volume}</span>}
               {place && <span className="truncate">· {place}</span>}
               <MetaChip>{KIND_LABEL[r.kind] ?? r.kind}</MetaChip>
+              {r.docId && r.page != null && (
+                <a
+                  href={`/kb/${r.docId}?page=${r.page}`}
+                  className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent transition-opacity hover:opacity-80"
+                >
+                  看原文 P{r.page}
+                </a>
+              )}
             </div>
             {r.heading && (
               <div className="text-[11px] font-medium text-content-primary leading-snug">{r.heading}</div>

@@ -524,6 +524,15 @@ export function parseSourceRefLine(text: string): { sourceRef: ExamSourceRef | n
  *   余料作块内首行交给块内解析器（choice 的出处行剥离/timeline 的标题行），历史消息同样救回
  * - 闭合容错: 模型常把闭合「:::」与块内末行写在同一行（如「…让我这样吧 :::」），
  *   旧约定下永不闭合、整块兜底回纯文本；行尾恰好是 ::: 且前面仍有内容时拆开入块再闭合
+ * - 开块容错: 模型常漏写题块的结束行、直接在块内另起「:::answer 正文」等新块，
+ *   旧约定下新块开标记被吞为当前块正文、答案原样剧透进题干；
+ *   块内遇到带正文的开标记行即先关当前块再开新块（裸 ::: 是上一块的结束符，不抢开）
+ * - 事后追认容错: 开标记被后续新块抢走关闭后，块主体残留 md 缓冲；
+ *   块外遇到孤立闭合 ::: 时，若缓冲内尚有未闭合的开标记行，追认为该类型块；
+ *   无追认对象的孤立闭合行直接丢弃，不在屏上残留 :::
+ * - 孤儿选项归位（absorbOrphanOptions）: 题干卡被 :::answer 掠断后，选项行落在
+ *   answer 块之后的 md 段里；把无选项题干卡后只隔 answer 的选项 md 段拼回题卡，
+ *   选项不再退化成散落段落
  */
 export function parseExamSegments(md: string): ExamSegment[] {
   if (!md.includes(':::')) return [{ type: 'md', text: md }]
@@ -533,6 +542,8 @@ export function parseExamSegments(md: string): ExamSegment[] {
   let examBuf: string[] = []
   let inFence = false
   let fenceChar = ''
+  // 当前块是否由「孤立闭合行追认」重开（拆块重接的尾部，关闭时合并回题面卡）
+  let retroReopen = false
   const push = (line: string) => (examKind ? examBuf : mdBuf).push(line)
   const flushMd = () => {
     if (mdBuf.length && mdBuf.some((l) => l.trim())) {
@@ -540,13 +551,31 @@ export function parseExamSegments(md: string): ExamSegment[] {
       mdBuf = []
     }
   }
-  const closeExam = () => {
+  const closeExam = (mergeWithPrev = false) => {
     if (!examKind) return
-    segments.push({ type: 'exam', kind: examKind, text: examBuf.join('\n') })
+    const text = examBuf.join('\n')
+    // 拆块重接: 题干被漏写的结束行掠断（:::answer 插进中间）后，
+    // 追认重开的同类型尾部（选项）合并回题面卡，不拆成两张题卡
+    if (mergeWithPrev) {
+      for (let j = segments.length - 1; j >= 0; j--) {
+        const s = segments[j]
+        if (s.type !== 'exam') break
+        if (s.kind === examKind) {
+          s.text = `${s.text}\n${text}`
+          examBuf = []
+          examKind = null
+          return
+        }
+        if (s.kind !== 'answer') break
+      }
+    }
+    segments.push({ type: 'exam', kind: examKind, text })
     examBuf = []
     examKind = null
   }
-  for (const line of md.split('\n')) {
+  const lines = md.split('\n')
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li]
     const fence = line.trim().match(/^(`{3,}|~{3,})/)
     if (fence) {
       if (!inFence) {
@@ -564,24 +593,67 @@ export function parseExamSegments(md: string): ExamSegment[] {
       continue
     }
     if (!examKind) {
-      const open = line.match(EXAM_OPEN_RE)
+      // 先判闭合再判开块: kind 组可选使裸 ::: 也能匹配 OPEN_RE，「无对象孤立闭合」分支才能被走到
+      const open = EXAM_CLOSE_RE.test(line) ? null : line.match(EXAM_OPEN_RE)
       if (open) {
         flushMd()
         examKind = open[1] as ExamKind
         // 开标记行内余料（如「:::choice 参考 §x.x·数学」）作块内首行，不吞内容
         const inline = (open[2] ?? '').trim()
         if (inline) examBuf.push(inline)
+      } else if (EXAM_CLOSE_RE.test(line)) {
+        // 孤立闭合行: md 缓冲里有未闭合的开标记时追认成块（继续收集到下次闭合），
+        // 无开标记则丢弃（避免屏幕上残留 :::）
+        const idx = mdBuf.findIndex((l) => EXAM_OPEN_RE.test(l.trim()))
+        if (idx >= 0) {
+          const marker = mdBuf[idx].trim().match(EXAM_OPEN_RE)!
+          const trailing = mdBuf.slice(idx + 1)
+          mdBuf = mdBuf.slice(0, idx)
+          flushMd()
+          examKind = marker[1] as ExamKind
+          retroReopen = true
+          const markerInline = (marker[2] ?? '').trim()
+          if (markerInline) examBuf.push(markerInline)
+          for (const l of trailing) examBuf.push(l)
+        }
       } else {
         mdBuf.push(line)
       }
-    } else if (EXAM_CLOSE_RE.test(line)) {
-      closeExam()
     } else {
-      // 尾随闭合容错: 行尾恰好是「:::」且前面仍有内容时，拆开入块再闭合（见顶部注释）
-      const trimmed = line.trimEnd()
-      const content = trimmed.endsWith(':::') ? trimmed.slice(0, -3).trimEnd() : ''
-      if (content.trim()) {
-        examBuf.push(content)
+      const open = line.match(EXAM_OPEN_RE)
+      // 纯标记（裸 :::kind 或 :::kind 正文）才另起新块；行尾带 ::: 的是本块收尾，
+      // 不得先按开标记抢开，否则尾随闭合容错被截断、行尾正文丢失
+      const bareOpen = open && /^:::[a-z]+\s*$/.test(line.trim())
+      const inline = open ? (open[2] ?? '').trim() : ''
+      const trailing = !open ? (() => {
+        const trimmed = line.trimEnd()
+        return trimmed.endsWith(':::') ? trimmed.slice(0, -3).trimEnd() : ''
+      })() : ''
+      // 下一非空行是正文则说明「:::kind 单独成行」是真开块（漏写上一块结束行的场景）；
+      // 是标记/闭合行则维持吞为正文，裸 ::: 仍是本块的结束符
+      const nextNonEmptyOpens =
+        bareOpen &&
+        (() => {
+          for (let k = li + 1; k < lines.length; k++) {
+            if (!lines[k].trim()) continue
+            return !EXAM_OPEN_RE.test(lines[k].trim()) && !EXAM_CLOSE_RE.test(lines[k])
+          }
+          return false
+        })()
+      if (open && (inline || nextNonEmptyOpens)) {
+        // 开块容错: 上一块漏写结束行、块内直接另起「:::answer」等新块——
+        // 先关当前块再按新块打开，否则开标记被吞进题干、答案原样剧透且折叠失效
+        closeExam()
+        retroReopen = false
+        examKind = open[1] as ExamKind
+        if (inline) examBuf.push(inline)
+      } else if (EXAM_CLOSE_RE.test(line)) {
+        // 追认重开的尾部（如题干后的选项行）关闭时合并回同类型的题面卡
+        closeExam(retroReopen)
+        retroReopen = false
+      } else if (trailing.trim()) {
+        // 尾随闭合容错: 行尾恰好是「:::」且前面仍有内容时，拆开入块再闭合（见顶部注释）
+        examBuf.push(trailing)
         closeExam()
       } else {
         examBuf.push(line)
@@ -595,5 +667,34 @@ export function parseExamSegments(md: string): ExamSegment[] {
     else mdBuf.push(`:::${examKind}`, ...examBuf)
   }
   flushMd()
+  return absorbOrphanOptions(segments)
+}
+
+/** 行首选项字母（A. / A、 / A） / A: 等），与 CHOICE_OPTION_RE 同口径 */
+const ORPHAN_OPTION_LINE_RE = /^\s*[A-Fa-f][.、．:：]/
+
+/**
+ * 孤儿选项归位: 题块漏写结束行、被块内 :::answer 掠断时，题干已独立成块、
+ * 选项行落在 answer 块之后的 md 段。仅救这种错位: choice 题干卡无选项、
+ * 其后只隔 answer 块、再后面是开头连续 ≥2 行选项的 md 段时，把选项拼回题卡。
+ * 每次只归位一处，归位后从头再扫（多题多处错位逐块各归各）。
+ */
+export function absorbOrphanOptions(segments: ExamSegment[]): ExamSegment[] {
+  for (let i = 0; i < segments.length; i++) {
+    const stemSeg = segments[i]
+    if (stemSeg.type !== 'exam' || stemSeg.kind !== 'choice') continue
+    if (parseChoice(stemSeg.text).options.length > 0) continue
+    // 题干卡与选项之间只能隔 answer 块（跳过连续 answer，碰到其他题块即止）
+    let j = i + 1
+    while (j < segments.length && segments[j].type === 'exam' && (segments[j] as { kind: string }).kind === 'answer') j++
+    if (j === i + 1 || j >= segments.length) continue
+    const cand = segments[j]
+    if (cand.type !== 'md') continue
+    const head = cand.text.split('\n')
+    if (head.length < 2 || !ORPHAN_OPTION_LINE_RE.test(head[0]) || !ORPHAN_OPTION_LINE_RE.test(head[1])) continue
+    stemSeg.text = `${stemSeg.text}\n${cand.text.trim()}`
+    segments.splice(j, 1)
+    return absorbOrphanOptions(segments)
+  }
   return segments
 }

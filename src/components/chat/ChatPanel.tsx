@@ -108,6 +108,12 @@ const MCP_ENABLED_STORAGE_KEY = 'chat:mcpEnabled'
 const COMPARE_MODE_STORAGE_KEY = 'chat:compareMode'
 const COMPARE_MODELS_STORAGE_KEY = 'chat:compareModels'
 
+/* 签名「书写」入场本会话只播一次: 欢迎页在「新建对话 / 从会话退回欢迎页」时
+   会重新挂载, CSS 动画跟着重播 → 每次回欢迎页都重写一遍。标记只在 animationend
+   里落(不在 render / effect 里写), 因此 StrictMode 双挂载仍能看到一次完整书写,
+   而服务端永远读到 false —— SSR 与首帧水合的 class 一致, 不会有 hydration 分歧 */
+let brandWritePlayed = false
+
 /** 欢迎页副标题用日期行: 「9月17日 周四」 */
 function getDateLine(): string {
   const now = new Date()
@@ -2339,17 +2345,21 @@ export function ChatPanel({
                下边距被钉死 → 自由空间全给上边距,整块沉到底。
                分隔由 auto 边距负责;variant 类在 Tailwind 里排在无修饰类之后,所以能压住 mb-8(桌面仍走 mb-8) */
             <div className="text-center mb-8 max-md:mt-auto max-md:mb-auto">
-              {/* 品牌 logo 取代问候语: 深浅色两张,与认证页 mark.png / mark-invert.png 同套路 */}
+              {/* 品牌 logo 取代问候语: 深浅色两张,与认证页 mark.png / mark-invert.png 同套路
+                  brand-write = 从左往右扫过的柔边 mask,把静态签名播成「正在写」(CSS 侧见 globals.css)。
+                  两张都挂同一 handler: 另一张在 display:none 下不会跑动画,也就不会误落标记 */}
               <img
                 src="/brand/signature.png"
                 alt="aichatt"
-                className="mx-auto h-12 w-auto md:h-14 dark:hidden"
+                onAnimationEnd={() => { brandWritePlayed = true }}
+                className={`mx-auto h-12 w-auto md:h-14 dark:hidden${brandWritePlayed ? '' : ' brand-write'}`}
               />
               <img
                 src="/brand/signature-invert.png"
                 alt=""
                 aria-hidden
-                className="mx-auto hidden h-12 w-auto md:h-14 dark:block"
+                onAnimationEnd={() => { brandWritePlayed = true }}
+                className={`mx-auto hidden h-12 w-auto md:h-14 dark:block${brandWritePlayed ? '' : ' brand-write'}`}
               />
               {/* 副标题: 日期 + 当前模型,给问候语增加层次
                   方案 C 手机端:模型名升级为玻璃胶囊(点击弹半屏快切),普通文本仅桌面显示 */}
@@ -2451,7 +2461,8 @@ export function ChatPanel({
           {/* 输入区上方的辅助行: 左侧排队发送横幅(F),右侧上下文用量仪表(B)。
               与输入框同宽对齐(ChatInput 内层同为 max-w-2xl 居中),仪表贴在输入框右缘正上方 */}
           {(pendingSendQueue || (conversationId && currentContextWindow > 0)) && (
-            <div className="px-3 pb-1">
+            /* 手机端仪表已撤下:没有排队横幅时,这行不再空占位 */
+            <div className={`px-3 pb-1 ${pendingSendQueue ? '' : 'max-md:hidden'}`}>
               <div className="mx-auto flex w-full max-w-2xl items-end justify-between gap-2">
                 {pendingSendQueue ? (
                   <div className="flex min-w-0 items-center gap-2 rounded-lg border border-line bg-surface-subtle/60 px-2.5 py-1 text-[11px] text-content-secondary">

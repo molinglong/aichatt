@@ -22,6 +22,10 @@ import {
   Loader2,
   X,
   Fish,
+  Wrench,
+  TriangleAlert,
+  BookOpen,
+  Globe,
 } from 'lucide-react'
 import { cn, splitReasoningTail } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
@@ -29,7 +33,13 @@ import { useTypewriter } from '@/lib/useTypewriter'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ChartCard } from './ChartCard'
 import { ChatImageLightbox } from './ChatImageLightbox'
-import { ToolCallCard, extractToolCallViews, extractInlineImages } from './ToolCallCard'
+import { ToolCallCard, extractToolCallViews, extractInlineImages, type ToolCallView } from './ToolCallCard'
+import {
+  segmentToolCallViews,
+  STACK_GROUP_LABELS,
+  type ToolCallSegment,
+  type ToolStackKind,
+} from '@/lib/ai/tool-call-stack'
 import { YELLOW_FISH_TOOL_NAME, type YellowFishToolOutput, type YellowFishItemBrief } from '@/lib/ai/yellow-fish-tool'
 import { YELLOW_FISH_LIVE_TOOL_NAME, type YellowFishLiveToolOutput } from '@/lib/ai/yellow-fish-live-tool'
 import { isYellowFishAutoFollowText } from './useYellowFishAutoFollow'
@@ -212,6 +222,68 @@ interface MessageBubbleProps {
   contentVisibilityOff?: boolean
 }
 
+/** 堆叠组图标:全组同类取该类的图标,混合组用 wrench(与未知工具兜底同款) */
+function StackGroupIcon({ kind }: { kind: ToolStackKind | null }) {
+  const cls = 'w-3.5 h-3.5'
+  if (kind === 'yellowfish') return <Fish className={cls} />
+  if (kind === 'knowledge') return <BookOpen className={cls} />
+  if (kind === 'web_search') return <Globe className={cls} />
+  return <Wrench className={cls} />
+}
+
+/**
+ * 查询型工具卡堆叠组外壳:连续的、已出结果的查询卡合并成一行,点开逐个回看。
+ * 容器/过渡样式与 ToolRow 折叠卡同款;组内成员仍是原 ToolCallCard(两层折叠)。
+ * 失败状态不丢:组内任何一张「未生效」,收起态的行头也挂警号提示。
+ */
+function ToolCallStackGroup({
+  seg,
+  renderCard,
+}: {
+  seg: Extract<ToolCallSegment, { type: 'stack' }>
+  renderCard: (view: ToolCallView, index: number) => React.ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const count = seg.views.length
+  const hasFailure = seg.views.some((v) => v.state === 'output-error')
+  const title = `${seg.kind ? STACK_GROUP_LABELS[seg.kind] : '执行了'} ${count} 步`
+  return (
+    <div className="rounded-lg border border-line/60 bg-surface-muted overflow-hidden text-xs">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-surface-subtle transition-colors"
+        title={title}
+      >
+        <span className="flex shrink-0 items-center text-content-secondary">
+          <StackGroupIcon kind={seg.kind} />
+        </span>
+        <span className="min-w-0 truncate text-content-secondary">{title}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          {hasFailure ? <TriangleAlert className="w-3 h-3 text-red-500" /> : null}
+        </span>
+        <ChevronDown className={cn('w-3 h-3 shrink-0 text-content-muted transition-transform', open ? '' : '-rotate-90')} />
+      </button>
+      {/* 展开区懒挂载:收起时不参与 markdown/图表渲染,与 ToolRow 详情区同策略 */}
+      <div
+        className={cn(
+          'grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none',
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        )}
+      >
+        <div className="overflow-hidden">
+          {open && (
+            <div className="flex flex-col gap-1.5 border-t border-line/50 px-2.5 py-2">
+              {seg.views.map((v, i) => renderCard(v, i))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function MessageBubbleInner({
   message,
   isStreaming,
@@ -339,6 +411,8 @@ function MessageBubbleInner({
     () => (isAssistant ? extractToolCallViews(message) : []),
     [message, isAssistant]
   )
+  // 堆叠分组:连续的已终态查询卡合并成一个折叠组(见 lib/ai/tool-call-stack 守卫规则)
+  const toolCallSegments = useMemo(() => segmentToolCallViews(toolCallViews), [toolCallViews])
   // 图文混排白名单图:与工具卡同源提取,喂给 MarkdownRenderer 做 [图N] 占位符替换
   const inlineImages = useMemo(
     () => (isAssistant ? extractInlineImages(message) : []),
@@ -502,9 +576,19 @@ function MessageBubbleInner({
         const res = await fetch('/api/favorites', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sourceMessageId: message.id }),
+          body: JSON.stringify({
+            sourceMessageId: message.id,
+            // 本轮新消息的气泡 id 是 AI SDK 临时 id(与库行 cuid 不同),服务端按 id 查会落空;
+            // 附带会话 id + 原文,服务端按内容回退定位到库行
+            conversationId: currentConversationId ?? undefined,
+            role: isUser ? 'user' : 'assistant',
+            content: bodyText,
+          }),
         })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: string } | null
+          throw new Error(data?.error || `HTTP ${res.status}`)
+        }
         const data = (await res.json()) as { id?: unknown }
         const nextId = typeof data.id === 'string' ? data.id : null
         setFavId(nextId)
@@ -514,11 +598,13 @@ function MessageBubbleInner({
       }
     } catch (err) {
       console.error('[MessageBubble] toggle favorite failed:', err)
-      toast.error(wasFavorited ? '取消收藏失败' : '收藏失败,请重试')
+      // 服务端带了具体原因(如临时 id 落空且回退定位失败)就透出,否则用通用文案
+      const detail = err instanceof Error && err.message && !err.message.startsWith('HTTP') ? err.message : ''
+      toast.error(wasFavorited ? '取消收藏失败' : detail || '收藏失败,请重试')
     } finally {
       setFavBusy(false)
     }
-  }, [favBusy, favId, message.id, onFavoriteChange, queryClient])
+  }, [favBusy, favId, message.id, onFavoriteChange, queryClient, isUser, bodyText, currentConversationId])
 
   // 触屏设备没有自定义右键菜单:操作栏提供「⋯」把错题本等次要动作收进菜单,
   // 保证手机端仍有存错题入口,同时操作栏不额外增宽。
@@ -1155,16 +1241,23 @@ function MessageBubbleInner({
             {/* 工具调用卡片:联网搜索过程可视化(搜索中 spinner / 完成后来源列表) */}
             {toolCallViews.length > 0 && (
               <div className="mb-2 flex flex-col gap-1.5">
-                {toolCallViews.map((v, i) => (
-                  <ToolCallCard
-                    key={v.toolCallId ?? `${v.tool}-${i}`}
-                    view={v}
-                    clarifyAnswered={clarifyAnswered}
-                    onClarifySubmit={onClarifySubmit}
-                    onLocalFileDecision={onLocalFileDecision}
-                    onOpenEditor={onOpenEditor}
-                  />
-                ))}
+                {toolCallSegments.map((seg, i) => {
+                  const renderCard = (v: ToolCallView, j: number) => (
+                    <ToolCallCard
+                      key={v.toolCallId ?? `${v.tool}-${j}`}
+                      view={v}
+                      clarifyAnswered={clarifyAnswered}
+                      onClarifySubmit={onClarifySubmit}
+                      onLocalFileDecision={onLocalFileDecision}
+                      onOpenEditor={onOpenEditor}
+                    />
+                  )
+                  // 单个可堆叠卡不包壳,维持原单卡渲染(含 web_search 完成态自动展开)
+                  if (seg.type === 'stack' && seg.views.length > 1) {
+                    return <ToolCallStackGroup key={`stack-${seg.views[0].toolCallId ?? i}`} seg={seg} renderCard={renderCard} />
+                  }
+                  return renderCard(seg.type === 'stack' ? seg.views[0] : seg.view, i)
+                })}
               </div>
             )}
             {/* 回合变更摘要条(P1):聚合本条消息里 local_file 的文件变更,可展开逐文件撤销 */}
