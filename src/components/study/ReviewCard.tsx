@@ -54,11 +54,14 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
   const [loading, setLoading] = useState(true)
   const [revealed, setRevealed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  // 「想起来了」的核对模式:先展开解析对照,再诚实评级(防"眼熟"冒充"会")
+  const [verifying, setVerifying] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setIndex(0)
     setRevealed(false)
+    setVerifying(false)
     try {
       const res = await fetch('/api/study/queue')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -110,6 +113,7 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
     async (rating: 'again' | 'good') => {
       if (!current || submitting) return
       setSubmitting(true)
+      setVerifying(false)
       try {
         const res = await fetch('/api/study/review', {
           method: 'POST',
@@ -129,6 +133,17 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
     },
     [current, submitting, onChanged],
   )
+
+  /** 「想起来了」→ 先展开解析核对,再诚实评级;无解析的卡没有核对依据,直接计 good */
+  const handleRemember = useCallback(() => {
+    if (!current || submitting) return
+    if (current.analysis) {
+      setVerifying(true)
+      setRevealed(true)
+    } else {
+      void handleRate('good')
+    }
+  }, [current, submitting, handleRate])
 
   const handleDelete = useCallback(async () => {
     if (!current || submitting) return
@@ -316,29 +331,57 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
         </div>
       </div>
 
-      {/* 底部 2 键自评:sticky 常驻抽屉底部,浏览题干时也能直接自评 */}
-      <div className="shrink-0 sticky bottom-0 z-10 grid grid-cols-2 gap-2 p-3 border-t border-line/60 bg-surface">
-        <button
-          onClick={() => void handleRate('again')}
-          disabled={submitting}
-          className={cn(
-            'py-2.5 rounded-full text-sm font-semibold border transition-all active:scale-[0.98] touch-manipulation',
-            'border-red-300/40 text-red-500 hover:bg-red-500/5 disabled:opacity-50 disabled:cursor-wait',
-          )}
-        >
-          卡住了
-        </button>
-        <button
-          onClick={() => void handleRate('good')}
-          disabled={submitting}
-          className={cn(
-            'py-2.5 rounded-full text-sm font-semibold border transition-all active:scale-[0.98] touch-manipulation',
-            'border-accent/40 text-accent hover:bg-accent/5 disabled:opacity-50 disabled:cursor-wait',
-          )}
-        >
-          想起来了
-        </button>
-      </div>
+      {/* 底部自评:sticky 常驻抽屉底部。「想起来了」走核对式——先展开解析对照,再诚实评级 */}
+      {verifying ? (
+        <div className="shrink-0 sticky bottom-0 z-10 p-3 border-t border-line/60 space-y-2 bg-surface">
+          <div className="text-xs text-content-muted text-center">对照上面的解析——刚才是真想起来了,还是只是眼熟?</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => void handleRate('again')}
+              disabled={submitting}
+              className={cn(
+                'py-2.5 rounded-full text-sm font-semibold border transition-all active:scale-[0.98] touch-manipulation',
+                'border-red-300/40 text-red-500 hover:bg-red-500/5 disabled:opacity-50 disabled:cursor-wait',
+              )}
+            >
+              其实卡住了
+            </button>
+            <button
+              onClick={() => void handleRate('good')}
+              disabled={submitting}
+              className={cn(
+                'py-2.5 rounded-full text-sm font-semibold border transition-all active:scale-[0.98] touch-manipulation',
+                'border-accent/40 text-accent hover:bg-accent/5 disabled:opacity-50 disabled:cursor-wait',
+              )}
+            >
+              真会,秒出来的
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="shrink-0 sticky bottom-0 z-10 grid grid-cols-2 gap-2 p-3 border-t border-line/60 bg-surface">
+          <button
+            onClick={() => void handleRate('again')}
+            disabled={submitting}
+            className={cn(
+              'py-2.5 rounded-full text-sm font-semibold border transition-all active:scale-[0.98] touch-manipulation',
+              'border-red-300/40 text-red-500 hover:bg-red-500/5 disabled:opacity-50 disabled:cursor-wait',
+            )}
+          >
+            卡住了
+          </button>
+          <button
+            onClick={handleRemember}
+            disabled={submitting}
+            className={cn(
+              'py-2.5 rounded-full text-sm font-semibold border transition-all active:scale-[0.98] touch-manipulation',
+              'border-accent/40 text-accent hover:bg-accent/5 disabled:opacity-50 disabled:cursor-wait',
+            )}
+          >
+            想起来了
+          </button>
+        </div>
+      )}
     </div>
   )
 }
