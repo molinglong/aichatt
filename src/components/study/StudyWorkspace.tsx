@@ -235,8 +235,11 @@ export function StudyWorkspace({ session, steps, busy, streamError, archivedNote
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* 题目条 */}
-      <div className="flex items-center gap-2.5 border-b border-line bg-surface-muted px-5 py-3 text-[13px] text-content-secondary">
+      {/* 题目条:chrome 灰带的一部分;下方白纸顶边下移,纸的圆角在此露出(globals 作用域规则) */}
+      <div
+        data-study-questionbar
+        className="flex items-center gap-2.5 border-b border-line bg-surface-muted px-5 py-3 text-[13px] text-content-secondary"
+      >
         <button
           type="button"
           onClick={onBack}

@@ -3357,6 +3357,12 @@ html[data-style="bigsur"].dark .m-set nav.glass-blur {
   html[data-style="bigsur"] .app-shell-column:has(.topbar-strip):has(.info-aside-tab)::before {
     right: 28px;
   }
+  /* 学习会话视图:题目条(灰,49px)下移纸顶到 93px —— 纸的左上/右上圆角在题目条下露出,
+     与聊天页「灰带 + 圆角白纸」同构(2026-11-07 用户定稿:会话视图左上角改圆角) */
+  html[data-style="bigsur"] .app-shell-column:has(.topbar-strip):has([data-study-questionbar])::before {
+    top: 93px;
+    background-position: 0 -93px, 0 0, 0 0, 0 0;
+  }
 }
 html[data-style="bigsur"] .topbar-strip {
   background-color: rgb(var(--surface-muted));
