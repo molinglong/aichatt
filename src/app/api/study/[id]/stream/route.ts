@@ -190,7 +190,8 @@ ${session.notes.trim()}`
         "本题讲解完成时调用。summary 传给用户的要点总结(3 条以内,每条一句)。调用后立即结束回复,不要再输出其他内容。",
       inputSchema: studyFinishToolSchema,
       execute: async ({ summary }: z.infer<typeof studyFinishToolSchema>) => {
-        finishSummary = summary
+        // 模型偶发把换行转义成字面 \n 传入,还原成真换行(结课卡按行渲染)
+        finishSummary = summary.replace(/\\n/g, "\n")
         return { ok: true }
       },
     }),
