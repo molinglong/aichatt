@@ -4116,35 +4116,35 @@ html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .mobile-flo
   line-height: 2.5em;
   position: relative;
   cursor: pointer;
-  overflow: hidden;
   border: 2px solid var(--color);
-  transition: color 0.5s;
   z-index: 1;
   font-size: 17px;
   border-radius: 6px;
   font-weight: 500;
   color: var(--color);
+  background: transparent;
 }
-.study-newq-btn::before {
+/* 涟漪:悬停时两圈紫色环从按钮边缘向外扩散消散(交错延迟) */
+.study-newq-btn::before,
+.study-newq-btn::after {
   content: "";
   position: absolute;
-  z-index: -1;
-  background: var(--color);
-  height: 150px;
-  width: 200px;
-  border-radius: 50%;
-  top: 100%;
-  left: 100%;
-  transition: all 0.7s;
-}
-.study-newq-btn:hover {
-  color: #fff;
+  inset: -2px;
+  border-radius: inherit;
+  border: 2px solid var(--color);
+  opacity: 0;
+  pointer-events: none;
 }
 .study-newq-btn:hover::before {
-  top: -30px;
-  left: -30px;
+  animation: study-newq-ripple 1.4s ease-out infinite;
 }
-.study-newq-btn:active::before {
-  background: #3a0ca3;
-  transition: background 0s;
+.study-newq-btn:hover::after {
+  animation: study-newq-ripple 1.4s ease-out 0.45s infinite;
+}
+.study-newq-btn:active {
+  transform: scale(0.99);
+}
+@keyframes study-newq-ripple {
+  0% { transform: scale(1); opacity: 0.4; }
+  100% { transform: scale(1.12); opacity: 0; }
 }
