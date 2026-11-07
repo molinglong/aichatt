@@ -74,7 +74,11 @@ Copy-Item -Recurse "$ProjectRoot\$LocalDist\standalone\*" $stage
 # standalone 不自带静态资源/公共文件，需手动并入（与 Dockerfile 一致）
 # 注意: 目标目录名必须与 distDir 同名(server.js 按构建时的 distDir 找静态资源)
 Copy-Item -Recurse "$ProjectRoot\$LocalDist\static" "$stage\$LocalDist\static" -Force
-Copy-Item -Recurse "$ProjectRoot\public" "$stage\public" -Force
+# 拷「内容」而非目录本身: 若 standalone 自带了 public, 目标已存在时 Copy-Item 会把整个
+# public 塞成 stage\public\public 子目录, skip 清理只够到外层, kb-pages 207MB 原样进包
+# (2026-11-07 包虚胖 528MB 实测)。拷内容是幂等合并, 再兜底删一把嵌套目录。
+Copy-Item -Recurse "$ProjectRoot\public\*" "$stage\public\" -Force
+Remove-Item -Recurse -Force "$stage\public\public" -ErrorAction SilentlyContinue
 # 瘦身: 字体二进制(103MB)/uploads(16MB)/kb-pages(207MB 课本页图)不进包, VPS 从旧产物回填(见 [6/6]);
 # 字体 CSS 是行为代码, 必须随包更新, 否则 font-display 修复会被旧产物覆盖。
 # uploads 在容器里被 named volume 挂载遮蔽, 宿主机这份本来就不生效, 纯属白传
@@ -112,6 +116,8 @@ Write-Host "OK ($pkgMB MB, md5 $pkgMd5)"
 Write-Host "=== [5/6] 上传 VPS ===" -ForegroundColor Cyan
 $scpArgs = @()
 if ($UploadLimitKbps -gt 0) { $scpArgs += @("-l", "$UploadLimitKbps") }
+# 长连接保活: 528MB 包上传中途被 Connection reset 实测(2026-11-07), 家宽 NAT 对静默长连接不友好
+$scpArgs += @("-o", "ServerAliveInterval=20", "-o", "ServerAliveCountMax=8")
 $scpArgs += @($pkgPath, "${VpsHost}:/tmp/$PkgName")
 & C:\Windows\System32\OpenSSH\scp.exe @scpArgs
 if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: scp 失败" -ForegroundColor Red; exit 1 }
