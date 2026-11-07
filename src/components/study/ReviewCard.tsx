@@ -48,6 +48,32 @@ function MathText({ text, className }: { text: string; className?: string }) {
   return <span className={cn('whitespace-pre-wrap', className)} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
+/** 解析文本结构化:题库格式的「答案:x」「出处:x」单独拆出,其余为解析正文 */
+function parseAnalysis(analysis: string | null): { answer: string | null; source: string | null; body: string } {
+  if (!analysis) return { answer: null, source: null, body: '' }
+  let answer: string | null = null
+  let source: string | null = null
+  const body: string[] = []
+  analysis
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .forEach((l) => {
+      const am = l.match(/^答案[:：]\s*(.+)$/)
+      if (am) {
+        answer = am[1]
+        return
+      }
+      const sm = l.match(/^出处[:：]\s*(.+)$/)
+      if (sm) {
+        source = sm[1]
+        return
+      }
+      body.push(l)
+    })
+  return { answer, source, body: body.join('\n') }
+}
+
 export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; onRestudy?: (note: { id: string; title: string; content: string; imageUrl?: string | null }) => void }) {
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [index, setIndex] = useState(0)
@@ -80,6 +106,7 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
   }, [load])
 
   const current = index < queue.length ? queue[index] : null
+  const analysisParsed = parseAnalysis(current?.analysis ?? null)
 
   // 题干/选项/我的答案 结构化解析(变式题与题库题都有此结构;自由文本回落普通渲染)
   // ⚠ 必须在提前 return 之前调用(钩子顺序稳定),空队列时返回 null
@@ -321,11 +348,21 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
           </div>
 
           {current.analysis && revealed && (
-            <div className="rounded-xl border border-line/60 bg-surface-subtle/40 p-3">
-              <div className="text-[10px] text-content-muted mb-1.5">解析</div>
-              <div className="[&_.rich-md]:text-[13px] [&_.rich-md]:leading-[1.7] [&_.rich-md_p]:mb-2">
-                <MarkdownRenderer content={current.analysis} messageId={`review-${current.id}`} rich />
-              </div>
+            <div className="rounded-xl border border-line/60 bg-surface-subtle/40 p-3 space-y-2">
+              <div className="text-[10px] text-content-muted">解析</div>
+              {analysisParsed.answer && (
+                <div className="text-[13px] font-semibold text-content-primary">
+                  答案:<span className="text-accent">{analysisParsed.answer}</span>
+                </div>
+              )}
+              {analysisParsed.body && (
+                <div className="text-[13px] leading-[1.7] text-content-secondary">
+                  <MathText text={analysisParsed.body} />
+                </div>
+              )}
+              {analysisParsed.source && (
+                <div className="text-[11px] text-content-muted">出处:{analysisParsed.source}</div>
+              )}
             </div>
           )}
         </div>
@@ -333,8 +370,10 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
 
       {/* 底部自评:sticky 常驻抽屉底部。「想起来了」走核对式——先展开解析对照,再诚实评级 */}
       {verifying ? (
-        <div className="shrink-0 sticky bottom-0 z-10 p-3 border-t border-line/60 space-y-2 bg-surface">
-          <div className="text-xs text-content-muted text-center">对照上面的解析——刚才是真想起来了,还是只是眼熟?</div>
+        <div className="shrink-0 sticky bottom-0 z-10 border-t border-line/60 bg-[linear-gradient(to_top,rgba(0,122,255,.10),rgba(0,122,255,.03))] p-3 space-y-2.5">
+          <div className="text-center text-[13px] text-content-primary">
+            对照解析——刚才是<b className="font-semibold">真想起来了</b>,还是只是<b className="font-semibold">眼熟</b>?
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => void handleRate('again')}
