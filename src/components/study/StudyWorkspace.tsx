@@ -8,6 +8,7 @@
  * - 结课后出总结卡 + 归档状态;追问输入框在卡流底部
  */
 import { useEffect, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { INPUT_SEND_EVENT } from '@/lib/input-bridge'
 import type { StudyAction, StudyPostOpts, StudyRef, StudySessionView, StudyStepView } from '@/hooks/useStudyStream'
@@ -37,37 +38,58 @@ function plainHeadline(content: string): string {
 }
 
 function RefsChips({ refs }: { refs: StudyRef[] }) {
-  const [open, setOpen] = useState(false)
+  // 两级折叠:标题行收起整个引用区;展开后点单个 chip 再看课本原文
+  const [listOpen, setListOpen] = useState(false)
+  const [detail, setDetail] = useState<number | null>(null)
   return (
     <div className="px-4 pb-3">
-      <div className="flex flex-wrap gap-1.5">
-        {refs.map((r, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="rounded-lg bg-accent-soft px-2.5 py-1 text-[11px] text-accent transition-colors hover:bg-accent/20"
-          >
-            📖 {r.doc}
-            {r.chapter ? ` · ${r.chapter}` : ''}
-            {r.section ? ` · ${r.section}` : ''}
-          </button>
-        ))}
-      </div>
-      {open && (
-        <div className="mt-2 space-y-2 rounded-xl border border-line bg-surface-subtle/50 p-3">
-          {refs.map((r, i) => (
-            <div key={i} className="text-xs leading-relaxed text-content-secondary">
-              <div className="mb-1 font-medium text-content-primary">
-                {r.doc}
+      <button
+        type="button"
+        onClick={() => setListOpen((v) => !v)}
+        aria-expanded={listOpen}
+        className="flex items-center gap-1 text-[11px] text-content-muted transition-colors hover:text-accent"
+      >
+        <ChevronDown
+          className={cn('h-3 w-3 transition-transform duration-200', listOpen && 'rotate-180')}
+          aria-hidden
+        />
+        课本引用 · {refs.length} 条
+      </button>
+      {listOpen && (
+        <>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {refs.map((r, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setDetail(detail === i ? null : i)}
+                className={cn(
+                  'rounded-lg px-2.5 py-1 text-[11px] transition-colors',
+                  detail === i
+                    ? 'bg-accent text-accent-foreground'
+                    : 'bg-accent-soft text-accent hover:bg-accent/20'
+                )}
+              >
+                📖 {r.doc}
                 {r.chapter ? ` · ${r.chapter}` : ''}
                 {r.section ? ` · ${r.section}` : ''}
-                {r.heading ? ` · ${r.heading}` : ''}
+              </button>
+            ))}
+          </div>
+          {detail != null && refs[detail] && (
+            <div className="mt-2 rounded-xl border border-line bg-surface-subtle/50 p-3">
+              <div className="mb-1 text-xs font-medium text-content-primary">
+                {refs[detail].doc}
+                {refs[detail].chapter ? ` · ${refs[detail].chapter}` : ''}
+                {refs[detail].section ? ` · ${refs[detail].section}` : ''}
+                {refs[detail].heading ? ` · ${refs[detail].heading}` : ''}
               </div>
-              <div className="line-clamp-4 whitespace-pre-wrap">{r.content}</div>
+              <div className="line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-content-secondary">
+                {refs[detail].content}
+              </div>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   )
