@@ -104,59 +104,77 @@ function StepCard({ step, isLast, canAct, busy, onAction }: {
 }) {
   const badge = step.streaming ? '生成中' : step.action === 'followup' ? '追问' : `第 ${step.idx + 1} 步`
   const headline = plainHeadline(step.content)
+  // 手风琴:非最新步默认收起(新步到来时自动收起旧的);点标题行展开/收起
+  const [collapsed, setCollapsed] = useState(!isLast)
+  useEffect(() => {
+    if (!isLast) setCollapsed(true)
+  }, [isLast])
   return (
     <div className="card overflow-hidden rounded-[14px] border border-line bg-surface">
-      <div className="flex items-center gap-2.5 border-b border-line bg-surface-muted px-4 py-2.5">
-        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${step.streaming ? 'bg-accent-soft text-accent' : 'bg-accent text-white'}`}>
+      <button
+        type="button"
+        onClick={() => setCollapsed((v) => !v)}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center gap-2.5 border-b border-line bg-surface-muted px-4 py-2.5 text-left transition-colors hover:bg-surface-subtle/60"
+      >
+        <span className={`flex-none rounded-full px-2.5 py-0.5 text-[11px] font-bold ${step.streaming ? 'bg-accent-soft text-accent' : 'bg-accent text-white'}`}>
           {badge}
         </span>
         {headline && <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-content-primary">{headline}</span>}
-      </div>
-      <div className="px-4 py-3.5 text-[14px] leading-[1.75] text-content-secondary">
-        {step.reasoning && !step.streaming && (
-          <details className="mb-2.5">
-            <summary className="cursor-pointer text-xs text-content-muted">思考过程</summary>
-            <div className="mt-1 whitespace-pre-wrap text-xs text-content-muted">{step.reasoning}</div>
-          </details>
-        )}
-        <MarkdownRenderer content={step.content || (step.streaming ? '' : '(空)')} rich={!step.streaming} />
-        {step.streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-accent align-middle" aria-hidden />}
-      </div>
-      {step.refs && step.refs.length > 0 && <RefsChips refs={step.refs} />}
-      {step.selfRating && (
-        <div className="px-4 pb-2.5 text-[11px] text-content-muted">
-          已记录:
-          {step.selfRating === 'good' ? <b className="font-semibold text-[#1d7a3a]">这一步懂了</b> : <b className="font-semibold text-[#9a6207]">这一步没懂</b>}
-          {' · 会影响本卡的复习排期'}
-        </div>
-      )}
-      {isLast && canAct && !step.streaming && (
-        <div className="flex flex-wrap gap-2 border-t border-line bg-surface-muted px-3.5 py-2.5">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onAction('continue', { rate: { idx: step.idx, rating: 'good' } })}
-            className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[12.5px] text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
-          >
-            ✓ 懂了,继续
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onAction('easier', { rate: { idx: step.idx, rating: 'again' } })}
-            className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[12.5px] text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
-          >
-            没懂,换个说法
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onAction('solution')}
-            className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[12.5px] text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
-          >
-            直接要答案
-          </button>
-        </div>
+        <ChevronDown
+          className={cn('h-3.5 w-3.5 flex-none text-content-muted transition-transform duration-200', !collapsed && 'rotate-180')}
+          aria-hidden
+        />
+      </button>
+      {!collapsed && (
+        <>
+          <div className="px-4 py-3.5 text-[14px] leading-[1.75] text-content-secondary">
+            {step.reasoning && !step.streaming && (
+              <details className="mb-2.5">
+                <summary className="cursor-pointer text-xs text-content-muted">思考过程</summary>
+                <div className="mt-1 whitespace-pre-wrap text-xs text-content-muted">{step.reasoning}</div>
+              </details>
+            )}
+            <MarkdownRenderer content={step.content || (step.streaming ? '' : '(空)')} rich={!step.streaming} />
+            {step.streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-accent align-middle" aria-hidden />}
+          </div>
+          {step.refs && step.refs.length > 0 && <RefsChips refs={step.refs} />}
+          {step.selfRating && (
+            <div className="px-4 pb-2.5 text-[11px] text-content-muted">
+              已记录:
+              {step.selfRating === 'good' ? <b className="font-semibold text-[#1d7a3a]">这一步懂了</b> : <b className="font-semibold text-[#9a6207]">这一步没懂</b>}
+              {' · 会影响本卡的复习排期'}
+            </div>
+          )}
+          {isLast && canAct && !step.streaming && (
+            <div className="flex flex-wrap gap-2 border-t border-line bg-surface-muted px-3.5 py-2.5">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onAction('continue', { rate: { idx: step.idx, rating: 'good' } })}
+                className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[12.5px] text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
+              >
+                ✓ 懂了,继续
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onAction('easier', { rate: { idx: step.idx, rating: 'again' } })}
+                className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[12.5px] text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
+              >
+                没懂,换个说法
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onAction('solution')}
+                className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[12.5px] text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
+              >
+                直接要答案
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
