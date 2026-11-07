@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import katex from 'katex'
 import { RefreshCw, Trash2, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
@@ -21,6 +22,30 @@ interface QueueItem {
   lapses: number
   dueAt: string | null
   sourceQuestionId: string | null
+}
+
+/** 迷你数学文本:\(...\) 与 \[...\] 段用 katex 渲染(恒 inline),其余按原文输出。
+ *  回看卡专用——绕开 MarkdownRenderer 的聊天级字号,选项/题干不再"正文比标题大"。 */
+function MathText({ text, className }: { text: string; className?: string }) {
+  const html = useMemo(() => {
+    const parts = text.split(/(\\\[|\\\(|\\\)|\\\])/g)
+    let inMath = false
+    return parts
+      .map((part) => {
+        if (part === '\\(' || part === '\\[') { inMath = true; return '' }
+        if (part === '\\)' || part === '\\]') { inMath = false; return '' }
+        if (inMath && part.trim()) {
+          try {
+            return katex.renderToString(part, { throwOnError: false, displayMode: false })
+          } catch {
+            return part
+          }
+        }
+        return part.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      })
+      .join('')
+  }, [text])
+  return <span className={cn('whitespace-pre-wrap', className)} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; onRestudy?: (note: { id: string; title: string; content: string; imageUrl?: string | null }) => void }) {
@@ -210,8 +235,8 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
 
           {parsed ? (
             <>
-              <div className="text-[13px] leading-[1.7] text-content-primary [&_.rich-md]:leading-[1.7] [&_.rich-md_p]:mb-1.5 whitespace-pre-wrap">
-                <MarkdownRenderer content={parsed.stem} messageId={`review-stem-${current.id}`} rich />
+              <div className="text-[14px] font-medium text-content-primary leading-relaxed">
+                <MathText text={parsed.stem} />
               </div>
               <div className={cn('grid gap-2', parsed.options.every((o) => o.text.length <= 14) ? 'grid-cols-2' : 'grid-cols-1')}>
                 {parsed.options.map((o) => {
@@ -232,8 +257,8 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
                       >
                         {o.letter}
                       </span>
-                      <span className="min-w-0 flex-1 text-[13px] leading-relaxed text-content-secondary [&_.rich-md]:text-[13px] [&_.rich-md_p]:mb-0">
-                        <MarkdownRenderer content={o.text} messageId={`review-opt-${current.id}-${o.letter}`} rich />
+                      <span className="min-w-0 flex-1 text-[13px] leading-relaxed text-content-secondary">
+                        <MathText text={o.text} />
                       </span>
                       {mine && (
                         <span className="flex-none self-center text-[10px] font-medium text-accent">我的答案</span>
