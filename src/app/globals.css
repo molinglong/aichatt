@@ -4106,10 +4106,10 @@ html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .mobile-flo
 
 }
 
-/* ── 学习台「学新题」按钮:Uiverse.io by cssbuttons-io 的圆形填充 hover(用户选型)──
-   悬停时紫色圆从右上扫入填满、文字变白;active 深紫一闪。宽度交由布局(w-full)。 */
+/* ── 学习台「学新题」按钮:涟漪效果(用户定稿,替换圆形填充)──
+   悬停时两圈主题蓝环从按钮边缘向外扩散消散(交错延迟);active 轻缩。宽度交由布局(w-full)。 */
 .study-newq-btn {
-  --color: #560bad;
+  --color: var(--accent);
   font-family: inherit;
   display: inline-block;
   width: 100%;
