@@ -3335,6 +3335,9 @@ html[data-style="bigsur"].dark .m-set nav.glass-blur {
     left: 0;
     right: 0;
     bottom: 0;
+    /* 2026-11-07 七轮定案: 全灰试用后回调 —— 正文保留白纸,灰只给顶栏/侧栏/面板。
+       纸恢复白底+两上角 12px 圆角;右墙有资料面板时纸在面板左缘让位(见下),
+       右上圆角在面板边线露出,与左上角(侧栏边)同款 */
     background-color: rgb(var(--surface));
     /* 深渊微光: 辉光变量只在 .dark 定义,浅色模式 var() 无值回落 none。
        星空瓦片相位对齐列坐标(0 -44px): 纸面从灰带下沿起算,不偏移会在缝线上切出半颗星 */
@@ -3342,20 +3345,45 @@ html[data-style="bigsur"].dark .m-set nav.glass-blur {
     background-repeat: repeat, repeat, no-repeat, no-repeat;
     background-position: 0 -44px, 0 0, 0 0, 0 0;
     border-top: 1px solid rgb(var(--line) / 0.7);
-    /* 两上角都圆: 深色下灰带比纸亮,右上留直角会出现浅色直角缺口 */
     border-radius: 12px 12px 0 0;
     z-index: -1;
+  }
+  /* 右墙挂着对话资料面板/竖标签时,白纸让到其左缘为止:
+     纸的右上 12px 圆角在面板边线露出;缺口露 column 的 muted 底,与灰带/面板同灰。
+     让位宽度对应 InfoAsidePanel 的 INFO_PANEL_WIDTH / INFO_TAB_WIDTH,改动需同步 */
+  html[data-style="bigsur"] .app-shell-column:has(.topbar-strip):has(aside.info-aside-panel)::before {
+    right: 280px;
+  }
+  html[data-style="bigsur"] .app-shell-column:has(.topbar-strip):has(.info-aside-tab)::before {
+    right: 28px;
   }
 }
 html[data-style="bigsur"] .topbar-strip {
   background-color: rgb(var(--surface-muted));
 }
 
-/* ⑪ 对话资料右栏(2026-11-07 用户定案): 与顶栏/侧栏同灰,连成一圈 chrome。
-   面板叠在白纸内容浮层上,必须用纯 muted 不透明 —— 半透明叠白纸必偏浅,
-   顶栏/输入岛/玻璃卡三次同款教训;展开态 aside 与收起态竖标签同批染色 */
-html[data-style="bigsur"] .info-aside-panel {
+/* ⑪ 对话资料右栏(2026-11-07 七轮定案): 正文白纸+灰 chrome+纸让位见 media 块内规则。
+   面板=纯 muted 停靠(贴顶/贴右/贴底),只压组件白底(bg-surface→muted)。
+   历史被否:灰岛(margin 全留+glass-ring)、顶部 12px 纸边、全灰背景(试用后回调)。 */
+html[data-style="bigsur"] .info-aside-panel,
+html[data-style="bigsur"] .info-aside-tab {
   background-color: rgb(var(--surface-muted));
+}
+
+/* ⑫ TopFade 侧向让位(2026-11-07 七轮定案的真正根因修复):
+   聊天页滚动后显形的白色渐隐层横贯 inset-x-0,把白纸两角的 12px 缺口涂成白色,
+   圆角因此"看不见"(主界面不滚动无 TopFade,所以角可见 —— 用户"主界面有对话页没有")。
+   bigsur 下左侧让 12px(=纸角圆弧宽);右侧让到面板左缘再退 12px(定位父级是整列,
+   面板占右墙 280/28,只让 12px 仍会压住纸的右上角)。classic/google 不受影响 */
+html[data-style="bigsur"] .top-fade {
+  left: 12px;
+  right: 12px;
+}
+html[data-style="bigsur"] .app-shell-column:has(.topbar-strip):has(aside.info-aside-panel) .top-fade {
+  right: 292px; /* INFO_PANEL_WIDTH 280 + 圆弧 12 */
+}
+html[data-style="bigsur"] .app-shell-column:has(.topbar-strip):has(.info-aside-tab) .top-fade {
+  right: 40px; /* INFO_TAB_WIDTH 28 + 圆弧 12 */
 }
 
 /* ═══ 深渊微光 · 画布辉光(2026-10-31 用户定稿 ④) ════════════════

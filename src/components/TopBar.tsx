@@ -424,8 +424,9 @@ export function TopBar() {
             <span className="hidden sm:inline">在新对话继续</span>
           </button>
         )}
-        {/* 代码编辑器入口([P1]):跳到 Side Pane 的代码 tab(已开则激活);写作画布覆盖层打开时隐藏 */}
-        {!writePanelOpen && (
+        {/* 代码编辑器入口([P1]):跳到 Side Pane 的代码 tab(已开则激活);写作画布覆盖层打开时隐藏;
+            学习模式没有代码面板,按钮不出现(2026-11-07 用户圈删) */}
+        {!writePanelOpen && !pathname.startsWith('/study') && (
           <button
             onClick={handleOpenCodePanel}
             className="shrink-0 inline-flex items-center justify-center p-1.5 rounded-full text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition duration-150 active:scale-95 touch-manipulation disabled:opacity-50"

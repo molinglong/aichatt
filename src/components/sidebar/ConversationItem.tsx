@@ -16,6 +16,8 @@ import { isUnread } from '@/lib/last-read'
 interface ConversationItemProps {
   id: string
   title: string
+  /** 主对话:账号级管家会话,常驻蓝色识别态 */
+  isMain?: boolean
   mode?: string
   /** 会话面具徽标（头像 emoji）；无面具 / 面具已删时不传，不显示 */
   maskAvatar?: string | null
@@ -38,7 +40,7 @@ interface ConversationItemProps {
 const STAGGER_STEP_MS = 20
 const STAGGER_MAX_INDEX = 15
 
-function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 0, lastMessageAt, selectable, selected, onToggleSelect, onDelete, onRename }: ConversationItemProps) {
+function ConversationItemInner({ id, title, isMain, mode, maskAvatar, maskName, index = 0, lastMessageAt, selectable, selected, onToggleSelect, onDelete, onRename }: ConversationItemProps) {
   const staggerDelay = Math.min(index, STAGGER_MAX_INDEX) * STAGGER_STEP_MS
   const pathname = usePathname()
   const router = useRouter()
@@ -479,9 +481,12 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
       onContextMenu={handleContextMenu}
       className={cn(
         'sidebar-item-enter group flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm transition-colors',
-        isActive
-          ? 'bg-accent-soft text-content-primary font-medium'
-          : 'text-content-secondary hover:bg-surface-subtle/60 hover:text-content-primary'
+        isMain
+          ? // 主对话:常驻蓝色识别态(管家通道),与普通会话一眼区分
+            'bg-accent-soft text-accent font-medium hover:bg-accent-soft hover:text-accent'
+          : isActive
+            ? 'bg-accent-soft text-content-primary font-medium'
+            : 'text-content-secondary hover:bg-surface-subtle/60 hover:text-content-primary'
       )}
     >
       {showUnreadDot && (
@@ -496,7 +501,13 @@ function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 
       <span className="flex-1 truncate">{title}</span>
       {maskAvatar && (
         <span
-          className="shrink-0 text-xs leading-none"
+          className={cn(
+            'shrink-0 leading-none',
+            isMain
+              ? // 主对话:管家头像升级为蓝色圆底
+                'flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[10px] text-accent-foreground'
+              : 'text-xs',
+          )}
           title={maskName ? `面具：${maskName}` : undefined}
           aria-label={maskName ? `面具：${maskName}` : undefined}
         >

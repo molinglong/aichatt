@@ -2255,9 +2255,9 @@ export function ChatPanel({
               models={studyModels}
               selectedModel={currentModel}
               onModelChange={handleModelChange}
-              triggerClassName="min-h-11 max-w-full rounded-lg border border-line bg-surface px-3 text-sm"
+              triggerClassName="min-h-11 max-w-full rounded-full border border-line bg-surface px-4 text-sm"
             />
-            <button type="button" aria-pressed={deepThink} disabled={isLoading} onClick={() => handleDeepThinkChange(!deepThink)} className="rounded-lg border border-line px-3 text-sm text-content-secondary">
+            <button type="button" aria-pressed={deepThink} disabled={isLoading} onClick={() => handleDeepThinkChange(!deepThink)} className="min-h-11 rounded-full border border-line px-4 text-sm text-content-secondary">
               深度思考{deepThink ? ' · 开' : ' · 关'}
             </button>
           </>

@@ -36,6 +36,8 @@ interface ConversationData {
   mode?: string
   /** 学习模式会话:点进 /chat/c/id 后由会话页渲染学习室(2026-11-02 起不再改道 /study) */
   studyMode?: boolean
+  /** 主对话:账号级学习管家,置顶 + 蓝色识别态 */
+  isMain?: boolean
   maskId?: string | null
   updatedAt: string
 }
@@ -806,6 +808,7 @@ export function Sidebar() {
                         key={conv.id}
                         id={conv.id}
                         title={conv.title}
+                        isMain={conv.isMain === true}
                         mode={conv.mode}
                         maskAvatar={badge?.avatar}
                         maskName={badge?.name}

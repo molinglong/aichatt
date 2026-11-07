@@ -6,7 +6,7 @@
  * - 用户面具：'user:<cuid>' 前缀 + Mask 表主键
  */
 import { z } from 'zod'
-import { ALL_BUILTIN_MASKS } from './builtin-masks'
+import { ALL_BUILTIN_MASKS, getBuiltinMask } from './builtin-masks'
 
 export const USER_MASK_PREFIX = 'user:'
 
@@ -41,7 +41,10 @@ export function resolveMaskBadge(
     return m ? { avatar: m.avatar, name: m.name } : null
   }
   const b = ALL_BUILTIN_MASKS.find((x) => x.id === maskId)
-  return b ? { avatar: b.avatar, name: b.name } : null
+  if (b) return { avatar: b.avatar, name: b.name }
+  // 保留面具(主对话管家等):不在选择器列表里,徽标经 id 查找解析
+  const reserved = getBuiltinMask(maskId)
+  return reserved ? { avatar: reserved.avatar, name: reserved.name } : null
 }
 
 export interface MaskFewShotTurn {

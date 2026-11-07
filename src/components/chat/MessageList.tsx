@@ -6,6 +6,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MessageBubble } from './MessageBubble'
+import { PingCard } from './PingCard'
 import { useChatStore } from '@/store/chat-store'
 import {
   estimateMessageHeight,
@@ -573,7 +574,21 @@ export function MessageList({
                     transform: `translateY(${r.start - scrollPadTop}px)`,
                   }}
                 >
-                  <MessageBubble {...bubbleProps(message, r.index)} contentVisibilityOff />
+                  {(() => {
+                    const meta = message.metadata as { kind?: string; source?: string; icon?: string; actions?: Array<{ label: string; href: string }> } | null | undefined
+                    if (meta?.kind === 'ping') {
+                      const text = message.parts
+                        .filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
+                        .map((p) => p.text)
+                        .join('')
+                      return (
+                        <div className="px-2 py-1">
+                          <PingCard content={text} payload={{ source: meta.source, icon: meta.icon, actions: meta.actions }} />
+                        </div>
+                      )
+                    }
+                    return <MessageBubble {...bubbleProps(message, r.index)} contentVisibilityOff />
+                  })()}
                 </div>
               )
             })}
@@ -584,13 +599,28 @@ export function MessageList({
     )
   }
 
+  // 主对话 Ping 卡分流:管家主动消息整条渲染为卡片,不进气泡
+  const renderOrPing = (message: (typeof messages)[number], index: number) => {
+    const meta = message.metadata as { kind?: string; source?: string; icon?: string; actions?: Array<{ label: string; href: string }> } | null | undefined
+    if (meta?.kind === 'ping') {
+      const text = message.parts
+        .filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
+        .map((p) => p.text)
+        .join('')
+      return (
+        <div key={message.id} className="flex justify-start px-2 py-1">
+          <PingCard content={text} payload={{ source: meta.source, icon: meta.icon, actions: meta.actions }} />
+        </div>
+      )
+    }
+    return <MessageBubble key={message.id} {...bubbleProps(message, index)} />
+  }
+
   return (
     <div className={cn('w-full min-h-full overflow-x-hidden flex flex-col', className)}>
       {earlierHeader}
       <div className="max-w-2xl mx-auto overflow-x-hidden w-full">
-        {messages.map((message, index) => (
-          <MessageBubble key={message.id} {...bubbleProps(message, index)} />
-        ))}
+        {messages.map((message, index) => renderOrPing(message, index))}
         {pendingPlaceholder}
       </div>
     </div>

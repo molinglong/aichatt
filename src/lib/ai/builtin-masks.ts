@@ -20,6 +20,7 @@ import { BUILTIN_MASK_LIBRARY } from './builtin-masks-library'
 import { BUILTIN_MASK_STORE } from './builtin-masks-store'
 import { BUILTIN_GAMES } from './builtin-games'
 import { DEAI_WRITING_DISCIPLINE } from '@/lib/text/deai'
+import { KEEPER_MASK, KEEPER_MASK_ID } from './keeper-mask'
 
 export interface BuiltinMaskFewShotTurn {
   role: 'user' | 'assistant'
@@ -49,14 +50,16 @@ export interface BuiltinMask {
   kind?: 'game'
 }
 
-/** 通过 id 查内置面具；未命中返回 undefined（供 API 校验与前端解析） */
+/** 通过 id 查内置面具；未命中返回 undefined（供 API 校验与前端解析）。
+ *  主对话管家(keeper-mask.ts)按 id 可解析但不在任何选择器列表里。 */
 export function getBuiltinMask(id: string | null | undefined): BuiltinMask | undefined {
   if (!id) return undefined
   return (
     BUILTIN_MASKS.find((m) => m.id === id) ??
     BUILTIN_MASK_STORE.find((m) => m.id === id) ??
     BUILTIN_MASK_LIBRARY.find((m) => m.id === id) ??
-    BUILTIN_GAMES.find((m) => m.id === id)
+    BUILTIN_GAMES.find((m) => m.id === id) ??
+    (id === KEEPER_MASK_ID ? KEEPER_MASK : undefined)
   )
 }
 
