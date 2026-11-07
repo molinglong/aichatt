@@ -12,7 +12,7 @@ import { ChevronDown } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { INPUT_SEND_EVENT } from '@/lib/input-bridge'
 import type { StudyAction, StudyPostOpts, StudyRef, StudySessionView, StudyStepView } from '@/hooks/useStudyStream'
-import { cn } from '@/lib/utils'
+import { cn, expandSingleNewlines } from '@/lib/utils'
 
 const ACTION_LABEL: Record<string, string> = {
   start: '开讲',
@@ -287,7 +287,7 @@ export function StudyWorkspace({ session, steps, busy, streamError, archivedNote
                 <div className="mx-auto mb-3 max-w-[560px] rounded-[14px] border border-line p-4 text-left">
                   <div className="mb-2 text-[13px] text-content-secondary">本次学到</div>
                   <div className="text-[13.5px] leading-relaxed text-content-secondary">
-                    <MarkdownRenderer content={session.summary} rich />
+                    <MarkdownRenderer content={expandSingleNewlines(session.summary)} rich />
                   </div>
                 </div>
               )}

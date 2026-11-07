@@ -6,6 +6,15 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * 学习内容专用:单个换行 → 段落换行(markdown 默认折叠单换行)。
+ * 学习总结/解析是"逐行要点"格式(1. / 2. / 每步一行),直接进 markdown
+ * 会被黏成一段——渲染前把单换行升格成段落换行,双换行保持不变。
+ */
+export function expandSingleNewlines(text: string): string {
+  return text.replace(/(?<!\n)\n(?!\n)/g, '\n\n')
+}
+
+/**
  * 深度思考兜底拆分:当模型把全部内容(含最终答案)都放进 <think> 标签时,
  * 标签抽取后的正文为空。此时从推理文本尾部拆出答案部分作为正文。
  *

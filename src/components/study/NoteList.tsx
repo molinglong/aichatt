@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, Search, Trash2 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, expandSingleNewlines } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { SUBJECT_LABELS } from '@/lib/study/subject-labels'
@@ -209,7 +209,7 @@ export function NoteList({ onChanged }: { onChanged?: () => void }) {
                     <div className="rounded-lg bg-surface-subtle/50 p-2.5">
                       <div className="text-[10px] text-content-muted mb-1">AI 解析</div>
                       <div className="[&_.rich-md]:text-[13px] [&_.rich-md]:leading-[1.7] [&_.rich-md_p]:mb-2">
-                        <MarkdownRenderer content={n.analysis} messageId={`study-${n.id}`} rich />
+                        <MarkdownRenderer content={expandSingleNewlines(n.analysis)} messageId={`study-${n.id}`} rich />
                       </div>
                     </div>
                   )}
