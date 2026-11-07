@@ -3227,7 +3227,7 @@ ${message}`
         open.addEventListener("click", () => {
           const server = normalizeServer(settings.server);
           if (server)
-            window.open(`${server}/study?panel=notes`, "_blank", "noopener");
+            window.open(`${server}/chat?study=1&panel=notes`, "_blank", "noopener");
         });
         actions.appendChild(open);
       } else {

@@ -82,6 +82,10 @@ export async function GET(req: NextRequest) {
  * 主路径只收 sourceMessageId:正文/角色/附件/会话标题全部由服务端查消息后快照,
  * 不信任客户端正文;同一条消息重复收藏幂等返回已有记录。
  *
+ * 本轮新消息例外:本地气泡 id 是 AI SDK 临时 id(与库行 cuid 不同),按 id 查必落空。
+ * 前端附带 conversationId + role + content 时,服务端按内容回退定位到库行再收藏
+ * (会话归属校验不变,正文仅用于等值匹配不作快照来源)。
+ *
  * 外部客户端(浏览器扩展)的本地消息没有服务端 id,退化为客户端正文快照
  * (content + role),不做归属校验,正文限 2 万字。主应用不走向这条路径。
  */
@@ -150,7 +154,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // 归属校验直接做在消息查询里:别人的消息按"不存在"处理
-    const message = await prisma.message.findFirst({
+    let message = await prisma.message.findFirst({
       where: {
         id: sourceMessageId,
         conversation: { userId },
@@ -165,6 +169,40 @@ export async function POST(req: NextRequest) {
         conversation: { select: { title: true } },
       },
     })
+
+    // 新消息回退定位:刚发完的对话在本地还持有 AI SDK 临时 id(与库行 cuid 不同),
+    // 按 id 查必落空。前端附带会话 id + 原文,这里按内容定位到库行再收藏。
+    // 比较两侧都用 sanitizeStoredContent 归一(与存储同口径),同文重复取最新一条。
+    const convIdFromClient = (body.conversationId ?? "").trim()
+    if (!message && convIdFromClient && rawContent) {
+      const conv = await prisma.conversation.findFirst({
+        where: { id: convIdFromClient, userId },
+        select: { id: true },
+      })
+      if (conv) {
+        const candidates = await prisma.message.findMany({
+          where: {
+            conversationId: conv.id,
+            role: { in: ["user", "assistant"] },
+          },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: 50,
+          select: {
+            id: true,
+            role: true,
+            content: true,
+            attachments: true,
+            conversationId: true,
+            conversation: { select: { title: true } },
+          },
+        })
+        const want = sanitizeStoredContent(rawContent)
+        message =
+          candidates.find(
+            (m) => m.content != null && sanitizeStoredContent(m.content) === want
+          ) ?? null
+      }
+    }
 
     if (!message) {
       return NextResponse.json(

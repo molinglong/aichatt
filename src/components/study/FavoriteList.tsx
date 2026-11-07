@@ -44,7 +44,17 @@ function formatDate(raw: string): string {
  * 与错题本(NoteList)分开:没有掌握度/复习状态,只做"回看 + 回到原对话 + 取消收藏"。
  * 收藏在服务端是软关联,原消息/会话删除后本列表仍可完整展示。
  */
-export function FavoriteList({ onChanged }: { onChanged?: () => void }) {
+export function FavoriteList({
+  onChanged,
+  /** 跳回原对话前回调（收藏浮层用它先关掉自己再导航） */
+  onBeforeNavigate,
+  /** 导航出口注入：移动端浮层内必须走 useBackToClose 的 navigate（否则导航会被哨兵取消），不传则默认 router.push */
+  navigateToConversation,
+}: {
+  onChanged?: () => void
+  onBeforeNavigate?: () => void
+  navigateToConversation?: (conversationId: string) => void
+}) {
   const router = useRouter()
   const queryClient = useQueryClient()
   const [rows, setRows] = useState<FavoriteRow[]>([])
@@ -240,7 +250,11 @@ export function FavoriteList({ onChanged }: { onChanged?: () => void }) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          router.push(`/chat/c/${row.conversationId}`)
+                          const convId = row.conversationId
+                          if (!convId) return
+                          onBeforeNavigate?.()
+                          if (navigateToConversation) navigateToConversation(convId)
+                          else router.push(`/chat/c/${convId}`)
                         }}
                         className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-content-muted hover:text-content-primary hover:bg-surface-subtle transition-colors"
                         title="回到原对话"

@@ -90,6 +90,12 @@ export const queryKeys = {
     list: (conversationId: string | null) =>
       [...queryKeys.all, 'code', 'list', { conversationId }] as const,
   },
+  kb: {
+    /** 可翻原文的课本列表(/kb 书架;/study 入口文案用) */
+    docs: () => [...queryKeys.all, 'kb', 'docs'] as const,
+    /** 单本课本详情(阅读器) */
+    doc: (docId: string) => [...queryKeys.all, 'kb', 'doc', docId] as const,
+  },
   yellowFish: {
     /** 商品收藏列表(实时价卡片星标 + 设置节收藏池共享同一份缓存) */
     favorites: () => [...queryKeys.all, 'yellowFish', 'favorites'] as const,
