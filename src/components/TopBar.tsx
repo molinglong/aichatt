@@ -25,6 +25,8 @@ import type { UiStyle } from '@/lib/theme'
 function TopbarShell(props: {
   uiStyle: UiStyle
   title: string
+  /** 页面专属 logo(如学习模式的 Study 手写体);设置时覆盖 title */
+  logo?: React.ReactNode
   offset: string | undefined
   dragProps: Record<string, unknown>
   onSearch: () => void
@@ -34,7 +36,7 @@ function TopbarShell(props: {
     return (
       <div className="topbar-google hidden h-14 flex-none relative z-40 items-center gap-5 px-5 md:flex">
         <span className="w-[200px] shrink-0 truncate text-[19px] font-normal tracking-[-0.01em] text-content-primary select-none">
-          {props.title}
+          {props.logo ?? props.title}
         </span>
         <button
           type="button"
@@ -65,7 +67,7 @@ function TopbarShell(props: {
       >
         {/* 左:标题(纯展示,吃容器的 pointer-events-none,不挡消息区点击) */}
         <span className="absolute left-4 top-0 h-full flex items-center text-sm font-medium text-content-secondary truncate max-w-[38%] select-none">
-          {props.title}
+          {props.logo ?? props.title}
         </span>
         <div
           className="topbar-actions flex items-center gap-0.5 pointer-events-auto"
@@ -172,6 +174,16 @@ export function TopBar() {
   // 题目与讲解都跑在普通聊天壳里,顶栏/浮钮照常渲染。
   const isWritePage = pathname?.startsWith('/write')
   const displayTitle = isImagesPage ? '生图工作台' : isExplorePage ? '观点探索' : isWritePage ? '写作画布' : (title || '新对话')
+  // 学习模式:左上角用手写体 Study 词标替代会话标题(用户定稿,参考手绘 logo)
+  const isStudyPage = pathname?.startsWith('/study')
+  const studyLogo = isStudyPage ? (
+    <span
+      className="select-none"
+      style={{ fontFamily: '"Segoe Script","Bradley Hand","Comic Sans MS",cursive', fontSize: 17, fontWeight: 400 }}
+    >
+      Study
+    </span>
+  ) : null
 
   /**
    * 「在新对话继续」:把当前对话(含所有上下文消息)用 LLM 压缩成结构化摘要,
@@ -400,6 +412,7 @@ export function TopBar() {
       <TopbarShell
         uiStyle={uiStyle}
         title={displayTitle}
+        logo={studyLogo}
         offset={actionOffset}
         dragProps={dragProps}
         onSearch={() => setSearchDialogOpen(true)}
