@@ -210,7 +210,9 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
 
           {parsed ? (
             <>
-              <div className="text-sm font-medium text-content-primary leading-relaxed whitespace-pre-wrap">{parsed.stem}</div>
+              <div className="text-[13px] leading-[1.7] text-content-primary [&_.rich-md]:leading-[1.7] [&_.rich-md_p]:mb-1.5 whitespace-pre-wrap">
+                <MarkdownRenderer content={parsed.stem} messageId={`review-stem-${current.id}`} rich />
+              </div>
               <div className={cn('grid gap-2', parsed.options.every((o) => o.text.length <= 14) ? 'grid-cols-2' : 'grid-cols-1')}>
                 {parsed.options.map((o) => {
                   const mine = parsed.myAnswer === o.letter
@@ -230,7 +232,9 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
                       >
                         {o.letter}
                       </span>
-                      <span className="min-w-0 flex-1 text-[13px] leading-relaxed text-content-secondary">{o.text}</span>
+                      <span className="min-w-0 flex-1 text-[13px] leading-relaxed text-content-secondary [&_.rich-md]:text-[13px] [&_.rich-md_p]:mb-0">
+                        <MarkdownRenderer content={o.text} messageId={`review-opt-${current.id}-${o.letter}`} rich />
+                      </span>
                       {mine && (
                         <span className="flex-none self-center text-[10px] font-medium text-accent">我的答案</span>
                       )}
