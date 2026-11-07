@@ -16,6 +16,7 @@ const EPHEMERAL_DENIED_PREFIXES = [
   "/api/ephemeral", // 隔离区管理(找回/转正/删除)
   "/api/user/ephemeral-settings", // 访客密码/临时记忆开关
   "/api/study", // 学习功能(错题本/复习状态写入)
+  "/api/favorites", // 收藏(长期数据资产,与错题本同口径,防临时模式污染)
   "/api/todos", // 待办(长期数据,防临时模式污染)
   "/api/profiles", // 通用档案:读=暴露本人身份/学段,写=污染账户资产,临时模式整条拦掉
   "/api/write", // 写作画布文档(长期数据资产,防临时模式污染;入口在临时模式下本就隐藏)
@@ -56,6 +57,8 @@ function isDeniedForEphemeral(pathname: string, method: string): boolean {
 const API_CORS_ALLOW_ORIGINS = [
   "http://localhost:8090", // bento 起始页(静态 server)
   "http://127.0.0.1:8090",
+  "http://localhost:5180", // plan 本地 dev(Vite)
+  "http://127.0.0.1:5180",
   "http://localhost:8137", // 主页本地预览(Python http.server)
   "http://127.0.0.1:8137",
   "https://yuban.icu", // 主页线上部署(静态站)
@@ -67,10 +70,24 @@ const API_CORS_ALLOW_ORIGINS = [
   "http://127.0.0.1:3000",
 ]
 
+function isAllowedApiOrigin(origin: string | null): origin is string {
+  if (!origin) return false
+  if (API_CORS_ALLOW_ORIGINS.includes(origin)) return true
+  // 浏览器扩展侧边栏/背景页:只谈 Bearer 令牌通道,响应不带 Allow-Credentials,
+  // 不会把 cookie 暴露给扩展;扩展侧自带 host_permissions,这里只是兜底。
+  return /^(chrome|moz)-extension:\/\//.test(origin)
+}
+
 function corsHeaders(res: NextResponse, origin: string | null): NextResponse {
-  if (origin && API_CORS_ALLOW_ORIGINS.includes(origin)) {
+  if (isAllowedApiOrigin(origin)) {
     res.headers.set("Access-Control-Allow-Origin", origin)
     res.headers.set("Vary", "Origin")
+    // 扩展读取新会话 id/标题、客户端认亲本次回复的库行 id
+    // (普通 CORS 下自定义响应头需显式暴露)
+    res.headers.set(
+      "Access-Control-Expose-Headers",
+      "X-Conversation-Id, X-Conversation-Title, X-Assistant-Message-Id"
+    )
   }
   return res
 }
@@ -95,7 +112,7 @@ export async function middleware(req: NextRequest) {
   const isApiPath = pathname.startsWith("/api/")
   const origin = req.headers.get("origin")
   const corsOrigin =
-    isApiPath && origin && API_CORS_ALLOW_ORIGINS.includes(origin) ? origin : null
+    isApiPath && isAllowedApiOrigin(origin) ? origin : null
 
   // OPTIONS 预检:白名单 origin 直接放行并回预检响应
   if (req.method === "OPTIONS" && corsOrigin) {
@@ -104,6 +121,14 @@ export async function middleware(req: NextRequest) {
     res.headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
     res.headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")
     res.headers.set("Access-Control-Max-Age", "86400")
+    res.headers.set(
+      "Access-Control-Expose-Headers",
+      "X-Conversation-Id, X-Conversation-Title, X-Assistant-Message-Id"
+    )
+    // 扩展访问本机 dev(127.0.0.1/localhost)时 Chrome Private Network Access 预检
+    if (req.headers.get("access-control-request-private-network") === "true") {
+      res.headers.set("Access-Control-Allow-Private-Network", "true")
+    }
     return res
   }
 
@@ -126,12 +151,13 @@ export async function middleware(req: NextRequest) {
   }
 
   // 临时聊天模式页面级封锁:只允许聊天界面，
-  // 手动输 URL 访问生图/探索/错题本页一律重定向回 /chat(API 已由上面的 403 拦截)
+  // 手动输 URL 访问生图/探索/学习室页一律重定向回 /chat(API 已由上面的 403 拦截)
   if (isLoggedIn && token.ephemeral === true) {
     const pageDenied =
       pathname === "/images" || pathname.startsWith("/images/") ||
       pathname === "/explore" || pathname.startsWith("/explore/") ||
-      pathname === "/study" || pathname.startsWith("/study/") ||
+      // 2026-11-02:/study 独立页下线,学习室改由 /chat?study=1 承载,封锁跟着改判查询参数
+      (pathname === "/chat" && req.nextUrl.searchParams.get("study") !== null) ||
       pathname === "/diagnostics" || pathname.startsWith("/diagnostics/")
     if (pageDenied) {
       return NextResponse.redirect(new URL("/chat", req.url))
@@ -145,6 +171,13 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith("/login") ||
     pathname.startsWith("/register") ||
     pathname.startsWith("/api/auth") ||
+    // 扩展用账号密码换 Bearer 令牌：此时还没有任何凭证，必须放行；
+    // 限速与密码校验在 route 内完成
+    pathname === "/api/extension/login" ||
+    // 手表设备码授权：start/poll 在手表未登录时调用，码本身即一次性凭证；
+    // approve 仍需登录，不放行
+    pathname === "/api/watch/device/start" ||
+    pathname === "/api/watch/device/poll" ||
     pathname.startsWith("/api/v1/") ||
     pathname === "/test-toast"
 
@@ -171,7 +204,7 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // 排除静态资源:uploads(字体/图片)与 fonts(苹方子集分片)不走 middleware,
+  // 排除静态资源:uploads(字体/图片)与 fonts(MiSans 子集分片)不走 middleware,
   // 避免每个资源请求都执行 JWT 解码;未登录时字体请求也不会被 307 重定向成 HTML。
   // manifest.json 与 icons(PWA 图标)同理:浏览器请求它们不携带 cookie,
   // 被 307 成登录页 HTML 会导致「添加到主屏幕」的 PWA 安装直接失败。
@@ -181,5 +214,5 @@ export const config = {
   // 文件名 nanoid(12)/分片 hash 不可枚举,未登录直访风险可控
   // apk(APK 安装包清单/产物)只在本地 dev 由 next.config.mjs 的 dev-only rewrite 代理到线上;
   // 线上由 nginx 的 location /apk/ 直接吐文件,请求根本到不了 Next,故排除无鉴权面变化。
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|uploads|brand|fonts|manifest.json|icons|wallpaper|apk).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|uploads|kb-pages|brand|fonts|manifest.json|icons|wallpaper|apk).*)"],
 }

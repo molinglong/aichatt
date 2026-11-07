@@ -1,8 +1,8 @@
 import NextAuth, { CredentialsSignin } from "next-auth"
 import Credentials from "next-auth/providers/credentials"
-import bcrypt from "bcryptjs"
+import { verifyCredentials } from "./credentials"
 import { prisma } from "./db"
-import { monitor } from "@/lib/monitor"
+import { verifyHomeCode } from "./home-sso"
 
 // ── 临时聊天(访客模式)常量 ──────────────────────────────
 /** 临时会话(访客密码登录)的 JWT 有效期:12 小时,公共电脑场景自动过期 */
@@ -18,37 +18,9 @@ class RateLimitedError extends CredentialsSignin {
   code = "RATE_LIMITED"
 }
 
-// ── 登录失败限速:同一 identifier 1 分钟窗口内最多 5 次失败 ──
-// 防爆破访客密码后蹭 API 额度;内存级实现,进程重启即清零(可接受)
-const RATE_LIMIT_WINDOW_MS = 60_000
-const RATE_LIMIT_MAX_FAILURES = 5
-const loginFailures = new Map<string, { count: number; resetAt: number }>()
-
-function loginRateLimited(identifier: string): boolean {
-  const entry = loginFailures.get(identifier)
-  if (!entry || entry.resetAt < Date.now()) return false
-  return entry.count >= RATE_LIMIT_MAX_FAILURES
-}
-
-function recordLoginFailure(identifier: string): void {
-  const now = Date.now()
-  const entry = loginFailures.get(identifier)
-  if (!entry || entry.resetAt < now) {
-    // 简单防 Map 膨胀:超过 1000 个 identifier 时清掉已过期窗口
-    if (loginFailures.size > 1000) {
-      loginFailures.forEach((v, k) => {
-        if (v.resetAt < now) loginFailures.delete(k)
-      })
-    }
-    loginFailures.set(identifier, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
-    return
-  }
-  entry.count += 1
-  monitor("login_failed", { identifier })
-}
-
-function clearLoginFailures(identifier: string): void {
-  loginFailures.delete(identifier)
+/** home 身份有效，但 aichatt 里没有同邮箱账号 */
+class HomeAccountMissingError extends CredentialsSignin {
+  code = "HOME_ACCOUNT_MISSING"
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -57,6 +29,54 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/login",
   },
   providers: [
+    // home 作为身份源：只接受它签发的 60 秒一次性 code，按邮箱认领已有用户。
+    // 找不到账号直接拒绝，不自动建号，避免与 home 的删除逻辑脱节。
+    Credentials({
+      id: "home",
+      name: "home",
+      credentials: {
+        code: { label: "Code", type: "text" },
+      },
+      async authorize(credentials) {
+        const payload = verifyHomeCode(
+          typeof credentials?.code === "string" ? credentials.code : undefined
+        )
+        if (!payload) return null
+
+        const select = { id: true, email: true, name: true, role: true }
+        let user = await prisma.user.findFirst({
+          where: { email: { equals: payload.email, mode: "insensitive" } },
+          select,
+        })
+
+        // 本地联调：home 注册暂不验证邮箱，这里会自动建号。
+        // 上线前必须在 home 增加邮箱验证，否则任何人可用他人邮箱接管账号。
+        if (!user) {
+          try {
+            user = await prisma.user.create({
+              data: { email: payload.email, name: payload.email.split("@")[0] },
+              select,
+            })
+          } catch (error) {
+            if ((error as { code?: string }).code !== "P2002") throw error
+            user = await prisma.user.findFirst({
+              where: { email: { equals: payload.email, mode: "insensitive" } },
+              select,
+            })
+          }
+        }
+        if (!user) throw new HomeAccountMissingError()
+
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          image: null,
+          role: user.role,
+          ephemeral: false,
+        }
+      },
+    }),
     Credentials({
       name: "credentials",
       credentials: {
@@ -68,68 +88,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null
 
-        // 登录标识兼容邮箱与用户名:先按 email 查,查不到再按 name 兑底
         const identifier = credentials.email as string
-        const rateLimitKey = identifier.toLowerCase()
-        if (loginRateLimited(rateLimitKey)) {
-          monitor("login_rate_limited", { identifier: rateLimitKey })
-          throw new RateLimitedError()
-        }
-
-        const user =
-          (await prisma.user.findUnique({
-            where: { email: identifier },
-          })) ??
-          (await prisma.user.findFirst({
-            where: { name: identifier },
-          }))
-
-        if (!user) {
-          recordLoginFailure(rateLimitKey)
-          return null
-        }
-
         const password = credentials.password as string
         // 临时入口标志:仅 /login/ephemeral 提交时为真
         const ephemeralEntry =
           credentials.ephemeralEntry === "1" || credentials.ephemeralEntry === "true"
 
-        // 1) 主密码优先比对 → 完整模式
-        if (user.passwordHash && (await bcrypt.compare(password, user.passwordHash))) {
-          // 临时入口拒绝主密码:防止在公共电脑误输主密码造成泄露
-          if (ephemeralEntry) {
-            monitor("login_ephemeral_entry_main_password", { identifier: rateLimitKey })
-            throw new GuestPasswordRequiredError()
-          }
-          clearLoginFailures(rateLimitKey)
-          return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            image: user.image,
-            role: user.role,
-          }
-        }
+        // 校验/限速/密码通道规则统一在 lib/credentials 内，与扩展登录共用
+        const result = await verifyCredentials(
+          identifier,
+          password,
+          ephemeralEntry ? "ephemeral" : "web"
+        )
 
-        // 2) 访客密码比对 → 临时模式(guestPasswordHash 为空=未启用,永不命中)
-        if (
-          user.guestPasswordHash &&
-          (await bcrypt.compare(password, user.guestPasswordHash))
-        ) {
-          clearLoginFailures(rateLimitKey)
-          monitor("login_guest_ok", { identifier: rateLimitKey })
-          return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            image: user.image,
-            role: user.role,
-            ephemeral: true,
-          }
+        if (result.status === "rate_limited") throw new RateLimitedError()
+        if (result.status === "main_password_on_ephemeral") {
+          throw new GuestPasswordRequiredError()
         }
+        if (result.status !== "ok") return null
 
-        recordLoginFailure(rateLimitKey)
-        return null
+        return {
+          ...result.user,
+          ephemeral: result.ephemeral,
+        }
       },
     }),
   ],
