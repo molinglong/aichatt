@@ -59,7 +59,7 @@
 .primary:hover, .send:hover { opacity: .85; }
 .messages { overflow-wrap: anywhere; }
 .messages[hidden] { display: none; }
-.footer { flex: none; border-top: 1px solid rgb(var(--line)); padding: 8px 12px max(10px, var(--m-safe-bottom, env(safe-area-inset-bottom))); }
+.footer { flex: none; padding: 8px 12px max(10px, var(--m-safe-bottom, env(safe-area-inset-bottom))); }
 .composer { display: flex; align-items: flex-end; gap: 6px; width: 100%; max-width: 752px; margin: auto; border: 1px solid rgb(var(--line)); border-radius: var(--radius-panel, 16px); padding: 4px; }
 .composer textarea { flex: 1; min-width: 0; width: 0; height: 44px; min-height: max(44px, calc(1.5em + 20px)); max-height: 144px; resize: none; padding: 10px 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 1rem; line-height: 1.5; }
 .send { width: 44px; flex: none; background: rgb(var(--content-primary)); color: rgb(var(--surface)); border-radius: var(--radius-card, 12px); }

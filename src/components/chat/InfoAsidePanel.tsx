@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen,
   ChevronDown,
+  Fish,
   Layers,
   PanelRightClose,
   PanelRightOpen,
@@ -34,6 +35,8 @@ import {
   knowledgeVolumeLabel,
   type KnowledgeToolOutput,
 } from '@/lib/ai/knowledge-tool'
+import { YELLOW_FISH_TOOL_NAME, type YellowFishToolOutput } from '@/lib/ai/yellow-fish-tool'
+import { YELLOW_FISH_LIVE_TOOL_NAME, type YellowFishLiveToolOutput } from '@/lib/ai/yellow-fish-live-tool'
 import type { Attachment } from '@/lib/attachment-types'
 
 /** 默认只露这么多条,超出的折起来(点击「展开剩余 N 条」再放出来) */
@@ -52,12 +55,12 @@ interface InfoAsidePanelProps {
 
 type InfoItem = {
   key: string
-  icon: 'search' | 'attachment' | 'book'
+  icon: 'search' | 'attachment' | 'book' | 'fish'
   title: string
   /** 右侧的小计数 / 类型标签 */
   badge: string
-  /** 联网搜索/查课本的来源清单(标题,链接/正文可选),挂在那一行下面 */
-  sources?: { title: string; url?: string; content?: string }[]
+  /** 来源清单(标题,链接/正文可选);闲鱼条目额外带 price/image,渲染成缩略图+价格强调行 */
+  sources?: { title: string; url?: string; content?: string; price?: string; image?: string }[]
 }
 
 interface SummaryInfo {
@@ -146,6 +149,54 @@ export function InfoAsidePanel({ conversationId, messages }: InfoAsidePanelProps
           continue
         }
 
+        // 闲鱼实时价/行情:关键词一行,badge 带价格区间与样本量,来源=在售列表(点行开闲鱼页)
+        if (view.tool === YELLOW_FISH_LIVE_TOOL_NAME) {
+          const output = view.output as YellowFishLiveToolOutput | undefined
+          const listings = Array.isArray(output?.listings) ? output!.listings : []
+          const st = output?.stats
+          const badge = !output?.available
+            ? "未连通"
+            : st && st.min != null && st.max != null
+              ? `¥${st.min}~¥${st.max} · ${st.sampleCount}条在售`
+              : `${listings.length}条在售`
+          out.push({
+            key: `${m.id}-${view.toolCallId ?? out.length}`,
+            icon: "fish",
+            title: output?.keyword || "YellowFish 实时价",
+            badge,
+            sources: listings.map((it) => ({
+              title: it.title,
+              price: it.priceDisplay || undefined,
+              url: it.url || undefined,
+              image: it.pic || undefined,
+            })),
+          })
+          continue
+        }
+        if (view.tool === YELLOW_FISH_TOOL_NAME) {
+          const output = view.output as YellowFishToolOutput | undefined
+          const recents = Array.isArray(output?.recentItems) ? output!.recentItems : []
+          const mk = output?.market
+          const badge = !output?.available
+            ? "未连通"
+            : mk && mk.min != null && mk.max != null
+              ? `¥${mk.min}~¥${mk.max} · ${mk.sampleCount}条样本`
+              : `${recents.length}条`
+          out.push({
+            key: `${m.id}-${view.toolCallId ?? out.length}`,
+            icon: "fish",
+            title: output?.keyword || "YellowFish 行情",
+            badge,
+            sources: recents.map((it) => ({
+              title: it.title,
+              price: it.priceDisplay || undefined,
+              url: it.link || undefined,
+              image: it.image || undefined,
+            })),
+          })
+          continue
+        }
+
         if (view.tool !== 'web_search') continue
         const output = view.output as
           | {
@@ -196,7 +247,7 @@ export function InfoAsidePanel({ conversationId, messages }: InfoAsidePanelProps
         onClick={toggleInfoPanel}
         aria-label="展开对话资料"
         title="展开对话资料"
-        className="info-aside-panel hidden md:flex h-full shrink-0 relative z-20 flex-col items-center justify-center gap-2 bg-surface text-content-muted hover:text-content-primary transition-colors"
+        className="info-aside-tab hidden md:flex h-full shrink-0 relative z-20 flex-col items-center justify-center gap-2 bg-surface text-content-muted hover:text-content-primary transition-colors"
         style={{ width: INFO_TAB_WIDTH }}
       >
         <PanelRightOpen className="w-3.5 h-3.5" />
@@ -297,7 +348,13 @@ export function InfoAsidePanel({ conversationId, messages }: InfoAsidePanelProps
             <ul>
               {visibleItems.map((item) => {
                 const Icon =
-                  item.icon === 'search' ? Search : item.icon === 'book' ? BookOpen : Paperclip
+                  item.icon === 'search'
+                    ? Search
+                    : item.icon === 'book'
+                      ? BookOpen
+                      : item.icon === 'fish'
+                        ? Fish
+                        : Paperclip
                 const sources = item.sources ?? []
                 // 默认露前几条;点行尾箭头收起来,点「展开剩余」全露
                 const view: SourceView = sourceView[item.key] ?? 'some'
@@ -352,7 +409,39 @@ export function InfoAsidePanel({ conversationId, messages }: InfoAsidePanelProps
                           const bodyOpen = !!contentOpen[ck]
                           return (
                             <li key={ck}>
-                              {s.url ? (
+                              {s.price || s.image ? (
+                                // 闲鱼在售条目:缩略图 + 价格强调 + 单行标题,点行开闲鱼页
+                                <a
+                                  href={s.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={s.title}
+                                  className="group flex items-center gap-1.5 pl-6 pr-2.5 py-1 rounded-lg hover:bg-surface-subtle/70 transition-colors"
+                                >
+                                  {s.image ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={s.image}
+                                      alt=""
+                                      loading="lazy"
+                                      referrerPolicy="no-referrer"
+                                      className="w-7 h-7 shrink-0 rounded-md object-cover bg-surface-subtle/70"
+                                    />
+                                  ) : (
+                                    <span className="w-7 h-7 shrink-0 rounded-md bg-surface-subtle/70 flex items-center justify-center">
+                                      <Fish className="w-3.5 h-3.5 text-content-muted/60" aria-hidden />
+                                    </span>
+                                  )}
+                                  {s.price && (
+                                    <span className="shrink-0 text-[11px] font-medium tabular-nums text-content-primary">
+                                      {s.price}
+                                    </span>
+                                  )}
+                                  <span className="min-w-0 flex-1 line-clamp-1 text-[11px] leading-snug text-content-muted group-hover:text-content-primary transition-colors">
+                                    {s.title}
+                                  </span>
+                                </a>
+                              ) : s.url ? (
                                 <a
                                   href={s.url}
                                   target="_blank"

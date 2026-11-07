@@ -1778,17 +1778,84 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       })
       .catch(() => {})
   }
+  // 工具明细落库瘦身:闲鱼行情大样本输出(监控 92 条 recentItems ≈ 60KB+)会超 32KB,
+  // 原口径直接放弃整个 metadata —— 工具卡消失、:::yellow-fish 块 hydrate 不到数据,
+  // 分档卡退化成「序号|理由」纯文字行(2026-11-07 监控自动回报实锤)。改为定向裁剪:
+  //   1) 闲鱼三工具输出的 recentItems/listings 条目标题钳到 120 字(卡片本就单行截断)
+  //   2) 仍超限时从数组尾往头逐条删,优先保 finalContent 里 :::yellow-fish 引用的序号
+  //      (模型点名的商品必须能 hydrate 出图/链接);无引用信息时保前 24 条
+  //   3) 裁不动(非闲鱼大输出)维持放弃口径。深拷贝操作,不污染内存里的 collectedToolCalls
+  const TOOLCALLS_META_LIMIT = 32768
+  const shrinkToolCallsMeta = (
+    finalContent?: string | null
+  ): { kind: string; version: number; toolCalls: Array<{ tool: string; input: unknown; output: unknown }> } | null => {
+    if (collectedToolCalls.length === 0) return null
+    const keepNos = new Set<number>()
+    if (finalContent) {
+      for (const m of Array.from(finalContent.matchAll(/\d{1,3}\s*[｜|]/g))) {
+        const n = Number(m[0].slice(0, -1).trim())
+        if (Number.isFinite(n) && n >= 1) keepNos.add(n)
+      }
+    }
+    const calls: Array<{ tool: string; input: unknown; output: unknown }> = JSON.parse(
+      JSON.stringify(collectedToolCalls)
+    )
+    const isYellowFish = (tool: string) =>
+      tool === YELLOW_FISH_TOOL_NAME || tool === YELLOW_FISH_LIVE_TOOL_NAME || tool === YELLOW_FISH_WATCH_TOOL_NAME
+    const itemList = (c: { tool: string; output: unknown }): Record<string, unknown>[] | null => {
+      if (!isYellowFish(c.tool) || !c.output || typeof c.output !== "object") return null
+      const o = c.output as Record<string, unknown>
+      for (const k of ["recentItems", "listings"] as const) {
+        const arr = o[k]
+        if (Array.isArray(arr) && arr.length > 0 && arr[0] !== null && typeof arr[0] === "object") {
+          return arr as Record<string, unknown>[]
+        }
+      }
+      return null
+    }
+    const meta = () => ({ kind: "tool_calls", version: 1, toolCalls: calls })
+    const size = () => JSON.stringify(meta()).length
+    if (size() <= TOOLCALLS_META_LIMIT) return meta()
+    // 第一刀:钳标题(卡片本就单行截断展示,全量标题在闲鱼页)
+    for (const c of calls) {
+      const arr = itemList(c)
+      if (!arr) continue
+      for (const it of arr) {
+        if (typeof it.title === "string" && it.title.length > 120) it.title = it.title.slice(0, 120) + "…"
+      }
+    }
+    // 第二刀:从数组尾往头删;引用序号(无引用信息时前 24 条)不动
+    const protectedNos = keepNos.size > 0 ? keepNos : new Set(Array.from({ length: 24 }, (_, i) => i + 1))
+    let guard = 4096
+    while (size() > TOOLCALLS_META_LIMIT && guard-- > 0) {
+      let removed = false
+      for (const c of calls) {
+        const arr = itemList(c)
+        if (!arr || arr.length === 0) continue
+        for (let i = arr.length - 1; i >= 0; i--) {
+          const no = Number((arr[i] as { no?: unknown }).no)
+          if (Number.isFinite(no) && protectedNos.has(no)) continue
+          arr.splice(i, 1)
+          removed = true
+          break
+        }
+      }
+      if (!removed) break
+    }
+    if (size() > TOOLCALLS_META_LIMIT) return null
+    return meta()
+  }
   // 工具明细即时落库(每个含工具调用的 step 完成后一次)。流半路断开时 onFinish 不执行,
   // 仅靠 abort 兜底只定格 streaming=false —— 图文混排的白名单图全在 toolCalls 里,
   // 丢了之后重载正文的 [图N] 就会裸奔成文字(2026-10-24 生产实锤:点图切后台断流)。
   // 步数本来就少,每步一次 update 的代价可忽略;与 onFinish 同口径保留 32KB 上限。
   const persistToolCallsMetadata = (): void => {
     const draftId = draftMessageId
-    if (!draftId || collectedToolCalls.length === 0) return
-    const json = JSON.stringify({ kind: 'tool_calls', version: 1, toolCalls: collectedToolCalls })
-    if (json.length > 32768) return
+    if (!draftId) return
+    const meta = shrinkToolCallsMeta(null)
+    if (!meta) return
     void prisma.message
-      .update({ where: { id: draftId }, data: { metadata: json } })
+      .update({ where: { id: draftId }, data: { metadata: JSON.stringify(meta) } })
       .catch(() => {})
   }
   // 长上下文压缩:后台补一次摘要,只对下一次请求的注入生效,绝不干扰本次流式。
@@ -2054,10 +2121,13 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   }
 
     // 单轮工具循环的步数预算:编码场景(代码面板开/本地文件授权,典型链路"读→改→跑→修→验证")
-  // 放宽到 10 步,普通对话 5 步。最后一步留给作答(见下方 prepareStep 的第一条规则),
-  // 预算不会被检索/工具调用全部吃掉。
+  // 放宽到 10 步,学习模式同 10(检索课本常要 2~4 次查询,5 步会没开口讲解就被掐断,
+  // 只剩"先检索。"+上限提示,2026-11-07 实锤),普通对话 5 步。最后一步留给作答(见下方
+  // prepareStep 的第一条规则),预算不会被检索/工具调用全部吃掉。
   const stepBudget =
-    body.codePanelOpen === true || body.localFilesEnabled === true ? 10 : 5
+    body.codePanelOpen === true || body.localFilesEnabled === true || studyModeOn === true
+      ? 10
+      : 5
   // 客户端工具停步(local_file/code_edit/preview_check 由前端回填后续跑)不算预算耗尽:
   // stopWhen 记一笔，onFinish 只在真正撞上步数上限时才补"继续"提示，
   // 否则每张本地文件/代码卡片后面都会多挂一句无意义的提示。
@@ -2509,15 +2579,21 @@ const result = streamText({
       }
 
       try {
-        // 工具调用明细随消息入库(前端历史回显工具卡片);极端大结果(>32KB)放弃工具明细,仍保留结课状态。
+        // 工具调用明细随消息入库(前端历史回显工具卡片);超限时 shrinkToolCallsMeta
+        // 定向裁剪闲鱼条目数组,裁不动才放弃(仍保留结课状态)。
         const completionMetadata = studyCompleted ? { studyCompleted: true } : {}
         let toolCallsMetadata: string | undefined = studyCompleted
           ? JSON.stringify(completionMetadata)
           : undefined
-        if (collectedToolCalls.length > 0) {
-          const json = JSON.stringify({ kind: 'tool_calls', version: 1, toolCalls: collectedToolCalls, ...completionMetadata })
-          if (json.length <= 32768) toolCallsMetadata = json
-          else console.warn(`[chat] toolCalls metadata too large (${json.length}B), skipped`)
+        if (!studyCompleted && collectedToolCalls.length > 0) {
+          const meta = shrinkToolCallsMeta(content)
+          if (meta) {
+            const json = JSON.stringify({ ...meta, ...completionMetadata })
+            if (json.length <= TOOLCALLS_META_LIMIT) toolCallsMetadata = json
+            else console.warn(`[chat] toolCalls metadata too large (${json.length}B) after shrink, skipped`)
+          } else {
+            console.warn("[chat] toolCalls metadata unshrinkable after shrink, skipped")
+          }
         }
         if (groupId) {
           // 对比模式: 重新生成时先删除本泳道同组旧消息,避免重复入库
@@ -2661,18 +2737,15 @@ const result = streamText({
     if (!draftId) return
     snapStopped = true
     // 兜底再写一次工具明细:onStepFinish 已写过,这里覆盖「那笔写入还没落地就中止」的窗口。
-    // 不写的话重载后工具卡消失、图文混排的 [图N] 变裸文。
-    const metaJson =
-      collectedToolCalls.length > 0
-        ? JSON.stringify({ kind: "tool_calls", version: 1, toolCalls: collectedToolCalls })
-        : undefined
+    // 不写的话重载后工具卡消失、图文混排的 [图N] 变裸文。超限时同样走定向裁剪。
+    const meta = shrinkToolCallsMeta(snapText)
     snapChain
       .then(() =>
         prisma.message.update({
           where: { id: draftId },
           data: {
             streaming: false,
-            ...(metaJson && metaJson.length <= 32768 ? { metadata: metaJson } : {}),
+            ...(meta ? { metadata: JSON.stringify(meta) } : {}),
           },
         })
       )
