@@ -32,6 +32,7 @@ model User {
   searchApiKeys  SearchApiKey[]
   mcpServers     McpServer[]
   courses       Course[]
+  studySessions StudySession[]
   providerModelOverrides ProviderModelOverride[]
   compareVotes  CompareVote[]
   memoryEnabled Boolean   @default(true)
@@ -164,6 +165,9 @@ model Conversation {
   /// 2026-11-02 起 /study 独立页下线,会话页据此在 /chat/c/[id] 原地渲染学习室,
   /// 而不是降级成普通聊天消息流。
   studyMode     Boolean  @default(false)
+  /// 主对话标记:每用户一条的「学习管家」会话(v2),主动提醒(Ping 卡)落在这里。
+  /// 置顶于会话列表,不参与 studyMode/聊天列表过滤。
+  isMain        Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -577,6 +581,52 @@ model StudyNoteReviewLog {
   note StudyNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([noteId, ratedAt])
+}
+
+// ===================== 学习模式 v2: 独立学习会话(与聊天会话彻底分家) =====================
+// 一条 StudySession = 一道题的完整学习过程: 题干/题图 + 学习起点 + 若干讲解步(StudyStep)。
+// 讲解按「一步一卡」推进,继续/换种说法/要答案/追问都是显式 action,不再往正文塞魔法字符串;
+// 结课由模型调 finish_study 工具(或用户手动 complete)驱动,归档复用 StudyNote(幂等键 study:{sessionId})。
+model StudySession {
+  id         String   @id @default(cuid())
+  userId     String
+  question   String                          // 题干 markdown
+  images     String[] @default([])           // 题图 URL(附件上传后的地址)
+  notes      String?                         // 思路备注:「只会一点」起点时用户贴的已做过程/卡点,每次讲解生成都会注入
+  startLevel String   @default("beginner")   // beginner(完全不会) | partial(只会一点) | review(都会了复习)
+  status     String   @default("explaining") // explaining | completed
+  modelId    String                          // 讲解模型,创建时选定
+  summary    String?                         // 结课总结(finish_study 的输入)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  steps StudyStep[]
+
+  @@index([userId, updatedAt])
+}
+
+// 一条 StudyStep = 讲义流里的一张卡:一次生成的内容 + 触发它的动作 + 课本引用。
+// streaming=true 为生成中的草稿行(断流/重启的孤儿行由 GET 接口按 updatedAt 定格)。
+model StudyStep {
+  id               String   @id @default(cuid())
+  sessionId        String
+  idx              Int                     // 0-based 步序
+  action           String?                 // 触发动作: start | continue | easier | solution | followup
+  followupText     String?                 // followup 时的用户自由输入
+  content          String   @default("")
+  reasoning        String?
+  refs             Json?                   // 课本引用(KnowledgeHit 精简: doc/chapter/section/content)
+  selfRating       String?                 // 本步自评: good | again(喂归档时的初始掌握度)
+  streaming        Boolean  @default(false)
+  promptTokens     Int?
+  completionTokens Int?
+  createdAt        DateTime @default(now())
+
+  session StudySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, idx])
+  @@index([sessionId, createdAt])
 }
 
 // ===================== 收藏(消息快照) =====================
