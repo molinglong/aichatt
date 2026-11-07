@@ -114,10 +114,23 @@ export const KNOWLEDGE_SUBJECT_LABELS: Record<string, string> = {
 export interface KnowledgeHit {
   doc: string
   kind: string
+  /** 册别,如「必修4」「必修 第一册」「七年级 上册」;资料类为 null */
+  grade: string | null
   chapter: string | null
   section: string | null
   heading: string
   content: string
+  /** 命中切块的文档 id(按页导入的书才有页码,配合 page 跳转阅读器原文页) */
+  docId?: string
+  /** PDF 页码(1-based);HTML/文本导入的资料为 null/缺省 */
+  page?: number | null
+}
+
+/** 册别展示口径:grade 为空或书名里已含册别字样时返回 null,避免「必修4 必修4」式重复 */
+export function knowledgeVolumeLabel(r: Pick<KnowledgeHit, 'doc' | 'grade'>): string | null {
+  if (!r.grade) return null
+  const strip = (s: string) => s.replace(/\s+/g, '')
+  return strip(r.doc).includes(strip(r.grade)) ? null : r.grade
 }
 
 export interface KnowledgeToolOutput {

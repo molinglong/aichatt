@@ -160,8 +160,9 @@ model Conversation {
   /// 正常模式列表不可见,设置→用户中心 的临时聊天专区可找回/转正/删除。
   /// 隔离由服务端按 session 模式强制执行
   isEphemeral   Boolean  @default(false)
-  /// 学习模式会话标记:/study 学习室创建的会话为 true。
-  /// 历史列表据此跳回 /study?c=id 恢复学习室,而不是 /chat/c/[id] 降级成普通聊天。
+  /// 学习模式会话标记:学习室创建的会话为 true。
+  /// 2026-11-02 起 /study 独立页下线,会话页据此在 /chat/c/[id] 原地渲染学习室,
+  /// 而不是降级成普通聊天消息流。
   studyMode     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -647,6 +648,8 @@ model KnowledgeDoc {
   publisher      String?  // 出版社,如「人民教育出版社」
   grade          String?  // 年级/册别,如「七年级 上册」
   sourceUploadId String?  // 原始文件追溯(UploadFile.id);直接导入文本/HTML 时为空
+  bookKey        String?  // 页图目录名(nanoid(12),public/kb-pages/{bookKey}/pNNN.webp);按页导入的课本才有,阅读器/封面用
+  pageCount      Int?     // 页数(按页导入的课本);HTML/文本导入为 null
   charCount      Int      @default(0) // 全文总字符数(切块内容合计)
   chunkCount     Int      @default(0) // 切块数量
   createdAt      DateTime @default(now())
@@ -670,6 +673,7 @@ model KnowledgeChunk {
   heading    String   // 块标题(引用展示用),如「1.1 正数和负数」
   content    String   // 切块正文(含栏目内容,LaTeX 原样)
   sortOrder  Int      // 书内顺序,引用展示按此排序
+  page       Int?     // PDF 页码(1-based);按页导入的课本填写,检索命中后可跳转阅读器;HTML/文本导入为 null
   charCount  Int      @default(0)
   createdAt  DateTime @default(now())
 

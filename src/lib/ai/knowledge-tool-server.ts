@@ -32,8 +32,11 @@ type RawChunkRow = {
   chapter: string | null
   section: string | null
   sortOrder: number
+  docId: string
   docTitle: string
   kind: string
+  grade: string | null
+  page: number | null
 }
 
 /**
@@ -234,8 +237,8 @@ export async function searchKnowledgeChunks(
     ' + '
   )
   const rows = await prisma.$queryRaw<RawChunkRow[]>(Prisma.sql`
-    SELECT c.content, c.heading, c.chapter, c.section, c."sortOrder",
-           d.title AS "docTitle", d.kind
+    SELECT c.content, c.heading, c.chapter, c.section, c."sortOrder", c.page,
+           d.id AS "docId", d.title AS "docTitle", d.kind, d.grade
     FROM "KnowledgeChunk" c
     JOIN "KnowledgeDoc" d ON d.id = c."docId"
     WHERE c."userId" = ${userId}
@@ -268,10 +271,13 @@ export async function searchKnowledgeChunks(
   return scored.slice(0, RESULT_LIMIT).map(({ r }) => ({
     doc: r.docTitle,
     kind: r.kind,
+    grade: r.grade,
     chapter: r.chapter,
     section: r.section,
     heading: r.heading,
     content: r.content.slice(0, HIT_CONTENT_LIMIT),
+    docId: r.docId,
+    page: r.page,
   }))
 }
 

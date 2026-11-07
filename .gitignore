@@ -56,6 +56,9 @@ prisma/*.db-journal
 # 地理图册页图(源 PDF 在本地教材目录,由 scripts/pdf2geo-atlas-pages.py 重建)
 /public/geo-atlas/
 
+# 课本页图(源 PDF 在本地教材目录,由 scripts/import-kb-pdf-pages.cjs 重建;部署走单独上传)
+/public/kb-pages/
+
 # Dev files
 *.db
 *.db-*

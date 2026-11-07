@@ -75,10 +75,10 @@ Copy-Item -Recurse "$ProjectRoot\$LocalDist\standalone\*" $stage
 # 注意: 目标目录名必须与 distDir 同名(server.js 按构建时的 distDir 找静态资源)
 Copy-Item -Recurse "$ProjectRoot\$LocalDist\static" "$stage\$LocalDist\static" -Force
 Copy-Item -Recurse "$ProjectRoot\public" "$stage\public" -Force
-# 瘦身: 字体二进制(103MB)/uploads(16MB)不进包, VPS 从旧产物回填(见 [6/6]);
+# 瘦身: 字体二进制(103MB)/uploads(16MB)/kb-pages(207MB 课本页图)不进包, VPS 从旧产物回填(见 [6/6]);
 # 字体 CSS 是行为代码, 必须随包更新, 否则 font-display 修复会被旧产物覆盖。
 # uploads 在容器里被 named volume 挂载遮蔽, 宿主机这份本来就不生效, 纯属白传
-foreach ($skip in @("fonts-subset", "fonts", "uploads")) {
+foreach ($skip in @("fonts-subset", "fonts", "uploads", "kb-pages")) {
     Remove-Item -Recurse -Force "$stage\public\$skip" -ErrorAction SilentlyContinue
 }
 foreach ($weight in @("100", "300", "400", "500", "600")) {
@@ -142,9 +142,9 @@ mv `$NEW $DistDir
 # uploads 目录被瘦身剔除,但容器 named volume 需要 /app/public/uploads 作挂载点
 # (:ro 只读 rootfs 无法自动建目录,缺失会让容器起不来—— 2026-09-20 踩坑)
 mkdir -p $DistDir/public/uploads
-# 字体二进制不在 tar 包里: 合并旧资源, -n 保留包内的新 CSS, 不用旧 swap 策略覆盖。
+# 字体二进制/课本页图不在 tar 包里: 合并旧资源, -n 保留包内的新 CSS, 不用旧 swap 策略覆盖。
 # 复制而非搬走: OLD 保持完整, 验证失败回滚时字体仍在。
-for d in fonts fonts-subset; do
+for d in fonts fonts-subset kb-pages; do
   if [ -d `$OLD/public/`$d ]; then
     mkdir -p $DistDir/public/`$d
     cp -an `$OLD/public/`$d/. $DistDir/public/`$d/
