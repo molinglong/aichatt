@@ -147,7 +147,7 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
   const subjectLabel = current.subject ? SUBJECT_LABELS[current.subject as keyof typeof SUBJECT_LABELS] ?? '其他' : '未标注'
 
   return (
-    <div className="h-full flex flex-col max-w-2xl w-full mx-auto">
+    <div className="min-h-full flex flex-col max-w-2xl w-full mx-auto">
       {/* 头部:进度 + 刷新 + 删除 */}
       <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-line/60">
         <span className="text-xs text-content-muted">
@@ -285,8 +285,8 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
         </div>
       </div>
 
-      {/* 底部 2 键自评 */}
-      <div className="shrink-0 grid grid-cols-2 gap-2 p-3 border-t border-line/60">
+      {/* 底部 2 键自评:sticky 常驻抽屉底部,浏览题干时也能直接自评 */}
+      <div className="shrink-0 sticky bottom-0 z-10 grid grid-cols-2 gap-2 p-3 border-t border-line/60 bg-surface">
         <button
           onClick={() => void handleRate('again')}
           disabled={submitting}
