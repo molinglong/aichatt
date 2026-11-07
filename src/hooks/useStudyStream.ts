@@ -56,13 +56,15 @@ export function useStudySession(sessionId: string | null) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [streamError, setStreamError] = useState<string | null>(null)
+  const [archivedNoteId, setArchivedNoteId] = useState<string | null>(null)
   const busyRef = useRef(false)
 
-  const apply = useCallback((d: { session: StudySessionView; steps: StudyStepView[] }) => {
+  const apply = useCallback((d: { session: StudySessionView; steps: StudyStepView[]; archivedNoteId?: string | null }) => {
     // 本地流式进行中禁止覆盖:迟到的 GET/轮询会把流式占位卡打回服务器快照(内容竞态)
     if (busyRef.current) return
     setSession(d.session)
     setSteps(d.steps)
+    if (d.archivedNoteId !== undefined) setArchivedNoteId(d.archivedNoteId)
   }, [])
 
   const load = useCallback(
@@ -222,6 +224,8 @@ export function useStudySession(sessionId: string | null) {
     loadError,
     busy,
     streamError,
+    archivedNoteId,
+    setArchivedNoteId,
     reload: load,
     post,
     postTo,

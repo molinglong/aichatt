@@ -27,6 +27,10 @@ interface Props {
   steps: StudyStepView[]
   busy: boolean
   streamError: string | null
+  /** 归档的错题卡 id(null = 已移出错题本) */
+  archivedNoteId: string | null
+  /** 移出/恢复归档(操作完成后由页面刷新状态) */
+  onArchiveChange: (remove: boolean) => void
   onAction: (action: StudyAction, opts?: StudyPostOpts) => void
   onManualComplete: () => void
   onBack: () => void
@@ -180,7 +184,7 @@ function StepCard({ step, isLast, canAct, busy, onAction }: {
   )
 }
 
-export function StudyWorkspace({ session, steps, busy, streamError, onAction, onManualComplete, onBack }: Props) {
+export function StudyWorkspace({ session, steps, busy, streamError, archivedNoteId, onArchiveChange, onAction, onManualComplete, onBack }: Props) {
   const [qCollapsed, setQCollapsed] = useState(false)
   const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -287,9 +291,32 @@ export function StudyWorkspace({ session, steps, busy, streamError, onAction, on
                   </div>
                 </div>
               )}
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-[rgba(52,199,89,.13)] px-4 py-1.5 text-[12.5px] text-[#1d7a3a]">
-                ✓ 已自动存入错题本 · 复习排期已生成
-              </div>
+              {archivedNoteId ? (
+                <div className="mb-4 inline-flex items-center gap-2.5 rounded-full bg-[rgba(52,199,89,.13)] px-4 py-1.5 text-[12.5px] text-[#1d7a3a]">
+                  <span>✓ 已自动存入错题本 · 复习排期已生成</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onArchiveChange(true)}
+                    title="从错题本移出这张卡(可恢复)"
+                    className="rounded-full border border-[rgba(29,122,58,.3)] px-2.5 py-0.5 text-[11px] transition-colors hover:bg-white/60 disabled:opacity-50"
+                  >
+                    移出
+                  </button>
+                </div>
+              ) : (
+                <div className="mb-4 inline-flex items-center gap-2.5 rounded-full bg-surface-muted px-4 py-1.5 text-[12.5px] text-content-muted">
+                  <span>已移出错题本</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onArchiveChange(false)}
+                    className="rounded-full border border-line px-2.5 py-0.5 text-[11px] transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
+                  >
+                    恢复
+                  </button>
+                </div>
+              )}
               <div className="mt-1 flex justify-center gap-2.5">
                 <button type="button" onClick={onBack} className="rounded-full bg-content-primary px-6 py-2.5 text-sm font-semibold text-surface">
                   再学一道

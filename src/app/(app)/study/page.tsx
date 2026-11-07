@@ -252,7 +252,7 @@ function StudyContent() {
   const meta = listQuery.data?.meta
 
   const activeSessionId = view.kind === 'session' ? view.id : null
-  const { session, steps, loading, loadError, busy, streamError, reload, postTo, complete } = useStudySession(activeSessionId)
+  const { session, steps, loading, loadError, busy, streamError, archivedNoteId, setArchivedNoteId, reload, postTo, complete } = useStudySession(activeSessionId)
 
   // 模型清单(学习台/setup/重学共用):已配 Key 的模型优先
   const { data: allModels } = useQuery({ ...providersModelsQuery })
@@ -423,6 +423,20 @@ function StudyContent() {
                 steps={steps}
                 busy={busy}
                 streamError={streamError}
+                archivedNoteId={archivedNoteId}
+                onArchiveChange={(remove) => {
+                  if (!activeSessionId) return
+                  void (async () => {
+                    const res = await fetch(`/api/study/${activeSessionId}/archive`, {
+                      method: remove ? 'DELETE' : 'POST',
+                    }).catch(() => null)
+                    if (res && res.ok) {
+                      const d = (await res.json().catch(() => ({}))) as { noteId?: string }
+                      setArchivedNoteId(remove ? null : d?.noteId ?? 'restored')
+                      refreshAll()
+                    }
+                  })()
+                }}
                 onAction={(action, opts) => {
                   if (activeSessionId) void postTo(activeSessionId, action, opts)
                 }}

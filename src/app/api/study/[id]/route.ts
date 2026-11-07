@@ -38,7 +38,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     orderBy: { idx: "asc" },
   })
 
-  return Response.json({ session, steps })
+  // 错题卡归档状态(结课卡的「移出/恢复」按钮依据)
+  const note = await prisma.studyNote.findFirst({
+    where: { userId: session.userId, sourceMessageId: `study:${session.id}` },
+    select: { id: true },
+  })
+
+  return Response.json({ session, steps, archivedNoteId: note?.id ?? null })
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
