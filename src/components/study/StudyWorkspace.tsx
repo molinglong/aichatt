@@ -165,14 +165,32 @@ function StepCard({ step, isLast, canAct, busy, onAction }: {
 export function StudyWorkspace({ session, steps, busy, streamError, onAction, onManualComplete, onBack }: Props) {
   const [qCollapsed, setQCollapsed] = useState(false)
   const [draft, setDraft] = useState('')
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // 跟随模式:贴着底部时新内容自动滚入;用户上滑即脱离,滑回底部恢复
+  const [following, setFollowing] = useState(true)
   const completed = session.status === 'completed'
   const lastStep = steps[steps.length - 1]
 
-  // 新步出现/内容推进时贴底
+  const handleScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+    setFollowing(dist < 48)
+  }
+
+  // 新步出现/内容推进时贴底(仅跟随模式;instant 滚动,smooth 会和流式打架)
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [steps.length, lastStep?.content.length])
+    if (!following) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [steps.length, lastStep?.content.length, following])
+
+  const jumpToBottom = () => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    setFollowing(true)
+  }
 
   // 考试块交卷桥:变式题/练习的「交卷并让我批改」把作答当追问发给模型判分
   const onActionRef = useRef(onAction)
@@ -217,7 +235,7 @@ export function StudyWorkspace({ session, steps, busy, streamError, onAction, on
       </div>
 
       {/* 卡流 */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div ref={scrollRef} onScroll={handleScroll} className="relative flex-1 min-h-0 overflow-y-auto">
         <div className="mx-auto flex max-w-[760px] flex-col gap-3.5 px-5 py-5">
           {steps.map((step, i) => (
             <StepCard
@@ -283,7 +301,15 @@ export function StudyWorkspace({ session, steps, busy, streamError, onAction, on
             </div>
           )}
 
-          <div ref={bottomRef} />
+          {busy && !following && (
+            <button
+              type="button"
+              onClick={jumpToBottom}
+              className="sticky bottom-3 ml-auto flex items-center gap-1.5 rounded-full border border-line bg-surface px-3.5 py-1.5 text-xs text-content-secondary shadow-md transition-colors hover:text-content-primary"
+            >
+              ↓ 生成中,回到底部
+            </button>
+          )}
         </div>
       </div>
 
