@@ -60,7 +60,7 @@ const nextConfig = {
         ],
       },
       {
-        // 苹方子集分片:woff2 文件名带内容 hash,可长缓存;
+        // MiSans 子集分片:woff2 文件名带内容 hash,可长缓存;
         // result.css 文件名固定,走默认协商缓存不在此列
         source: '/fonts-subset/:path*.woff2',
         headers: [
