@@ -53,6 +53,34 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
 
   const current = index < queue.length ? queue[index] : null
 
+  // 题干/选项/我的答案 结构化解析(变式题与题库题都有此结构;自由文本回落普通渲染)
+  // ⚠ 必须在提前 return 之前调用(钩子顺序稳定),空队列时返回 null
+  const parsed = useMemo(() => {
+    if (!current) return null
+    const lines = current.content.split('\n').map((l) => l.trim()).filter(Boolean)
+    const optRe = /^([A-H])[.、．]\s*(.*)$/
+    const ansRe = /^我的答案[:：]\s*([A-H]?)/
+    const options: Array<{ letter: string; text: string }> = []
+    const marked = new Set<number>()
+    let myAnswer: string | null = null
+    lines.forEach((l, i) => {
+      const om = l.match(optRe)
+      if (om) {
+        options.push({ letter: om[1], text: om[2] })
+        marked.add(i)
+        return
+      }
+      const am = l.match(ansRe)
+      if (am) {
+        myAnswer = am[1] || null
+        marked.add(i)
+      }
+    })
+    if (options.length < 2) return null
+    const stem = lines.filter((_, i) => !marked.has(i)).join('\n')
+    return { stem, options, myAnswer }
+  }, [current?.content])
+
   const handleRate = useCallback(
     async (rating: 'again' | 'good') => {
       if (!current || submitting) return
@@ -117,32 +145,6 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
   }
 
   const subjectLabel = current.subject ? SUBJECT_LABELS[current.subject as keyof typeof SUBJECT_LABELS] ?? '其他' : '未标注'
-
-  // 题干/选项/我的答案 结构化解析(变式题与题库题都有此结构;自由文本回落普通渲染)
-  const parsed = useMemo(() => {
-    const lines = current.content.split('\n').map((l) => l.trim()).filter(Boolean)
-    const optRe = /^([A-H])[.、．]\s*(.*)$/
-    const ansRe = /^我的答案[:：]\s*([A-H]?)/
-    const options: Array<{ letter: string; text: string }> = []
-    const marked = new Set<number>()
-    let myAnswer: string | null = null
-    lines.forEach((l, i) => {
-      const om = l.match(optRe)
-      if (om) {
-        options.push({ letter: om[1], text: om[2] })
-        marked.add(i)
-        return
-      }
-      const am = l.match(ansRe)
-      if (am) {
-        myAnswer = am[1] || null
-        marked.add(i)
-      }
-    })
-    if (options.length < 2) return null
-    const stem = lines.filter((_, i) => !marked.has(i)).join('\n')
-    return { stem, options, myAnswer }
-  }, [current.content])
 
   return (
     <div className="h-full flex flex-col max-w-2xl w-full mx-auto">
