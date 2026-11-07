@@ -290,15 +290,15 @@ export function StudyWorkspace({ session, steps, busy, streamError, onAction, on
               <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-[rgba(52,199,89,.13)] px-4 py-1.5 text-[12.5px] text-[#1d7a3a]">
                 ✓ 已自动存入错题本 · 复习排期已生成
               </div>
-              <div>
-                <button type="button" onClick={onBack} className="primary rounded-full px-6 py-2.5 text-sm font-semibold text-surface">
+              <div className="mt-1 flex justify-center gap-2.5">
+                <button type="button" onClick={onBack} className="rounded-full bg-content-primary px-6 py-2.5 text-sm font-semibold text-surface">
                   再学一道
                 </button>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => onAction('quiz')}
-                  className="ml-2.5 rounded-full border border-line bg-surface px-6 py-2.5 text-sm font-semibold text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
+                  className="rounded-full border border-line bg-surface px-6 py-2.5 text-sm font-semibold text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary disabled:opacity-50"
                 >
                   🎯 来一道变式题
                 </button>
