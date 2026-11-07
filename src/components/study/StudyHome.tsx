@@ -104,11 +104,7 @@ export function StudyHome({ sessions, dueCount, noteCount, favoriteCount, kbCoun
         </div>
 
         {continueTarget && (
-          <button
-            type="button"
-            onClick={() => onNew()}
-            className="mb-5 w-full rounded-[14px] border-[1.5px] border-dashed border-line-strong py-3 text-[13.5px] text-content-secondary transition-colors hover:text-content-primary"
-          >
+          <button type="button" onClick={() => onNew()} className="study-newq-btn mb-5 w-full">
             ＋ 学新题
           </button>
         )}
