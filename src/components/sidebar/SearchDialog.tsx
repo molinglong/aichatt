@@ -15,7 +15,7 @@ interface ConversationData {
   id: string
   title: string
   mode?: string
-  /** 学习模式会话:搜索结果据此跳 /study?c=id */
+  /** 学习模式会话:点进 /chat/c/id 后由会话页渲染学习室 */
   studyMode?: boolean
   maskId?: string | null
   updatedAt: string
@@ -362,11 +362,8 @@ export function SearchDialog({ open, onClose, onSelect }: SearchDialogProps) {
 
   function handleSelect(conv: ConversationData) {
     onClose()
-    if (conv.studyMode) {
-      // 学习模式会话必须回学习室:外部 onSelect 只认会话 id(Sidebar 直接 push 普通聊天地址)
-      router.push(`/study?c=${conv.id}`)
-      return
-    }
+    // 学习模式会话不再特殊改道(2026-11-02 /study 下线):统一进 /chat/c/id,
+    // 由会话页按 conversation.studyMode 渲染学习室
     if (onSelect) {
       onSelect(conv.id)
       return

@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef, Suspense, useMemo } from 'react'
-import { CalendarClock, NotebookPen, Star, X } from 'lucide-react'
-import { useSearchParams, usePathname } from 'next/navigation'
+import { BookOpen, CalendarClock, NotebookPen, Star, X } from 'lucide-react'
+import { useSearchParams, usePathname, useRouter } from 'next/navigation'
 import type { UIMessage } from 'ai'
 import { ChatPanel } from '@/components/chat/ChatPanel'
 import { NoteList } from '@/components/study/NoteList'
@@ -191,6 +191,15 @@ function StudyContent() {
   })
   const favoriteCount = favoritesCount?.count ?? 0
 
+  // 可翻原文的课本数(书架入口文案);只取 id 逻辑上等价于整个轻量列表,直接复用书架 API
+  const router = useRouter()
+  const { data: kbDocs } = useQuery({
+    queryKey: queryKeys.kb.docs(),
+    queryFn: ({ signal }) => fetchJson<Array<{ id: string }>>('/api/kb/docs', { signal }),
+    staleTime: 60_000,
+  })
+  const kbCount = kbDocs?.length ?? 0
+
   if (status === 'loading') return null
 
   // 续课请求没回来前先挡一帧骨架:直接渲染学习室会闪一次「从一道题开始」再跳回讲解
@@ -238,6 +247,13 @@ function StudyContent() {
               description: favoriteCount > 0 ? `已收藏 ${favoriteCount} 条` : '星标消息会收进这里',
               icon: <Star size={18} />,
               onClick: () => { setDrawerTab('favorites'); setDrawerOpen(true) },
+            },
+            {
+              id: 'books',
+              label: '课本',
+              description: kbCount > 0 ? `${kbCount} 本教材 · 翻原文页面` : '导入教材后可翻原文',
+              icon: <BookOpen size={18} />,
+              onClick: () => router.push('/kb'),
             },
           ]}
           allModels={allModels}

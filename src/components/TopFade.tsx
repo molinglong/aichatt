@@ -23,12 +23,6 @@ export function TopFade() {
   const [scrolled, setScrolled] = useState(false)
   const pathname = usePathname()
 
-  // 学习室不渲染(TopBar 同款判据):/study 没有浮簇顶栏(学习室有自己的实底 header),
-  // 渐隐层失去服务对象;且学习室滚动容器是 CSS Module 类名,进不了下方白名单 ——
-  // 雾一旦被页内抽屉/模型下拉(带 overflow-y-auto 类)点亮,学习室滚动永远点不灭,
-  // 96px 白雾会蒙死在 header 上。与 TopBar 的 !isStudyPage 保持同进退。
-  const hasFloatChrome = !pathname?.startsWith('/study')
-
   // 滚动监听:scroll 事件不冒泡,但在捕获阶段能在祖先拿到后代的滚动 —— 挂内容列一处即可,
   // 不必逐 tab / 逐会话接线。用 matches 过滤(不读 scrollTop 之外的布局属性),避免代码块
   // 之类横向滚动容器把状态带偏。
@@ -60,8 +54,6 @@ export function TopFade() {
       window.clearTimeout(timer)
     }
   }, [pathname])
-
-  if (!hasFloatChrome) return null
 
   return (
     <div

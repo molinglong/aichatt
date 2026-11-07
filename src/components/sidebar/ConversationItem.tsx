@@ -17,8 +17,6 @@ interface ConversationItemProps {
   id: string
   title: string
   mode?: string
-  /** 学习模式会话:行链接改走 /study?c=id,避免把学习室降级成普通聊天 */
-  studyMode?: boolean
   /** 会话面具徽标（头像 emoji）；无面具 / 面具已删时不传，不显示 */
   maskAvatar?: string | null
   /** 面具名，用于 hover 提示 */
@@ -40,7 +38,7 @@ interface ConversationItemProps {
 const STAGGER_STEP_MS = 20
 const STAGGER_MAX_INDEX = 15
 
-function ConversationItemInner({ id, title, mode, studyMode, maskAvatar, maskName, index = 0, lastMessageAt, selectable, selected, onToggleSelect, onDelete, onRename }: ConversationItemProps) {
+function ConversationItemInner({ id, title, mode, maskAvatar, maskName, index = 0, lastMessageAt, selectable, selected, onToggleSelect, onDelete, onRename }: ConversationItemProps) {
   const staggerDelay = Math.min(index, STAGGER_MAX_INDEX) * STAGGER_STEP_MS
   const pathname = usePathname()
   const router = useRouter()
@@ -476,7 +474,7 @@ function ConversationItemInner({ id, title, mode, studyMode, maskAvatar, maskNam
   // Normal mode: link with title + action buttons
   return (
     <Link
-      href={studyMode ? `/study?c=${id}` : `/chat/c/${id}`}
+      href={`/chat/c/${id}`}
       style={{ animationDelay: `${staggerDelay}ms` }}
       onContextMenu={handleContextMenu}
       className={cn(
@@ -547,7 +545,6 @@ function areConversationItemPropsEqual(
   if (prev.id !== next.id) return false
   if (prev.title !== next.title) return false
   if (prev.mode !== next.mode) return false
-  if (prev.studyMode !== next.studyMode) return false
   if (prev.maskAvatar !== next.maskAvatar) return false
   if (prev.maskName !== next.maskName) return false
   if (prev.index !== next.index) return false

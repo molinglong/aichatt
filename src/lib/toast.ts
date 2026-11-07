@@ -9,6 +9,7 @@
  */
 
 import type iziToastType from 'izitoast'
+import type { IziToastTransitionIn, IziToastTransitionOut } from 'izitoast'
 
 type Izitoast = typeof iziToastType
 
@@ -115,6 +116,14 @@ interface ToastOptions {
    * 设置后默认会关闭整 toast 的 closeOnClick,避免用户点了按钮又被自动关掉。
    */
   onClick?: (hide: () => void) => void | boolean
+  /**
+   * 快显条动作(如"撤销"): 按钮定位在 toast 右缘,点击后先收条再执行。
+   * 配合 toast.snackbar(底部单行版式)使用;带动作时收起原生 ×,退场只留倒计时与点主体。
+   */
+  action?: { label: string; onClick: () => void }
+  /** 覆盖全局进出场动画(快显条用 fadeInUp/fadeOutDown 自底升落;真机 mobile 默认已是这组) */
+  transitionIn?: IziToastTransitionIn
+  transitionOut?: IziToastTransitionOut
 }
 
 /**
@@ -244,6 +253,60 @@ function applyToastChrome(
   }
 }
 
+/**
+ * 快显条动作按钮: 单行 snackbar 版式(消息居左/动作居右)。
+ * 带动作时收起原生 ×: 一行高度里 × 与动作按钮会挤在同侧,且自动倒计时 +
+ * 点主体关闭已足够退场路径(Material snackbar 同样只留动作)。
+ */
+function applyToastAction(
+  iziInstance: unknown,
+  toastEl: HTMLElement,
+  action: NonNullable<ToastOptions['action']>,
+  pal: ToastPalette,
+): void {
+  const closeEl = toastEl.querySelector('.iziToast-close')
+  if (closeEl instanceof HTMLElement) closeEl.style.display = 'none'
+
+  // 清掉 iziToast 写入的 inline max-width:380,手机端 CSS 的通栏长条宽度才能生效
+  toastEl.style.maxWidth = 'none'
+
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.textContent = action.label
+  btn.style.cssText = [
+    'position:absolute',
+    'right:6px',
+    'top:50%',
+    'transform:translateY(-50%)',
+    'padding:6px 10px',
+    'border:0',
+    'border-radius:8px',
+    'background:transparent',
+    `color:${pal.titleColor}`,
+    'font-size:13px',
+    'font-weight:600',
+    'font-family:inherit',
+    'line-height:1.5',
+    'white-space:nowrap',
+    'cursor:pointer',
+  ].join(';')
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    // 先收条再执行: 撤销触发的下一条回执升起时,旧条已在退场,不叠两层
+    try {
+      ;(iziInstance as Izitoast).hide({ transitionOut: 'fadeOutDown' }, toastEl as HTMLDivElement, 'button')
+    } catch {
+      toastEl.remove()
+    }
+    action.onClick()
+  })
+  toastEl.appendChild(btn)
+  // 文字区让出按钮宽度: 右缘内边距一并收小,消息再长也不会被绝对定位的按钮压住
+  toastEl.style.paddingRight = '6px'
+  const texts = toastEl.querySelector('.iziToast-texts')
+  if (texts instanceof HTMLElement) texts.style.paddingRight = `${btn.offsetWidth + 8}px`
+}
+
 function buildKindOptions(kind: ToastKind, opts: ToastOptions) {
   const cfg = KIND_CONFIG[kind]
   // 错误类默认更长(8s),其他 5s。
@@ -254,10 +317,13 @@ function buildKindOptions(kind: ToastKind, opts: ToastOptions) {
     title: opts.title ?? defaultTitle(kind),
     message: opts.message,
     backgroundColor: pal.background,
-    class: `iziToast--aichatt`,
+    // 快显条(带动作)另打专属标记: 手机端 CSS 据此把短胶囊拉成左右留边的通栏长条
+    class: `iziToast--aichatt${opts.action ? ' iziToast--snackbar' : ''}`,
     // 仅在显式传入时才附加 position,否则会覆盖 settings() 默认值,
     // 且 iziToast 不接受 undefined(它会 console.warn 并丢弃整个 toast)
     ...(opts.position ? { position: opts.position } : {}),
+    ...(opts.transitionIn ? { transitionIn: opts.transitionIn } : {}),
+    ...(opts.transitionOut ? { transitionOut: opts.transitionOut } : {}),
     timeout: opts.timeout ?? defaultTimeout,
     titleSize: '13px',
     titleColor: pal.titleColor,
@@ -267,8 +333,9 @@ function buildKindOptions(kind: ToastKind, opts: ToastOptions) {
     progressBarOpacity: 1,
     iconText: '',
     // per-toast onOpening 覆盖全局 settings 的同名回调,携带 kind 图标与点缀色
-    onOpening: (_instance: unknown, toastEl: HTMLElement) => {
+    onOpening: (iziInstance: unknown, toastEl: HTMLElement) => {
       applyToastChrome(toastEl, KIND_ICON[kind], cfg.accent, pal)
+      if (opts.action) applyToastAction(iziInstance, toastEl, opts.action, pal)
     },
   }
 }
@@ -406,6 +473,40 @@ function fallbackToast(kind: ToastKind, opts: ToastOptions): void {
       stop()
       dismiss()
     })
+    // 兜底通道也要把动作按钮带上: 提示可以降级,后悔动作不能丢
+    if (opts.action) {
+      // 底部快显条同步长条化: 与 iziToast 主通道的 snackbar 观感一致
+      if (side === 'bottom') {
+        item.style.width = 'calc(100% - 24px)'
+        item.style.maxWidth = 'none'
+      }
+      const act = opts.action
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.textContent = act.label
+      btn.style.cssText = [
+        'flex:0 0 auto',
+        'align-self:center',
+        'margin-left:auto',
+        'padding:6px 10px',
+        'border:0',
+        'border-radius:8px',
+        'background:transparent',
+        `color:${pal.titleColor}`,
+        'font-size:13px',
+        'font-weight:600',
+        'font-family:inherit',
+        'line-height:1.5',
+        'white-space:nowrap',
+        'cursor:pointer',
+      ].join(';')
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        dismiss()
+        act.onClick()
+      })
+      item.appendChild(btn)
+    }
 
     stack.appendChild(item)
     // 下一帧再置位,确保 transition 真正跑起来
@@ -443,6 +544,11 @@ type ToastApi = {
    * 只用于"已复制/已重新生成/已删除"这类即时回执 —— 需要用户决策的一律走确认框, 不要用它。
    */
   hint: (message: string) => Promise<void>
+  /**
+   * 通道② 快显条(snackbar): 底部单行消息+动作按钮(如"撤销"), 5s 自动收。
+   * 用于开关类"已开启/已关闭"回执 —— 给用户一个后悔窗口;纯回执走 hint,需决策走确认框。
+   */
+  snackbar: (message: string, action: { label: string; onClick: () => void }) => Promise<void>
   /** 长驻 toast,需要用户主动关闭 */
   sticky: (kind: ToastKind, opts: ToastOptions) => Promise<void>
   /** 销毁所有 toast(测试 / 路由切换时使用) */
@@ -455,6 +561,16 @@ export const toast: ToastApi = {
   warning: (message, opts) => show('warning', { message, ...opts }),
   info: (message, opts) => show('info', { message, ...opts }),
   hint: (message) => show('info', { message, title: '', position: 'bottomCenter', timeout: 2000 }),
+  snackbar: (message, action) =>
+    show('success', {
+      message,
+      title: '',
+      position: 'bottomCenter',
+      timeout: 5000,
+      transitionIn: 'fadeInUp',
+      transitionOut: 'fadeOutDown',
+      action,
+    }),
   sticky: (kind, opts) => show(kind, { ...opts, timeout: 0 }),
   destroy: async () => {
     try {

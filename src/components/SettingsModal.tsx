@@ -2381,7 +2381,16 @@ export function SettingsModal({
         body: JSON.stringify({ enabled }),
       })
       if (!res.ok) throw new Error()
-      toast.success(enabled ? '跨对话记忆已开启' : '跨对话记忆已关闭')
+      // 手机端:底部撤销快显条(开关回执带"撤销"后悔动作);桌面保持右上角 toast
+      const msg = enabled ? '跨对话记忆已开启' : '跨对话记忆已关闭'
+      if (!isDesktop) {
+        toast.snackbar(msg, {
+          label: '撤销',
+          onClick: () => { void handleToggleMemory(!enabled) },
+        })
+      } else {
+        toast.success(msg)
+      }
     } catch {
       setMemoryEnabled(!enabled)
       toast.error('切换失败，请重试')

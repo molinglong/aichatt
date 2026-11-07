@@ -15,7 +15,7 @@ import type { WriteDocSummary } from '@/components/write/types'
 
 /**
  * 写作画布(/write) —— 豆包式「帮我写作」独立工作区。
- * 布局与 /study 同构:桌面左列表右编辑器,移动端列表收进抽屉。
+ * 布局:桌面左列表右编辑器,移动端列表收进抽屉。
  * 列表数据在页面持有(空态/自动选中要用),WriteDocList 只做渲染与增删。
  */
 export default function WritePage() {

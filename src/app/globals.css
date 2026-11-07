@@ -6,14 +6,14 @@
 @import "katex/dist/katex.min.css";
 @import "izitoast/dist/css/iziToast.min.css";
 
-/* ── 苹方子集分片说明 ─────────────────────────────
-   分片产物由 scripts/build-fonts.mjs 生成, 静态放在 public/fonts-subset/,
-   由 layout.tsx 的 <link> 直接引入(勿走 CSS @import:
-   1520 个 @font-face 进 webpack 管线会把 dev server 拖到 OOM 死锁)。
-   family 名 'PingFang SC Sub' 排在 'PingFang SC' 之后:
-   macOS/iOS 命中系统原生苹方(零下载), Windows/Android 按需拉分片。
-   分片必须用 font-display: optional(生成脚本同源):已上屏的 fallback 不再被迟到字体
-   替换,避免正文逐行字数/基线跳动。慢网本页沿用 fallback,缓存命中仍用苹方。 */
+/* ── MiSans 子集分片说明 ─────────────────────────────
+   分片产物由 scripts/sync-misans.mjs 从 npm misans 同步(小米官方切片范围,
+   免费商用), 静态放在 public/fonts-subset/, 由 layout.tsx 的 <link> 直接引入
+   (勿走 CSS @import: 280 个 @font-face 进 webpack 管线有 OOM 风险)。
+   family 名 'MiSans' 与设备本地安装的 MiSans 同名: @font-face 优先于本地字体,
+   未装 MiSans 的设备按 unicode-range 按需拉分片, 观感全平台统一。
+   分片必须用 font-display: optional(同步脚本已改写):已上屏的 fallback 不再被迟到字体
+   替换,避免正文逐行字数/基线跳动。慢网本页沿用 fallback,缓存命中仍用 MiSans。 */
 
 @tailwind base;
 @tailwind components;
@@ -24,9 +24,9 @@
 :root {
   /* 字体栈: 'Noto Sans Digits' 只接管 0-9(等宽数字子集, unicode-range U+30-39,
      见 fonts-subset/digits/digits.css 头注释) —— 治流式输出时数字宽度抖动;
-     'PingFang SC' 让 macOS/iOS 直接命中系统苹方(全字重零下载);
-     其他平台落到 'PingFang SC Sub' 子集分片(见文件头 @import) */
-  --font-sans: 'Noto Sans Digits', 'PingFang SC', 'PingFang SC Sub', 'Microsoft YaHei UI', -apple-system,
+     'MiSans' 全平台统一: 未装的设备落到同名 @font-face 子集分片
+     (官方切片 unicode-range 按需下载), 免费商用授权干净 */
+  --font-sans: 'Noto Sans Digits', 'MiSans', 'Microsoft YaHei UI', -apple-system,
     BlinkMacSystemFont, sans-serif;
 
   /* 基础 */
@@ -753,6 +753,33 @@ body {
   animation: context-menu-in 0.1s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
+/* 欢迎页签名「书写」入场: 一层从左往右扫过的柔边 mask 揭过透明墨迹,
+   墨还是那张 PNG, 深浅两版共用同一蒙版, 零额外素材、零几何属性动画。
+   几何: mask-size 220% → 蒙版黑区(0~50%)=110% 元素宽, 收尾位 0% 时整条
+   笔画被完整露出; 起始位 100% 时黑区整体偏到元素左侧之外 → 全隐。
+   柔带 50%~60% = 22% 元素宽, 就是"笔尖"那一段渐显。
+   时长 900ms 与曲线 linear 都超出全站标准(最长 slow 420ms + 两条曲线):
+   这不是一次状态切换而是一次写完一句话的叙事。曲线实测不能用 --ease-enter ——
+   它是入场沉降型, 前 30% 时间已走完约 95% 进度, 900ms 里 450ms 就"写完了"
+   后半段空转; 笔尖匀速前进才像写字, 故取 linear。与 WheelMenu 曲线同一口径
+   按例外处理 —— 暂不晋升为 --motion-* token, 定稿后再决定收不收。 */
+@keyframes brand-write {
+  from { mask-position: 100% 0; }
+  to { mask-position: 0% 0; }
+}
+
+.brand-write {
+  -webkit-mask-image: linear-gradient(90deg, #000 0 50%, transparent 60% 100%);
+  mask-image: linear-gradient(90deg, #000 0 50%, transparent 60% 100%);
+  -webkit-mask-size: 220% 100%;
+  mask-size: 220% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  /* mask-position 缺省即 0% 0%(=完全露出), 所以 reduce 下 animation:none
+     不会把 logo 留在隐形状态 */
+  animation: brand-write 900ms linear;
+}
+
 /* 入场原语（第零波）：补 animate-in 空转的 6 处，不改现有调用点 */
 @keyframes enter-pop {
   from {
@@ -813,6 +840,7 @@ body {
   .slide-in-left,
   .sidebar-item-enter,
   .context-menu-enter,
+  .brand-write,
   .animate-pop-in,
   .animate-bounce,
   .animate-pulse {
@@ -1700,12 +1728,15 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
 }
 
 /* 手机端(<768px)公式去壳平铺:窄屏里 1.25rem 内边距 + 圆角边框先吃掉正文宽度,
-   独立公式改随文本流左对齐;代码块保留底色(与正文的区分不能丢) */
+   独立公式改随文本流左对齐;代码块保留底色(与正文的区分不能丢)。
+   上下留 0.5em 竖向缓冲:katex-display 带 overflow-y:hidden, 上标/根号横线等笔画会
+   探出 KaTeX 按字体度量算出的文字方框——padding 清零后外框与方框严丝合缝,
+   探出的几像素被贴边裁掉(桌面 20px padding 有缓冲所以正常);左右仍为 0 不吃宽度 */
 @media (max-width: 767px) {
   .rich-md .katex-display,
   .rich-md .math-card {
     margin: 0.75em 0;
-    padding: 0;
+    padding: 0.5em 0;
     background: none;
     border: 0;
     border-radius: 0;
@@ -1800,7 +1831,7 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   min-width: 0;
 }
 
-/* 字重层级: 设问题干 500 突出题感,选项与作答保持 400;诗块居中疏排（苹方卷面定稿） */
+/* 字重层级: 设问题干 500 突出题感,选项与作答保持 400;诗块居中疏排（MiSans 卷面定稿） */
 .rich-md .exam-question p {
   font-weight: 500;
 }
@@ -1895,6 +1926,87 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
 }
 .rich-md .exam-option-letter::after {
   content: '.';
+}
+
+/* 可作答选择题（:::choice 成卷）——选项行升级为可点按钮：
+   未选中仅 hover/按下给淡背景；选中用强调色实心圆徽标 + 行底色 tint，
+   与试卷纸「留白/阴影优先于描边」纪律一致；动效交全站 prefers-reduced-motion 兜底 */
+.rich-md .exam-option-btn {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.4rem 0.55rem;
+  margin-left: -0.55rem;
+  margin-right: -0.55rem;
+  border-radius: 0.55rem;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.rich-md .exam-option-btn:hover {
+  background: rgb(var(--accent) / 0.06);
+}
+.rich-md .exam-option-btn:active {
+  background: rgb(var(--accent) / 0.1);
+}
+/* 选中态改用圆圈徽标，去掉行内点号；未选中为描边空圈，选中为强调色实心圈 */
+.rich-md .exam-option-btn .exam-option-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 9999px;
+  border: 1.5px solid rgb(var(--content-muted) / 0.45);
+  font-size: 0.8em;
+  line-height: 1;
+  transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+.rich-md .exam-option-btn .exam-option-letter::after {
+  content: none;
+}
+.rich-md .exam-option-btn.is-picked {
+  background: rgb(var(--accent) / 0.08);
+  border-color: rgb(var(--accent) / 0.42);
+}
+.rich-md .exam-option-btn.is-picked .exam-option-letter {
+  color: rgb(var(--accent-foreground));
+  background: rgb(var(--accent));
+  border-color: rgb(var(--accent));
+}
+/* 卷末交卷条：汇总本卷选择题点选，一键把「题号+我的选项」发回 AI 批改 */
+.rich-md .exam-answer-sheet {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+  padding-top: 0.7rem;
+  border-top: 1px dashed rgb(var(--exam-paper-line));
+}
+.rich-md .exam-answer-sheet-progress {
+  font-size: 0.82rem;
+  color: rgb(var(--content-muted));
+}
+.rich-md .exam-answer-sheet-btn {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: rgb(var(--accent-foreground));
+  background: rgb(var(--accent));
+  border-radius: 9999px;
+  padding: 0.42rem 1rem;
+  cursor: pointer;
+  transition: opacity 0.16s ease, transform 0.1s ease;
+}
+.rich-md .exam-answer-sheet-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.rich-md .exam-answer-sheet-btn:not(:disabled):active {
+  transform: scale(0.97);
 }
 
 /* 译文块 :::translate —— 英文题目的中文翻译卡，弱化为注释层：正文次级色，
@@ -2377,9 +2489,9 @@ html.dark .rich-md .exam-yellow-fish-risk {
 }
 
 /* ── 认证页（登录/注册）品牌分栏共用样式 ─────────────────── */
-/* 极细展示字体：标题/Logo 徽标专用，复用苹方子集分片 100 字重 */
+/* 极细展示字体：标题/Logo 徽标专用，复用 MiSans 子集分片 100 字重 */
 .font-ultra {
-  font-family: 'PingFang SC', 'PingFang SC Sub', 'Microsoft YaHei UI', sans-serif;
+  font-family: 'MiSans', 'Microsoft YaHei UI', sans-serif;
   font-weight: 100;
 }
 
@@ -2734,6 +2846,11 @@ html.dark .rich-md .exam-yellow-fish-risk {
     width: max-content;
     max-width: 320px;
   }
+  /* 快显条(snackbar): 通栏长条 —— 消息左/动作右,左右各留 12px;
+     inline 的 max-width:380 由 applyToastAction 清除;其余 bottomCenter 轻提示(hint)维持短胶囊 */
+  .iziToast-wrapper-bottomCenter .iziToast.iziToast--snackbar {
+    width: calc(100% - 24px);
+  }
 }
 
 /* ── 游戏面板块（:::gamestatus / :::gamechoice）────────────────────────
@@ -2955,6 +3072,16 @@ html.dark .rich-md .exam-yellow-fish-risk {
 .rt-trigger.on { color: rgb(var(--content-primary)); }
 .rt-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
 .rt-trigger .rt-val { color: rgb(var(--content-primary)); font-weight: 600; }
+/* MAX 档:图标+文字上渐变(与面板标题 rt-title.max 共用 --slider-grad 一套渐变)
+   文字用 background-clip:text;SVG 描边不能 clip 文字,改用组件内定义的
+   <linearGradient id="rt-grad"> 直接作 stroke 漆(覆盖 lucide 的 stroke=currentColor) */
+.rt-trigger.on .rt-val {
+  background: var(--slider-grad);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+.rt-trigger .rt-ico-brain { transition: color 0.15s ease; }
+.rt-trigger.on .rt-ico-brain { stroke: url(#rt-grad); }
 .rt-trigger .rt-chev { width: 12px; height: 12px; opacity: 0.7; transition: transform 0.15s ease; }
 .rt-trigger.open .rt-chev { transform: rotate(180deg); }
 
@@ -3152,6 +3279,17 @@ html[data-style="bigsur"] .composer-card {
 html[data-style="bigsur"] .composer-card .bg-surface-muted {
   background-color: rgb(var(--surface));
 }
+/* 推理档位胶囊不吃 bg-surface-muted 类(自带 .rt-trigger 背景),同批反白处理;
+   hover / 展开两档底色一并提到同特异性,否则会被上面那条盖成常白 */
+html[data-style="bigsur"] .composer-card .rt-trigger {
+  background-color: rgb(var(--surface));
+}
+html[data-style="bigsur"] .composer-card .rt-trigger:hover {
+  background-color: rgb(var(--surface-subtle));
+}
+html[data-style="bigsur"] .composer-card .rt-trigger.open {
+  background-color: rgb(var(--accent-soft));
+}
 
 /* ⑥b 玻璃卡统一灰(2026-10-26 用户定案:热力图卡等与侧栏同灰)。
    bg-surface-glass 的卡(欢迎页热力图卡/底部 dock/搜索弹窗)改纯 muted ——
@@ -3210,6 +3348,13 @@ html[data-style="bigsur"].dark .m-set nav.glass-blur {
   }
 }
 html[data-style="bigsur"] .topbar-strip {
+  background-color: rgb(var(--surface-muted));
+}
+
+/* ⑪ 对话资料右栏(2026-11-07 用户定案): 与顶栏/侧栏同灰,连成一圈 chrome。
+   面板叠在白纸内容浮层上,必须用纯 muted 不透明 —— 半透明叠白纸必偏浅,
+   顶栏/输入岛/玻璃卡三次同款教训;展开态 aside 与收起态竖标签同批染色 */
+html[data-style="bigsur"] .info-aside-panel {
   background-color: rgb(var(--surface-muted));
 }
 
@@ -3821,6 +3966,18 @@ html.dark .sky-wallpaper-photo {
    故这里必须同时带 data-wallpaper 与 data-style 两个属性才能胜出) */
 html[data-wallpaper="on"] .app-shell {
   background-color: transparent;
+  /* 描边归零(不是透明): 透明后 border 那 1px 圈露出的是外层 frame 的灰白底
+     (#F5F5F7),深蓝壁纸上依旧一圈白缝(3x 屏 = 3 物理像素)。归零后壁纸
+     inset:0 直接铺满到壳最外圈,缝从根上消失 —— 桌面端不进这段媒体查询 */
+  border-width: 0;
+}
+/* 兜底: WebView 边缘/过卷露的是 html 底色(白),splash 页真机白线事故同款。
+   壁纸态给 html 铺照片边缘色 —— 顶部深蓝天实测 rgb(18,46,86),深色档再压 0.5 */
+html[data-wallpaper="on"] {
+  background-color: #122e56;
+}
+html[data-wallpaper="on"].dark {
+  background-color: #0a1830;
 }
 html[data-wallpaper="on"] .app-shell-column {
   z-index: 1;

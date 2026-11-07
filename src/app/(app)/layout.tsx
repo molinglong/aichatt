@@ -11,7 +11,8 @@ import { UpdateBanner } from '@/components/mobile/UpdateBanner'
 import { MobileDrawer } from '@/components/mobile/MobileDrawer'
 
 /**
- * 四个主 tab(chat/images/explore/study)共享的 shell layout。
+ * 各主 tab(chat/images/explore/write)共享的 shell layout。
+ * (2026-11-02:/study 独立页下线,学习室内嵌进 chat 的两个页面)
  *
  * 此前每个 tab 各持有一份一模一样的独立 layout,导致跨 tab 导航时
  * Next.js 视为"不同 layout 之间的跳转"——整棵 Sidebar/TopBar 子树

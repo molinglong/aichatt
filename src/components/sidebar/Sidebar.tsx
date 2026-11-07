@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react
 import { useRenderProbe } from '@/lib/client-diagnostics'
 import type { CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Settings, Search, PanelLeftClose, PanelLeftOpen, VenetianMask, LogOut, User, Glasses, ListChecks, Trash2, X, FileJson } from 'lucide-react'
+import { Plus, Settings, Search, Star, PanelLeftClose, PanelLeftOpen, VenetianMask, LogOut, User, Glasses, ListChecks, Trash2, X, FileJson } from 'lucide-react'
 import { signOut, useSession } from 'next-auth/react'
 import { useInfiniteQuery, useQueryClient, useQuery, type InfiniteData } from '@tanstack/react-query'
 import { NEW_CHAT_MASK_SIGNAL_KEY, useChatStore } from '@/store/chat-store'
@@ -22,6 +22,7 @@ import { TrafficLights } from '@/components/TrafficLights'
 import { cn } from '@/lib/utils'
 import { ConversationItem } from './ConversationItem'
 import { SearchDialog } from './SearchDialog'
+import { FavoritesDialog } from '@/components/favorites/FavoritesDialog'
 import { SidebarNav } from './SidebarNav'
 import { queryKeys, STALE } from '@/lib/query/keys'
 import { fetchJson, HttpError } from '@/lib/query/fetcher'
@@ -33,7 +34,7 @@ interface ConversationData {
   id: string
   title: string
   mode?: string
-  /** 学习模式会话:列表行据此跳 /study?c=id */
+  /** 学习模式会话:点进 /chat/c/id 后由会话页渲染学习室(2026-11-02 起不再改道 /study) */
   studyMode?: boolean
   maskId?: string | null
   updatedAt: string
@@ -186,6 +187,8 @@ export function Sidebar() {
   const [maskMenuOpen, setMaskMenuOpen] = useState(false)
   // 用户菜单(底部头像/用户行点击弹出:账号设置入口 + 退出登录)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  // 收藏浮层:主界面看收藏的入口(星标消息的归档列表,与学习室抽屉同一份 FavoriteList)
+  const [favoritesOpen, setFavoritesOpen] = useState(false)
   // ── 批量删除:管理模式开关、勾选集合、确认弹窗目标 ──
   const [manageMode, setManageMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -804,7 +807,6 @@ export function Sidebar() {
                         id={conv.id}
                         title={conv.title}
                         mode={conv.mode}
-                        studyMode={conv.studyMode}
                         maskAvatar={badge?.avatar}
                         maskName={badge?.name}
                         index={index}
@@ -909,18 +911,29 @@ export function Sidebar() {
                 )}
               </div>
             </button>
-            {/* 快捷设置入口:免两跳直达设置面板(临时模式隐藏,与菜单内账号设置显隐一致) */}
-            {!isEphemeral && (
+            {/* 快捷入口:收藏浮层 + 设置,免两跳直达(临时模式隐藏设置,收藏跨模式可看) */}
+            <div className="flex shrink-0 items-center">
               <button
-                onClick={() => { setUserMenuOpen(false); setSettingsOpen(true) }}
-                className="shrink-0 p-1.5 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition active:scale-95 touch-manipulation"
-                aria-label="设置"
-                title="设置"
+                onClick={() => { setUserMenuOpen(false); setFavoritesOpen(true) }}
+                className="p-1.5 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition active:scale-95 touch-manipulation"
+                aria-label="收藏"
+                title="收藏"
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
-                <Settings className="w-3.5 h-3.5" aria-hidden />
+                <Star className="w-3.5 h-3.5" aria-hidden />
               </button>
-            )}
+              {!isEphemeral && (
+                <button
+                  onClick={() => { setUserMenuOpen(false); setSettingsOpen(true) }}
+                  className="p-1.5 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition active:scale-95 touch-manipulation"
+                  aria-label="设置"
+                  title="设置"
+                  style={{ WebkitTapHighlightColor: 'transparent' }}
+                >
+                  <Settings className="w-3.5 h-3.5" aria-hidden />
+                </button>
+              )}
+            </div>
             </div>
 
             {/* 用户菜单:纯色浮层(遵循弹窗纯色背景规范),向上弹出 */}
@@ -1017,6 +1030,8 @@ export function Sidebar() {
           router.push(`/chat/c/${id}`)
         }}
       />
+      {/* 收藏浮层:侧栏星标入口打开,「回到原对话」浮层内部先自关再导航 */}
+      <FavoritesDialog open={favoritesOpen} onClose={() => setFavoritesOpen(false)} />
       {/* 删除确认:单条与批量共用一个弹窗组件,替代原生 window.confirm */}
       <ConfirmDialog
         open={pendingDeleteId !== null}

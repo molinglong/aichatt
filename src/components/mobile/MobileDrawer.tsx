@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { X, Check, ChevronRight, ChevronDown, Search, Plus, MessageSquare, BookOpen, Sparkles, Scale, PenLine, Pencil, Trash2, BellDot, Settings as SettingsIcon } from 'lucide-react'
+import { X, Check, ChevronRight, ChevronDown, Search, Plus, Star, MessageSquare, BookOpen, Sparkles, Scale, PenLine, Pencil, Trash2, BellDot, Settings as SettingsIcon } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import { useChatStore } from '@/store/chat-store'
@@ -11,6 +11,7 @@ import { queryKeys, STALE } from '@/lib/query/keys'
 import { fetchJson, HttpError } from '@/lib/query/fetcher'
 import { resolveMaskBadge, type MaskDTO } from '@/lib/ai/mask-types'
 import { SearchDialog } from '@/components/sidebar/SearchDialog'
+import { FavoritesDialog } from '@/components/favorites/FavoritesDialog'
 import { relativeTime } from '@/components/chat/RecentChats'
 import { useIsMobileViewport } from '@/hooks/useIsMobileViewport'
 import { useBackToClose } from '@/hooks/useBackToClose'
@@ -37,7 +38,7 @@ interface ConversationData {
   id: string
   title: string
   mode?: string
-  /** 学习模式会话:历史行据此跳 /study?c=id */
+  /** 学习模式会话:点进 /chat/c/id 后由会话页渲染学习室 */
   studyMode?: boolean
   maskId?: string | null
   updatedAt: string
@@ -51,7 +52,7 @@ interface ConversationsPage {
 
 const PAGE_SIZE = 20
 
-/** Google 2020 抽屉的导航图标（usePageNav 只给 key/label） */
+/** Google 2020 抽屉的导航图标（usePageNav 只给 key/label）*/
 const NAV_ICONS: Record<string, typeof MessageSquare> = {
   chat: MessageSquare,
   study: BookOpen,
@@ -351,6 +352,8 @@ export function MobileDrawer() {
   const [rendered, setRendered] = useState(false)
   const [open, setOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  // 收藏浮层:移动端主界面看收藏的入口(与桌面侧栏星标入口同一份 FavoriteList)
+  const [favoritesOpen, setFavoritesOpen] = useState(false)
   // armed:首个 effect 跑完前不渲染 —— 避免移动端首帧用「桌面默认展开」的 sidebarOpen 弹开抽屉
   const [armed, setArmed] = useState(false)
 
@@ -727,7 +730,7 @@ export function MobileDrawer() {
                             onCancelEdit={cancelRename}
                             onOpenConversation={() => {
                               if (conv.id === currentConvId) { close(); return }
-                              navClose(conv.studyMode ? `/study?c=${conv.id}` : `/chat/c/${conv.id}`)
+                              navClose(`/chat/c/${conv.id}`)
                             }}
                             onOpenMenu={openRowMenu}
                           />
@@ -741,6 +744,13 @@ export function MobileDrawer() {
             )}
 
             <div className="border-t border-line px-0 pb-1 pt-1">
+              <button
+                onClick={() => { close(); setFavoritesOpen(true) }}
+                className="flex h-10 w-full items-center gap-5 pl-6 text-sm text-content-primary active:bg-black/5 dark:active:bg-white/10"
+              >
+                <Star className="h-5 w-5 text-content-secondary" />
+                收藏
+              </button>
               <button
                 onClick={() => { close(); setSettingsOpen(true) }}
                 className="flex h-10 w-full items-center gap-5 pl-6 text-sm text-content-primary active:bg-black/5 dark:active:bg-white/10"
@@ -831,7 +841,7 @@ export function MobileDrawer() {
                         onCancelEdit={cancelRename}
                         onOpenConversation={() => {
                           if (conv.id === currentConvId) { close(); return }
-                          navClose(conv.studyMode ? `/study?c=${conv.id}` : `/chat/c/${conv.id}`)
+                          navClose(`/chat/c/${conv.id}`)
                         }}
                         onOpenMenu={openRowMenu}
                         /* 首屏条目走级联入场;续载进来的(第 2 页起)不再延迟,
@@ -845,7 +855,21 @@ export function MobileDrawer() {
               )}
             </div>
 
-            {/* 底部用户行 → 账号设置 */}
+            {/* 底部工具行:收藏 + 用户行 → 账号设置 */}
+            <button
+              onClick={() => { close(); setFavoritesOpen(true) }}
+              className="mdr-st mx-4 mb-1 flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left active:bg-surface-subtle/60 transition-colors touch-manipulation"
+              style={d(0.4)}
+            >
+              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-accent-soft">
+                <Star className="h-4 w-4 text-accent" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13.5px] font-semibold text-content-primary">收藏</span>
+                <span className="block text-[10.5px] text-content-muted">星标消息都会收在这里</span>
+              </span>
+              <ChevronRight className="h-4 w-4 flex-none text-content-muted" />
+            </button>
             {user && (
               <button
                 onClick={() => { close(); setSettingsSection('account'); setSettingsOpen(true) }}
@@ -881,6 +905,11 @@ export function MobileDrawer() {
           setSearchOpen(false)
           navClose(`/chat/c/${id}`)
         }}
+      />
+      {/* 收藏浮层:抽屉收藏行打开;「回到原对话」在浮层内部走自己的哨兵 navigate */}
+      <FavoritesDialog
+        open={favoritesOpen}
+        onClose={() => setFavoritesOpen(false)}
       />
     </>
   )

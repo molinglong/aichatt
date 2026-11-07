@@ -7,9 +7,9 @@ import "./globals.css";
 // 单独在此 import 会让 root layout 挂两个 css chunk —— 触发 Next 14.2 的
 // css-entry 关联 bug: 后一个 chunk 挤掉 globals.css, HTML 拿不到 Tailwind 全站裸奔。
 
-// 苹方不再走 next/font(全量 woff2 会被 preload ~18MB):
-// 改用 globals.css 顶部的 cn-font-split 子集分片 + :root --font-sans 系统栈,
-// macOS/iOS 命中系统原生苹方零下载, 其他平台按需拉分片。
+// MiSans 不走 next/font(全量 woff2 会被 preload ~18MB):
+// 改用 public 静态分片 + :root --font-sans 系统栈,
+// 全平台统一 MiSans 观感(免费商用), 设备装有 MiSans 时命中本地零下载。
 const geistMono = localFont({
   src: "./fonts/GeistMonoVF.woff",
   variable: "--font-geist-mono",
@@ -66,9 +66,9 @@ export default function RootLayout({
         {/* Chrome 新版 PWA 规范标签(仅写 apple-mobile-web-app-capable 会报 deprecated 警告);
             旧 iOS 标签仍由 metadata.appleWebApp 自动生成,两者并存 */}
         <meta name="mobile-web-app-capable" content="yes" />
-        {/* 苹方子集分片: public 静态直出, unicode-range 按需拉 woff2。
+        {/* MiSans 子集分片: public 静态直出, unicode-range 按需拉 woff2。
             不走 CSS @import/webpack(1500+ font-face 会拖垮 dev server);
-            macOS/iOS 命中系统苹方时浏览器不会下载分片, 零开销 */}
+            全平台统一 MiSans 观感, 设备装有 MiSans 时浏览器不会下载分片 */}
         {['100', '300', '400', '500', '600'].map((w) => (
           <link
             key={w}

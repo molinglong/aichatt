@@ -168,9 +168,10 @@ export function TopBar() {
   // 在 /images 等页面显示固定的页面标题(移动端顶栏带用)
   const isImagesPage = pathname?.startsWith('/images')
   const isExplorePage = pathname?.startsWith('/explore')
-  const isStudyPage = pathname?.startsWith('/study')
+  // 学习流不再让位顶栏(2026-11-02):独立学习室头部整条撤下,
+  // 题目与讲解都跑在普通聊天壳里,顶栏/浮钮照常渲染。
   const isWritePage = pathname?.startsWith('/write')
-  const displayTitle = isImagesPage ? '生图工作台' : isExplorePage ? '观点探索' : isStudyPage ? '学习模式' : isWritePage ? '写作画布' : (title || '新对话')
+  const displayTitle = isImagesPage ? '生图工作台' : isExplorePage ? '观点探索' : isWritePage ? '写作画布' : (title || '新对话')
 
   /**
    * 「在新对话继续」:把当前对话(含所有上下文消息)用 LLM 压缩成结构化摘要,
@@ -268,7 +269,7 @@ export function TopBar() {
       )}
 
       {/* ── Google 2020 移动顶栏: 固定 56px 白底 + 分割线(替代浮动圆钮) */}
-      {uiStyle === 'google' && !isStudyPage && (
+      {uiStyle === 'google' && (
         <header
           className="flex shrink-0 items-center gap-1 border-b border-line bg-surface px-2 md:hidden"
           style={{ paddingTop: 'var(--sat)' }}
@@ -395,10 +396,7 @@ export function TopBar() {
 
       {/* ── ≥md 顶栏(2026-10-25 定案:两套样式各自独立的 DOM,见 TopbarShell)──
           bigsur = 停靠式通铺条(左标题+右裸按钮组,内容纸左上圆角从灰带缺口露出);
-          classic = 原版右上角悬浮胶囊簇。让位量:面板/资料卡在场时左移,语义同旧版。
-          错题本(/study)有自己的 StudyRoom 头部,整块不渲染 —— 顶栏 DOM 若在,
-          :has(.topbar-strip) 会照常命中,给错题本强加灰带/让位/圆角纸(2026-10-26 踩坑) */}
-      {!isStudyPage && (
+          classic = 原版右上角悬浮胶囊簇。让位量:面板/资料卡在场时左移,语义同旧版。 */}
       <TopbarShell
         uiStyle={uiStyle}
         title={displayTitle}
@@ -485,7 +483,6 @@ export function TopBar() {
           <SettingsIcon className="w-3.5 h-3.5" />
         </button>
       </TopbarShell>
-      )}
     </>
   )
 }

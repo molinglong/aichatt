@@ -24,7 +24,6 @@ export function MobileFloatButtons() {
 
   const isConversation = !!pathname?.startsWith('/chat/c/')
   const [reloading, setReloading] = useState(false)
-  if (pathname?.startsWith('/study')) return null
 
   // 2026-10-28:去掉顶栏圆钮的圆底/描边/阴影,只保留图标本体(命中区仍 40px)。
   const btnBase =
