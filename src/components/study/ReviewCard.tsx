@@ -279,7 +279,9 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
           {current.analysis && revealed && (
             <div className="rounded-xl border border-line/60 bg-surface-subtle/40 p-3">
               <div className="text-[10px] text-content-muted mb-1.5">解析</div>
-              <MarkdownRenderer content={current.analysis} messageId={`review-${current.id}`} rich />
+              <div className="[&_.rich-md]:text-[13px] [&_.rich-md]:leading-[1.7] [&_.rich-md_p]:mb-2">
+                <MarkdownRenderer content={current.analysis} messageId={`review-${current.id}`} rich />
+              </div>
             </div>
           )}
         </div>

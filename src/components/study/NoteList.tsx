@@ -208,7 +208,9 @@ export function NoteList({ onChanged }: { onChanged?: () => void }) {
                   {n.analysis && (
                     <div className="rounded-lg bg-surface-subtle/50 p-2.5">
                       <div className="text-[10px] text-content-muted mb-1">AI 解析</div>
-                      <MarkdownRenderer content={n.analysis} messageId={`study-${n.id}`} rich />
+                      <div className="[&_.rich-md]:text-[13px] [&_.rich-md]:leading-[1.7] [&_.rich-md_p]:mb-2">
+                        <MarkdownRenderer content={n.analysis} messageId={`study-${n.id}`} rich />
+                      </div>
                     </div>
                   )}
                   <div className="flex items-center justify-end gap-1">
