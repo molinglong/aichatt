@@ -41,7 +41,7 @@ export interface StudyStepView {
   streaming: boolean
 }
 
-export type StudyAction = 'start' | 'continue' | 'easier' | 'solution' | 'followup' | 'quiz'
+export type StudyAction = 'start' | 'continue' | 'easier' | 'solution' | 'followup' | 'quiz' | 'drill'
 
 export interface StudyPostOpts {
   text?: string

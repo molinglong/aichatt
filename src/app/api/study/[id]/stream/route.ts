@@ -135,6 +135,7 @@ ${session.notes.trim()}`
     solution: "直接给出完整解法和答案,讲完就结束。",
     followup: followupText ?? "",
     quiz: "请出一道考察同一知识点的变式题。",
+    drill: "请出一道同考点变式练习题,开始举一反三巩固。",
   }
   messages.push({ role: "user", content: ACTION_USER_TEXT[action] })
 

@@ -74,7 +74,7 @@ function parseAnalysis(analysis: string | null): { answer: string | null; source
   return { answer, source, body: body.join('\n') }
 }
 
-export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; onRestudy?: (note: { id: string; title: string; content: string; imageUrl?: string | null }) => void }) {
+export function ReviewCard({ onChanged, onRestudy, onDrill }: { onChanged?: () => void; onRestudy?: (note: { id: string; title: string; content: string; imageUrl?: string | null }) => void; onDrill?: (note: { id: string; title: string; content: string; imageUrl?: string | null }) => void }) {
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -330,6 +330,16 @@ export function ReviewCard({ onChanged, onRestudy }: { onChanged?: () => void; o
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-accent text-accent-foreground text-xs font-medium transition-opacity hover:opacity-85"
               >
                 🎓 重新学这道
+              </button>
+            )}
+            {onDrill && (
+              <button
+                type="button"
+                onClick={() => onDrill({ id: current.id, title: current.title, content: current.content, imageUrl: current.imageUrl })}
+                title="围绕这个考点连续出变式题练手"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-line text-xs font-medium text-content-secondary transition-colors hover:text-content-primary hover:border-line-strong"
+              >
+                🔁 举一反三
               </button>
             )}
             {current.analysis ? (

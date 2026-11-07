@@ -363,6 +363,32 @@ function StudyContent() {
     }
   }
 
+  /** 复习卡「举一反三」:同考点巩固练习会话——模型连续出变式题,作答即判分 */
+  const handleDrill = async (note: { id: string; title: string; content: string; imageUrl?: string | null }) => {
+    if (!defaultModelId) return
+    try {
+      const res = await fetch('/api/study', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: note.content,
+          images: note.imageUrl ? [note.imageUrl] : [],
+          startLevel: 'partial',
+          modelId: defaultModelId,
+        }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const d = (await res.json()) as { session: { id: string } }
+      refreshAll()
+      setDrawerOpen(false)
+      setView({ kind: 'session', id: d.session.id })
+      await reload(d.session.id)
+      void postTo(d.session.id, 'drill')
+    } catch (err) {
+      console.error('[study] drill failed:', err)
+    }
+  }
+
   const openSession = (id: string) => {
     setView({ kind: 'session', id })
   }
@@ -503,6 +529,7 @@ function StudyContent() {
                   <ReviewCard
                     onChanged={refreshAll}
                     onRestudy={(note) => void handleRestudy(note)}
+                    onDrill={(note) => void handleDrill(note)}
                   />
                 ) : (
                   <FavoriteList onChanged={refreshAll} />

@@ -12,10 +12,10 @@ import { z } from 'zod'
  */
 
 export type StudyStartLevel = 'beginner' | 'partial' | 'review'
-export type StudyActionType = 'start' | 'continue' | 'easier' | 'solution' | 'followup' | 'quiz'
+export type StudyActionType = 'start' | 'continue' | 'easier' | 'solution' | 'followup' | 'quiz' | 'drill'
 
 export const STUDY_START_LEVELS: StudyStartLevel[] = ['beginner', 'partial', 'review']
-export const STUDY_ACTIONS: StudyActionType[] = ['start', 'continue', 'easier', 'solution', 'followup', 'quiz']
+export const STUDY_ACTIONS: StudyActionType[] = ['start', 'continue', 'easier', 'solution', 'followup', 'quiz', 'drill']
 
 export function isStudyStartLevel(v: unknown): v is StudyStartLevel {
   return typeof v === 'string' && (STUDY_START_LEVELS as string[]).includes(v)
@@ -77,6 +77,8 @@ const ACTION_INSTRUCTIONS: Record<StudyActionType, string> = {
   followup: '## 本步动作:追问\n用户就当前内容提了具体问题。直接回答这个追问,沿用已有题目与进度;回答完停在当前位置,一般不推进新步骤,除非追问本身就已覆盖该步。',
   quiz:
     '## 本步动作:变式练习\n出一道考察同一知识点的变式题(考点不变、难度相当,数字/情境必换)。严格按输出协议出题:选择题用 :::choice 块,大题用 :::question 块并紧跟 :::answer 块(含解析)。只出题,不先给答案解析;用户作答后你会收到作答内容并判分。出完题即停,不调用 finish_study。',
+  drill:
+    '## 本步动作:举一反三(巩固练习会话)\n本会话是错题的举一反三练习:围绕本题考点,持续出变式题让用户练手。本步先出**一道**变式练习题(考点不变、难度相当,数字/情境必换;选择题用 :::choice 块,大题用 :::question 块)。只出题,不给解析,不调用 finish_study。\n用户后续消息是作答时:先判分并调用 update_mastery(对=good,错=again),给简要解析,再出下一道变式题,循环巩固;用户说停或明显掌握时给一句鼓励收尾。',
 }
 
 export interface BuildStudySystemPromptOpts {
