@@ -30,6 +30,14 @@ const COOKIE_EXPIRED_NOTE =
 /** CLI 实际路径（env 可覆盖） */
 const liveCliPath = goofishCliPath
 
+/**
+ * 二期桥（2026-11-07）：非空 = 实时搜索转发到家里电脑的 goofish-bridge HTTP 服务
+ * （VPS 部署形态：VPS 上没有 goofish.exe，经 frp 隧道 18001 回源本机）；空 = 本机 execFile（原行为不变）。
+ * 桥把 CLI stderr 原样透传，登录失效判定（looksLikeAuthFailure）口径与直跑一致。
+ */
+const LIVE_BRIDGE_URL = (process.env.YELLOW_FISH_LIVE_BRIDGE_URL || '').trim().replace(/\/+$/, '')
+const LIVE_BRIDGE_TOKEN = process.env.YELLOW_FISH_LIVE_BRIDGE_TOKEN || ''
+
 /** 进程内限频状态（dev 热重载会清零，已知边界；生产稳定） */
 const rateStamps: number[] = []
 function rateLimitedNow(): boolean {
@@ -76,6 +84,25 @@ interface GoofishSearchJson {
   recommendations_present?: unknown
   complete?: unknown
   errors?: unknown
+}
+
+/** 桥模式:POST /search。200=CLI 原始 JSON;非 ok 抛「goofish-cli 失败: …」
+ * （桥透传 CLI stderr,auth 失效文本原样带给上层 looksLikeAuthFailure,口径与直跑一致） */
+async function runBridgeSearch(keyword: string, limit: number): Promise<GoofishSearchJson> {
+  const res = await fetch(`${LIVE_BRIDGE_URL}/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': LIVE_BRIDGE_TOKEN },
+    body: JSON.stringify({ keyword, limit }),
+    signal: AbortSignal.timeout(YELLOW_FISH_LIVE_TIMEOUT_MS + 15_000),
+  })
+  let payload: { ok?: boolean; data?: GoofishSearchJson; error?: string }
+  try {
+    payload = (await res.json()) as { ok?: boolean; data?: GoofishSearchJson; error?: string }
+  } catch {
+    throw new Error(`goofish-cli 失败: 桥响应不是 JSON(HTTP ${res.status})`)
+  }
+  if (!payload?.ok) throw new Error(`goofish-cli 失败: ${payload?.error || `HTTP ${res.status}`}`)
+  return (payload.data ?? {}) as GoofishSearchJson
 }
 
 /** spawn goofish.exe search items --format json；stdout 解 JSON，失败抛错 */
@@ -135,7 +162,7 @@ export function createYellowFishLiveTool() {
 
       let data: GoofishSearchJson
       try {
-        data = await runGoofishSearch(kw, n)
+        data = LIVE_BRIDGE_URL ? await runBridgeSearch(kw, n) : await runGoofishSearch(kw, n)
       } catch (err) {
         const message = err instanceof Error ? err.message : '未知错误'
         const cookieExpired = looksLikeAuthFailure(message)
