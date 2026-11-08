@@ -277,6 +277,10 @@ function StudyContent() {
   })
   const dueCount = queue?.length ?? meta?.dueCount ?? 0
   const noteCount = notes?.length ?? 0
+  // 小组件数据:掌握度均值(0-1,无笔记为 null)与累计场次(列表接口 total)
+  const masteryAvg =
+    notes && notes.length > 0 ? notes.reduce((sum, n) => sum + n.mastery, 0) / notes.length : null
+  const totalSessions = listQuery.data?.total ?? 0
   const { data: favoritesCount } = useQuery({
     queryKey: ['favorites', 'count'],
     queryFn: () => fetchJson<{ count: number }>('/api/favorites?count=1'),
@@ -403,6 +407,8 @@ function StudyContent() {
             noteCount={noteCount}
             favoriteCount={favoriteCount}
             kbCount={kbCount}
+            masteryAvg={masteryAvg}
+            totalSessions={totalSessions}
             loading={listQuery.isLoading}
             onResume={openSession}
             onNew={(text) => setView({ kind: 'setup', draft: text })}

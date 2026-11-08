@@ -4106,23 +4106,30 @@ html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .mobile-flo
 
 }
 
-/* ── 学习台「学新题」按钮:涟漪效果(用户定稿,替换圆形填充)──
-   悬停时两圈主题蓝环从按钮边缘向外扩散消散(交错延迟);active 轻缩。宽度交由布局(w-full)。 */
+/* ── 学习台「学新题」按钮:白底虚线「添加」卡 + 涟漪(2026-11-08 v3 定稿)──
+   语义回归「新增」(Uiverse 改造前的原形态):白底虚线蓝字,hover 转实线并泛淡蓝,
+   悬停时两圈主题蓝环从边缘扩散消散(交错延迟);与入口卡同圆角 14px。 */
 .study-newq-btn {
   --color: var(--accent);
   font-family: inherit;
   display: inline-block;
   width: 100%;
-  line-height: 2.5em;
+  line-height: 2.9em;
   position: relative;
   cursor: pointer;
-  border: 2px solid var(--color);
+  border: 1.5px dashed rgb(var(--line-strong));
   z-index: 1;
-  font-size: 17px;
-  border-radius: 6px;
+  font-size: 16.5px;
+  border-radius: 14px;
   font-weight: 500;
-  color: var(--color);
-  background: transparent;
+  color: rgb(var(--accent));
+  background: rgb(var(--surface-glass) / 0.72);
+  transition: border-color 0.18s, background 0.18s;
+}
+.study-newq-btn:hover {
+  border-style: solid;
+  border-color: rgb(var(--accent));
+  background: rgb(var(--accent-soft));
 }
 /* 涟漪:悬停时两圈紫色环从按钮边缘向外扩散消散(交错延迟) */
 .study-newq-btn::before,
