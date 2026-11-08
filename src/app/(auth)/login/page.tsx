@@ -12,23 +12,50 @@ import {
   primaryButtonClass,
 } from "@/components/auth-controls"
 
+/* 次级描边按钮:与主按钮同骨架(高度/圆角/hover 抬升),白底描边不占 accent */
+const secondaryButtonClass =
+  "flex h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-line-strong bg-surface text-sm font-medium text-content-primary transition hover:-translate-y-px hover:bg-surface-muted hover:border-content-muted active:scale-[0.98] disabled:pointer-events-none disabled:opacity-55"
+
+/* 或线:表单与 home 快捷入口之间 */
+function Divider() {
+  return (
+    <div className="my-5 flex items-center gap-3.5" aria-hidden>
+      <span className="h-px flex-1 bg-line" />
+      <span className="text-[11.5px] text-content-muted">或</span>
+      <span className="h-px flex-1 bg-line" />
+    </div>
+  )
+}
+
+function HomeIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 10.5L12 3l9 7.5" />
+      <path d="M5 9.5V21h14V9.5" />
+      <path d="M10 21v-6h4v6" />
+    </svg>
+  )
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [showLegacy, setShowLegacy] = useState(false)
   const homeStarted = useRef(false)
-  // 第 3 波开关：默认关闭；确认迁移完成后再设为 1，只保留 home 登录。
-  const homeOnly = process.env.NEXT_PUBLIC_HOME_ONLY === "1"
 
   // home 授权回调会带 home_code 回到这里，自动完成一次 NextAuth 登录。
   useEffect(() => {
-    // 应急入口：即使开启 homeOnly，也允许 /login?legacy=1 使用原账号密码。
-    if (new URLSearchParams(window.location.search).get("legacy") === "1") {
-      setShowLegacy(true)
-    }
-
     if (homeStarted.current) return
 
     const params = new URLSearchParams(window.location.search)
@@ -99,43 +126,13 @@ export default function LoginPage() {
         欢迎回来
       </h2>
       <p className="auth-reveal auth-delay-2 mb-7 mt-2 text-[13.5px] text-content-secondary">
-        用 home 账号登录，aichatt 与 plan 共用同一身份
+        登录以继续，也可以用 home 账号快捷进入
       </p>
 
       {error && <ErrorBar message={error} />}
 
-      <div className="auth-reveal auth-delay-3 mt-5 flex flex-col gap-3">
-        <button
-          type="button"
-          disabled={loading}
-          onClick={() => window.location.assign("/api/auth/home/start")}
-          className={primaryButtonClass}
-        >
-          {loading ? (
-            <>
-              <span className="h-[15px] w-[15px] animate-spin rounded-full border-2 border-accent-foreground/35 border-t-accent-foreground" />
-              <span className="ml-2">正在登录…</span>
-            </>
-          ) : (
-            "使用 home 账号登录"
-          )}
-        </button>
-
-        {(!homeOnly || showLegacy) && (
-          <button
-            type="button"
-            onClick={() => setShowLegacy((value) => !value)}
-            className={`${footerLinkClass} self-center`}
-          >
-            {showLegacy ? "收起原账号登录" : "使用原账号密码登录"}
-          </button>
-        )}
-      </div>
-
-      {showLegacy && (
-        <>
-      <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
-        <div className="auth-reveal auth-delay-3">
+      <form onSubmit={handleSubmit} className="auth-reveal auth-delay-3 mt-5 flex flex-col gap-4">
+        <div>
           <label htmlFor="email" className={labelClass}>
             邮箱或用户名
           </label>
@@ -150,7 +147,7 @@ export default function LoginPage() {
           />
         </div>
 
-        <div className="auth-reveal auth-delay-4">
+        <div>
           <label htmlFor="password" className={labelClass}>
             密码
           </label>
@@ -177,6 +174,20 @@ export default function LoginPage() {
         </div>
       </form>
 
+      <Divider />
+
+      <div className="auth-reveal auth-delay-5">
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => window.location.assign("/api/auth/home/start")}
+          className={secondaryButtonClass}
+        >
+          <HomeIcon />
+          使用 home 账号登录
+        </button>
+      </div>
+
       <p className="auth-reveal auth-delay-5 mt-6 flex items-center justify-center gap-2">
         <Link href="/register" className={footerLinkClass}>
           立即注册
@@ -185,8 +196,6 @@ export default function LoginPage() {
           临时聊天
         </Link>
       </p>
-        </>
-      )}
     </div>
   )
 }

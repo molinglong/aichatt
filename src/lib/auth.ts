@@ -30,7 +30,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   providers: [
     // home 作为身份源：只接受它签发的 60 秒一次性 code，按邮箱认领已有用户。
-    // 找不到账号直接拒绝，不自动建号，避免与 home 的删除逻辑脱节。
+    // 找不到同邮箱账号直接拒绝、不自动建号——home 注册暂不验证邮箱，
+    // 自动建号会让任何人用他人邮箱接管账号；aichatt 账号一律走自己的注册页。
     Credentials({
       id: "home",
       name: "home",
@@ -43,28 +44,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         )
         if (!payload) return null
 
-        const select = { id: true, email: true, name: true, role: true }
-        let user = await prisma.user.findFirst({
+        const user = await prisma.user.findFirst({
           where: { email: { equals: payload.email, mode: "insensitive" } },
-          select,
+          select: { id: true, email: true, name: true, role: true },
         })
-
-        // 本地联调：home 注册暂不验证邮箱，这里会自动建号。
-        // 上线前必须在 home 增加邮箱验证，否则任何人可用他人邮箱接管账号。
-        if (!user) {
-          try {
-            user = await prisma.user.create({
-              data: { email: payload.email, name: payload.email.split("@")[0] },
-              select,
-            })
-          } catch (error) {
-            if ((error as { code?: string }).code !== "P2002") throw error
-            user = await prisma.user.findFirst({
-              where: { email: { equals: payload.email, mode: "insensitive" } },
-              select,
-            })
-          }
-        }
         if (!user) throw new HomeAccountMissingError()
 
         return {
