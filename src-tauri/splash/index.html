@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>aichatt</title>
 <style>
-  /* 中性灰极简 + 点阵背景,与欢迎页规范一致;无玻璃拟态。
+  /* 中性灰极简纯色底,无玻璃拟态。
      2026-10-08 方案B「描线绘制」:等待态只显示 logo(「八」两笔按笔顺描出,红点弹跳落位,
-     文字字距收拢浮现);连不上时才浮现错误文案 + 重试。动效只用 transform/opacity。 */
+     文字字距收拢浮现);连不上时才浮现错误文案 + 重试。动效只用 transform/opacity。
+     2026-11-08 删点阵背景;深色底对齐正文「深渊微光」--background #040508 /
+     --foreground #EEF1FC(globals.css .dark),启动页 → 正文衔接无色调跳变。 */
   :root {
     --bg: #f5f5f7;
-    --dot: #d8d8dc;
     --ink: #1d1d1f;
     --ink-secondary: #6e6e73;
     --line: #d2d2d7;
@@ -20,9 +21,8 @@
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #1a1a1c;
-      --dot: #303034;
-      --ink: #f5f5f7;
+      --bg: #040508;
+      --ink: #eef1fc;
       --ink-secondary: #98989d;
       --line: #3a3a3c;
       --btn-bg: #2c2c2e;
@@ -30,7 +30,7 @@
     }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  /* html 也要 overflow:hidden + 背景色:点阵块用负 inset 铺满时不能撑出文档滚动,
+  /* html 也要 overflow:hidden + 背景色:任何意外溢出都不能撑出文档滚动,
      否则 WebView 会露出右侧/底部的灰色滚动条(真机截图反馈的白线事故)。
      背景色同时给到 html,任何过卷/边缘缝隙都跟页面同色,不露白。 */
   html, body { height: 100%; overflow: hidden; }
@@ -44,14 +44,6 @@
     font-family: -apple-system, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', sans-serif;
     -webkit-user-select: none;
     user-select: none;
-  }
-  /* fixed 不参与文档滚动溢出(absolute + 无定位祖先 = 按初始包含块铺开,会撑出滚动条) */
-  .dots {
-    position: fixed;
-    inset: -30px;
-    pointer-events: none;
-    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
-    background-size: 24px 24px;
   }
   .panel {
     position: relative;
@@ -91,13 +83,9 @@
   body.error .status, body.error button, body.error .hint { display: block; }
   /* 退场拍(探测成功后整体微放大淡出,衔接远端 320ms 淡入) */
   body.leaving .panel { animation: out 300ms ease forwards; }
-  body.leaving .dots { animation: dots-out 300ms ease forwards; }
   @keyframes out { to { opacity: 0; transform: scale(1.04); } }
-  @keyframes dots-out { to { opacity: 0; } }
 
   @media (prefers-reduced-motion: no-preference) {
-    .dots { animation: dots-in 700ms cubic-bezier(.22,.9,.28,1) both; }
-    @keyframes dots-in { from { opacity: 0; transform: scale(1.1); } to { opacity: 1; transform: scale(1); } }
     .s1, .s2 { stroke-dasharray: 1; stroke-dashoffset: 1; }
     .s1 { animation: draw 480ms ease-out 120ms forwards; }
     .s2 { animation: draw 480ms ease-out 320ms forwards; }
@@ -123,7 +111,6 @@
 </style>
 </head>
 <body>
-  <div class="dots"></div>
   <div class="panel">
     <div class="lockup">
       <svg class="drawmark" viewBox="0 0 128 98" fill="none" aria-hidden="true">
