@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { cloneElement, isValidElement, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ContextMenuItem } from '@/store/contextMenuStore'
 
 /**
@@ -214,11 +214,20 @@ export function WheelMenu({ items, x, y, size = 180, onAction, menuRef, holdMode
                 }}
               >
                 <path d={sectorPath(C, C, R_OUT, HOLE, a0, a1)} />
-                <foreignObject className="icon" x={ip.x - 11} y={ip.y - 11} width={22} height={22} style={{ pointerEvents: 'none' }}>
-                  <div style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {it.icon ?? <span style={{ fontSize: 10 }}>{it.label.slice(0, 1)}</span>}
-                  </div>
-                </foreignObject>
+                {/* 图标用 SVG 原生嵌套 <svg>(foreignObject 在 WebView 里渲染不稳定,2026-11-08 根治) */}
+                {isValidElement(it.icon) ? (
+                  cloneElement(it.icon as React.ReactElement<React.SVGAttributes<SVGSVGElement>>, {
+                    x: ip.x - 11,
+                    y: ip.y - 11,
+                    width: 22,
+                    height: 22,
+                    className: 'wheel-icon',
+                  })
+                ) : (
+                  <text className="wheel-icon-fallback" x={ip.x} y={ip.y} dominantBaseline="central" textAnchor="middle">
+                    {typeof it.icon === 'string' ? it.icon : it.label.slice(0, 1)}
+                  </text>
+                )}
               </g>
             )
           })}
@@ -239,31 +248,35 @@ const WHEEL_CSS = `
 .wheel-wrap {
   position: fixed; z-index: 80; border-radius: 50%;
   --wheel-danger: 220 38 38;
+  background: rgb(var(--surface) / 0.38);
   -webkit-backdrop-filter: blur(34px) saturate(1.9);
   backdrop-filter: blur(34px) saturate(1.9);
   box-shadow: 0 14px 32px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.25);
 }
-.dark .wheel-wrap { --wheel-danger: 248 113 113; }
+.dark .wheel-wrap { --wheel-danger: 248 113 113; background: rgb(var(--surface) / 0.42); }
 .wheel-svg { display: block; overflow: visible; }
 .wheel-svg .seg { cursor: pointer; transition: opacity .15s; animation: wheelIn .28s cubic-bezier(.2,.9,.3,1.2) backwards; }
 @keyframes wheelIn { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: scale(1); } }
-.wheel-svg .seg path { fill: rgb(255 255 255 / .34); stroke: rgb(15 23 42 / .1); stroke-width: 1.5; transition: fill .12s, stroke .12s; }
-.dark .wheel-svg .seg path { fill: rgb(255 255 255 / .12); stroke: rgb(255 255 255 / .2); }
+.wheel-svg .seg path { fill: rgb(255 255 255 / .62); stroke: rgb(15 23 42 / .14); stroke-width: 1.5; transition: fill .12s, stroke .12s; }
+.dark .wheel-svg .seg path { fill: rgb(255 255 255 / .16); stroke: rgb(255 255 255 / .22); }
 .wheel-base { fill: rgb(100 116 139 / .1); }
 .dark .wheel-base { fill: rgb(var(--surface-muted) / .2); }
 .wheel-ring { fill: none; stroke: rgb(var(--line-strong) / .6); stroke-width: 1; }
 .wheel-ring-inner { fill: none; stroke: rgb(255 255 255 / .5); stroke-width: 1; }
 .dark .wheel-ring-inner { stroke: rgb(255 255 255 / .16); }
-.wheel-svg .seg:hover path, .wheel-svg .seg.kb-focus path { fill: rgb(var(--accent-soft) / .55); stroke: rgb(var(--line-strong) / .8); }
-.dark .wheel-svg .seg:hover path, .dark .wheel-svg .seg.kb-focus path { fill: rgb(var(--accent-soft) / .4); }
+.wheel-svg .seg:hover path, .wheel-svg .seg.kb-focus path { fill: rgb(var(--accent-soft) / .8); stroke: rgb(var(--accent) / .5); }
+.dark .wheel-svg .seg:hover path, .dark .wheel-svg .seg.kb-focus path { fill: rgb(var(--accent-soft) / .55); stroke: rgb(var(--accent) / .45); }
 .wheel-svg .seg.danger:hover path, .wheel-svg .seg.danger.kb-focus path { fill: rgb(var(--wheel-danger) / .16); stroke: rgb(var(--wheel-danger) / .55); }
-.wheel-svg .seg .icon { color: rgb(var(--content-primary)); opacity: 1; transition: opacity .12s; pointer-events: none; }
-.wheel-svg .seg:hover .icon, .wheel-svg .seg.kb-focus .icon { opacity: 1; }
-.wheel-svg .seg.danger .icon { color: rgb(var(--wheel-danger)); opacity: .9; }
-.wheel-svg .seg.danger:hover .icon, .wheel-svg .seg.danger.kb-focus .icon { opacity: 1; }
+.wheel-icon { color: rgb(var(--content-primary)); pointer-events: none; }
+.wheel-svg .seg:hover .wheel-icon, .wheel-svg .seg.kb-focus .wheel-icon { color: rgb(var(--accent)); }
+.wheel-icon-fallback {
+  font-family: var(--font-sans, inherit); font-size: 11px; fill: rgb(var(--content-primary));
+  pointer-events: none;
+}
+.wheel-svg .seg.danger .wheel-icon { color: rgb(var(--wheel-danger)); }
 .wheel-svg .seg.disabled { opacity: .35; cursor: not-allowed; }
-.wheel-hub-circle { fill: rgb(255 255 255 / .72); stroke: rgb(15 23 42 / .08); stroke-width: 1.5; }
-.dark .wheel-hub-circle { fill: rgb(24 26 32 / .62); stroke: rgb(255 255 255 / .12); }
+.wheel-hub-circle { fill: rgb(255 255 255 / .92); stroke: rgb(15 23 42 / .08); stroke-width: 1.5; }
+.dark .wheel-hub-circle { fill: rgb(24 26 32 / .82); stroke: rgb(255 255 255 / .12); }
 .wheel-hub-text {
   font-family: var(--font-sans, inherit); font-size: 11px; fill: rgb(var(--content-primary));
   text-anchor: middle; dominant-baseline: central; pointer-events: none;
