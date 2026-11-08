@@ -156,6 +156,10 @@ for d in fonts fonts-subset kb-pages; do
     cp -an `$OLD/public/`$d/. $DistDir/public/`$d/
   fi
 done
+# .env 不入包(数据库/密钥/闲鱼隧道变量), 垫片 goofish-cli-shim.js 同理 —— 都从 OLD 回填,
+# 否则切换后 500 / 实时价静默失效(2026-11-07 live-bridge 起依赖)
+if [ -f `$OLD/.env ] && [ ! -f $DistDir/.env ]; then cp `$OLD/.env $DistDir/.env; fi
+if [ -f `$OLD/goofish-cli-shim.js ]; then cp `$OLD/goofish-cli-shim.js $DistDir/goofish-cli-shim.js && chmod 755 $DistDir/goofish-cli-shim.js; fi
 # 重启失败(如挂载点缺失)也要回滚,不能靠 set -e 直接退—— 否则线上停在起不来的新产物上
 if ! docker restart aichatt-app >/dev/null; then
   echo "RESTART FAILED, rolling back..."
