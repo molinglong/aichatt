@@ -85,7 +85,8 @@ export async function POST(request: Request) {
     if (name.length > 40) {
       return NextResponse.json({ error: '名称过长（最多 40 字）' }, { status: 400 })
     }
-    const blocked = assertSafeUrl(url)
+    // MCP URL 为用户手动配置的静态资源，放行内网/本机地址（自建 MCP server 场景）
+    const blocked = assertSafeUrl(url, { allowPrivate: true })
     if (blocked) {
       monitor('mcp_ssrf_blocked', { url: url.slice(0, 120) })
       return NextResponse.json({ error: blocked }, { status: 400 })

@@ -15,6 +15,14 @@ export const MCP_MAX_TOOLS_PER_SERVER = 20
 export const MCP_MAX_TOOLS_TOTAL = 30
 export const MCP_TOOL_DESC_MAX_CHARS = 100
 
+/**
+ * initialize 协商前先提议的 MCP 协议版本。
+ * @ai-sdk/mcp 2.x 默认提议最新版（2026-07-28），部分老 server（如 12306-mcp）
+ * 对不认识的版本直接 400 拒绝而非按规范回退；固定提议上一代广泛支持的版本，
+ * 协商后仍以 server 应答为准，对新 server 无损。
+ */
+export const MCP_INITIAL_PROTOCOL_VERSION = '2025-06-18'
+
 /** server slug + 原工具名 → 完整工具名：mcp_<slug>_<tool> */
 export function buildMcpToolName(serverSlug: string, toolName: string): string {
   return `${MCP_TOOL_PREFIX}${serverSlug}_${toolName}`

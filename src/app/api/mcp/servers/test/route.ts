@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { createMCPClient } from '@ai-sdk/mcp'
 import { auth } from '@/lib/auth'
 import { assertSafeUrl } from '@/lib/ssrf'
+import { MCP_INITIAL_PROTOCOL_VERSION } from '@/lib/ai/mcp/mcp-constants'
+import { createMcpCompatFetch } from '@/lib/ai/mcp/mcp-compat.server'
 
 /**
  * MCP server 连接测试：保存前先验证可达性并预览工具清单。
@@ -46,7 +48,8 @@ export async function POST(request: Request) {
     if (!url) {
       return NextResponse.json({ ok: false, error: 'URL 为必填项' }, { status: 400 })
     }
-    const blocked = assertSafeUrl(url)
+    // 与保存接口同口径：MCP URL 为用户静态配置，放行内网/本机地址
+    const blocked = assertSafeUrl(url, { allowPrivate: true })
     if (blocked) {
       return NextResponse.json({ ok: false, error: blocked }, { status: 400 })
     }
@@ -59,7 +62,15 @@ export async function POST(request: Request) {
     }
 
     client = await withTimeout(
-      createMCPClient({ transport: { type: 'http', url, headers } }),
+      createMCPClient({
+        transport: {
+          type: 'http',
+          url,
+          headers,
+          initialProtocolVersion: MCP_INITIAL_PROTOCOL_VERSION,
+          fetch: createMcpCompatFetch(),
+        },
+      }),
       '连接'
     )
     const result = await withTimeout(client.listTools(), '获取工具列表')

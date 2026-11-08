@@ -5,11 +5,13 @@ import { decrypt } from '@/lib/crypto'
 import { assertSafeUrl } from '@/lib/ssrf'
 import {
   buildMcpToolName,
+  MCP_INITIAL_PROTOCOL_VERSION,
   MCP_MAX_SERVERS,
   MCP_MAX_TOOLS_PER_SERVER,
   MCP_MAX_TOOLS_TOTAL,
   type McpPromptToolInfo,
 } from './mcp-constants'
+import { createMcpCompatFetch } from './mcp-compat.server'
 
 /**
  * MCP 桥接 —— 服务端专用（勿客户端 import：含 @ai-sdk/mcp / prisma / crypto）。
@@ -87,7 +89,8 @@ export async function loadMcpToolsForUser(userId: string): Promise<McpLoadResult
   await Promise.allSettled(
     servers.map(async (server) => {
       // SSRF 校验：MCP server URL 同样不允许指向内网
-      const blocked = assertSafeUrl(server.url)
+      // MCP URL 是用户静态配置，放行内网（本机自建 MCP server 场景）
+      const blocked = assertSafeUrl(server.url, { allowPrivate: true })
       if (blocked) {
         result.failures.push(`${server.name}（${blocked}）`)
         return
@@ -105,7 +108,13 @@ export async function loadMcpToolsForUser(userId: string): Promise<McpLoadResult
 
       const client = await withTimeout(
         createMCPClient({
-          transport: { type: 'http', url: server.url, headers },
+          transport: {
+            type: 'http',
+            url: server.url,
+            headers,
+            initialProtocolVersion: MCP_INITIAL_PROTOCOL_VERSION,
+            fetch: createMcpCompatFetch(),
+          },
         }),
         CONNECT_TIMEOUT_MS,
         `MCP「${server.name}」连接`
@@ -209,7 +218,8 @@ export async function listMcpToolInventory(userId: string): Promise<McpServerInv
 
       let client: MCPClient | null = null
       try {
-        const blocked = assertSafeUrl(server.url)
+        // MCP URL 是用户静态配置，放行内网（本机自建 MCP server 场景）
+      const blocked = assertSafeUrl(server.url, { allowPrivate: true })
         if (blocked) {
           item.error = blocked
           return
@@ -224,7 +234,15 @@ export async function listMcpToolInventory(userId: string): Promise<McpServerInv
           }
         }
         client = await withTimeout(
-          createMCPClient({ transport: { type: 'http', url: server.url, headers } }),
+          createMCPClient({
+            transport: {
+              type: 'http',
+              url: server.url,
+              headers,
+              initialProtocolVersion: MCP_INITIAL_PROTOCOL_VERSION,
+              fetch: createMcpCompatFetch(),
+            },
+          }),
           CONNECT_TIMEOUT_MS,
           `MCP「${server.name}」连接`
         )

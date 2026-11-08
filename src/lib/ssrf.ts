@@ -4,6 +4,9 @@
  * 仅允许 http/https 公网地址；拒绝环回/内网/链路本地等特殊网段，
  * 防止 AI 被诱导探测内网服务或云元数据端点（169.254.169.254）。
  *
+ * 两条路径：read_url 等 AI 动态 URL 默认全拦；MCP server 为用户静态配置，
+ * 传 allowPrivate 放行内网（详见 AssertSafeUrlOptions）。
+ *
  * 边界说明：首期做 hostname 字面校验，不做 DNS 解析期校验
  * （DNS rebinding 防护需自定义 lookup，留待后期）。
  */
@@ -17,11 +20,21 @@ const BLOCKED_HOSTNAMES = new Set([
 
 const BLOCKED_SUFFIXES = ['.local', '.internal', '.lan', '.home', '.corp']
 
+export interface AssertSafeUrlOptions {
+  /**
+   * 放行环回/内网/保留网段。仅限用户在设置里静态配置的服务地址（当前只有 MCP server）——
+   * 这类 URL 不受 AI 影响，本机/内网自建 MCP 是正当场景；
+   * AI 动态提供 URL 的出站请求（read_url 等）严禁开启。
+   */
+  allowPrivate?: boolean
+}
+
 /**
  * 校验 URL 是否可安全外呼。
  * @returns 不合法时返回拒绝原因（中文），合法返回 null
  */
-export function assertSafeUrl(rawUrl: string): string | null {
+export function assertSafeUrl(rawUrl: string, options?: AssertSafeUrlOptions): string | null {
+  const allowPrivate = options?.allowPrivate === true
   let parsed: URL
   try {
     parsed = new URL(rawUrl)
@@ -32,6 +45,8 @@ export function assertSafeUrl(rawUrl: string): string | null {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return `仅支持 http/https 协议（收到 ${parsed.protocol || '未知协议'}）`
   }
+
+  if (allowPrivate) return null
 
   // 去 IPv6 字面量的方括号
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
