@@ -1636,6 +1636,20 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
 .rich-md tbody tr:hover { background: rgb(var(--surface-muted) / 0.6); }
 .rich-md tbody tr:last-child td { border-bottom: 0; }
 
+/* 有序表序号::marker 退回正文字体栈:'Noto Sans Digits' 按 unicode-range 只接管 0-9,
+   序号里的句点落到 MiSans/雅黑——数字与点不同源,基线/字重错位,观感像「1.的点位置不对」。
+   marker 整体用一款字体渲染后数字+句点同源;marker 框右对齐,不用管数字等宽 */
+.rich-md ol > li::marker {
+  font-family: 'MiSans', 'Microsoft YaHei UI', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* ol 圆点泄漏修复: li 的 before 伪元素是 ul 圆点子弹(top-[0.8em],悬在行高中部),
+   原靠 Tailwind 任意变体 [:is(ol)>li]:before:hidden 隐藏,实测该变体未编译出 CSS,
+   灰点漏进每个有序项、悬在序号旁,观感像「1. 的句点位置错了」;用普通后代选择器兜死 */
+.rich-md ol > li::before {
+  display: none;
+}
+
 /* ── 代码块语法高亮(rehype-highlight / hljs token)──
    GitHub 配色基准、微降饱和贴合中性灰审美;作用域限定 .rich-md 防污染 */
 .rich-md .hljs-comment,

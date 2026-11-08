@@ -26,6 +26,7 @@ import {
   TriangleAlert,
   BookOpen,
   Globe,
+  CornerDownLeft,
 } from 'lucide-react'
 import { cn, splitReasoningTail } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
@@ -376,6 +377,18 @@ function MessageBubbleInner({
       })
       .finally(() => setArchivedLoading(false))
   }, [archivedOpen, archivedMessages, editedFrom, currentConversationId])
+
+  // 「已编辑」胶囊静默化:挂载后完整展示几秒,随后只剩 History 图标(去文字/边框)。
+  // 悬停图标滑出文字并恢复卡片样式;打开历史版本列表期间始终完整展示,收起后重新倒计时。
+  const [editPillQuiet, setEditPillQuiet] = useState(false)
+  useEffect(() => {
+    if (!editedFrom || archivedOpen) {
+      setEditPillQuiet(false)
+      return
+    }
+    const t = setTimeout(() => setEditPillQuiet(true), 4000)
+    return () => clearTimeout(t)
+  }, [editedFrom, archivedOpen])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Extract reasoning parts from message (for deep thinking / reasoning models)
@@ -1096,7 +1109,6 @@ function MessageBubbleInner({
             <div className="flex items-center gap-1.5 h-[34px] max-md:h-10 px-3 border-b border-line text-[11.5px] max-md:text-[12.5px] text-content-secondary select-none">
               <Pencil className="w-3 h-3 text-content-muted shrink-0" />
               <span>编辑消息</span>
-              <span className="ml-auto max-md:hidden text-[10.5px] text-content-muted">Esc 取消</span>
               <button
                 type="button"
                 disabled={isSaving}
@@ -1137,7 +1149,7 @@ function MessageBubbleInner({
                 {isSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 {isSaving ? '处理中…' : '保存并重答'}
                 {!isSaving && (
-                  <span className="max-md:hidden text-[10px] opacity-60 border border-current rounded px-1 leading-[1.4]">⏎</span>
+                  <CornerDownLeft className="max-md:hidden w-3 h-3 opacity-60" aria-hidden />
                 )}
               </button>
             </div>
@@ -1392,18 +1404,21 @@ function MessageBubbleInner({
           </div>
         )}
 
-        {/* C 分支轻量版: 编辑过的消息提供旧版本回看(仅 user 且有 editedFrom) */}
-        {isUser && editedFrom && (
-          <div className="mt-1 rounded-lg border border-line/50 bg-surface/60 p-2">
+        {/* C 分支轻量版: 编辑过的消息提供旧版本回看(仅 user 且有 editedFrom)。
+            前 4s 完整胶囊提示;静默期后整行消失,入口收进下方操作栏(History 图标);
+            打开历史版本列表时恢复完整胶囊 */}
+        {isUser && editedFrom && (!editPillQuiet || archivedOpen) && (
+          <div className="mt-1 w-fit ml-auto rounded-lg border border-line/50 bg-surface/60 p-2">
             <button
               onClick={toggleArchived}
               className="inline-flex items-center gap-1 text-[11px] text-content-muted hover:text-content-secondary transition-colors"
               aria-expanded={archivedOpen}
+              title="已编辑 · 查看历史版本"
             >
               {archivedLoading ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
+                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
               ) : (
-                <History className="w-3 h-3" />
+                <History className="w-3 h-3 shrink-0" />
               )}
               <span>已编辑 · {archivedOpen ? '收起历史版本' : '查看历史版本'}</span>
               <ChevronDown className={cn('w-3 h-3 transition-transform', archivedOpen ? '' : '-rotate-90')} />
@@ -1456,6 +1471,19 @@ function MessageBubbleInner({
           )}
           {showActions && (
             <>
+            {/* 已编辑消息:胶囊静默期后,历史版本入口收进操作栏(替代独立胶囊行) */}
+            {isUser && editedFrom && editPillQuiet && !archivedOpen && (
+              <button
+                onClick={toggleArchived}
+                className="p-1 rounded-md text-content-muted hover:text-content-primary hover:bg-surface-subtle transition-colors active:scale-95 touch-manipulation"
+                title="已编辑 · 查看历史版本"
+                aria-label="查看历史版本"
+                aria-expanded={archivedOpen}
+                style={{ WebkitTapHighlightColor: 'transparent' }}
+              >
+                <History className="w-3.5 h-3.5" />
+              </button>
+            )}
             {/* 复制按钮组:主按钮=纯文本,下拉=Markdown / HTML */}
             <div ref={copyMenuRef} className="relative inline-flex">
               <button

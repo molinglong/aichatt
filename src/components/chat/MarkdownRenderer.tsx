@@ -489,7 +489,9 @@ const mdComponents: Components = {
   ul: ({ children }) => <ul className="my-2.5 list-none space-y-1.5 pl-6">{children}</ul>,
   ol: ({ children }) => <ol className="my-2.5 list-decimal space-y-1.5 pl-6 marker:font-medium marker:text-content-secondary">{children}</ol>,
   li: ({ children }) => (
-    <li className="relative leading-[1.75] before:content-[''] before:absolute before:-left-[16px] before:top-[0.8em] before:h-[5px] before:w-[5px] before:rounded-full before:bg-content-muted [:is(ol)>li]:before:hidden">
+    // ul 圆点子弹由 before: 伪元素绘制;ol 内的隐藏不用任意变体(实测 [:is(ol)>li]:before:hidden
+    // 未被 Tailwind 编译,灰点漏进有序表悬在序号旁),改由 globals.css 的 .rich-md ol > li::before 兜底
+    <li className="relative leading-[1.75] before:content-[''] before:absolute before:-left-[16px] before:top-[0.8em] before:h-[5px] before:w-[5px] before:rounded-full before:bg-content-muted">
       {withInlineMarks(children)}
     </li>
   ),
