@@ -1,0 +1,165 @@
+/* 试卷预览纸质样式:卷面恒白(纸质卷面定案),底色随主题;内部类名来自 PaperPage 契约片段 */
+.sheet {
+  background: #ffffff;
+  color: #26262b;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
+  padding: 24px 30px 28px;
+  font-size: 15px;
+  line-height: 1.9;
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 640px) {
+  .sheet {
+    padding: 16px 20px 20px;
+    font-size: 15px;
+    border-radius: 10px;
+  }
+  .sheet :global(.question) {
+    margin: 18px 0;
+  }
+}
+
+/* ── 契约片段内部结构(卷头/大题/题/选项/图/答案) ─────────────── */
+.sheet :global(.paper-header) {
+  text-align: center;
+  margin-bottom: 14px;
+}
+.sheet :global(.paper-header h1) {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  line-height: 1.5;
+}
+.sheet :global(.paper-meta) {
+  font-size: 12px;
+  color: #8a8a92;
+  margin: 0;
+}
+.sheet :global(.paper-section) {
+  margin-top: 8px;
+}
+.sheet :global(.section-note) {
+  font-size: 12.5px;
+  color: #75757d;
+  margin: 0 0 10px;
+}
+.sheet :global(.question) {
+  margin: 16px 0;
+}
+.sheet :global(.stem p) {
+  margin: 4px 0;
+}
+.sheet :global(.options) {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 14px;
+}
+.sheet :global(.options li) {
+  margin: 2px 0;
+}
+.sheet :global(.options li)::before {
+  content: attr(data-letter) '. ';
+  font-weight: 600;
+}
+.sheet :global(figure.figure) {
+  margin: 8px auto;
+  text-align: center;
+}
+.sheet :global(figure.figure img) {
+  max-width: 100%;
+  height: auto;
+}
+.sheet :global(figure.figure[data-label])::after {
+  content: attr(data-label);
+  display: block;
+  font-size: 12px;
+  color: #8a8a92;
+  margin-top: 2px;
+}
+/* 官方答案:缺答案为空 div 直接藏;有答案按「作答区」弱化展示 */
+.sheet :global(.answer) {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #ddd;
+  font-size: 13.5px;
+  color: #3c3c44;
+  white-space: pre-wrap;
+}
+.sheet :global(.answer:empty) {
+  display: none;
+}
+
+/* KaTeX 尺寸贴正文 */
+.sheet :global(.katex) {
+  font-size: 1.05em;
+}
+.sheet :global(.pv-tex-block) {
+  display: block;
+  text-align: center;
+  margin: 6px 0;
+}
+
+/* 定位徽标:贴在命中题所在页卷头上方,独立一行 + 左对齐,不压卷头居中标题 */
+.locateBadge {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px 4px;
+  background: rgb(var(--accent));
+  color: rgb(var(--accent-foreground));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 3px 10px;
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.14);
+}
+
+.locateDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+/* 卷流细滚动条:桌面常显细条(卷面很长,给翻卷一个位置感),触屏隐藏 */
+.scroller {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--line, 0 0 0) / 0.25) transparent;
+  overscroll-behavior-y: contain;
+}
+.scroller::-webkit-scrollbar {
+  width: 8px;
+}
+.scroller::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgb(128 128 140 / 0.28);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.scroller::-webkit-scrollbar-thumb:hover {
+  background: rgb(128 128 140 / 0.45);
+  background-clip: padding-box;
+}
+.scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+@media (hover: none) {
+  .scroller {
+    scrollbar-width: none;
+  }
+  .scroller::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* 卷头页标「第 4 页（共 6 页）」:淡一点,不与题目抢注意力 */
+.sheet :global(.paper-meta) {
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: #9a9aa2;
+}

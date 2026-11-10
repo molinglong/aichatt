@@ -96,6 +96,12 @@ export const queryKeys = {
     /** 单本课本详情(阅读器) */
     doc: (docId: string) => [...queryKeys.all, 'kb', 'doc', docId] as const,
   },
+  papers: {
+    /** 整卷元数据 + 题号→页码定位(/papers/[slug] 原卷预览页) */
+    meta: (slug: string) => [...queryKeys.all, 'papers', 'meta', slug] as const,
+    /** 单页原件 html(PaperPage 片段) */
+    page: (slug: string, pageNo: number) => [...queryKeys.all, 'papers', 'page', slug, pageNo] as const,
+  },
   yellowFish: {
     /** 商品收藏列表(实时价卡片星标 + 设置节收藏池共享同一份缓存) */
     favorites: () => [...queryKeys.all, 'yellowFish', 'favorites'] as const,

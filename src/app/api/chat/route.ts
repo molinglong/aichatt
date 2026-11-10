@@ -41,6 +41,8 @@ import {
 import { createWebSearchTool } from "@/lib/ai/search"
 import { KNOWLEDGE_TOOL_NAME, KNOWLEDGE_OUTLINE_TOOL_NAME, KNOWLEDGE_SUBJECT_LABELS } from "@/lib/ai/knowledge-tool"
 import { createKnowledgeOutlineTool, createKnowledgeTool, hasKnowledgeChunks } from "@/lib/ai/knowledge-tool-server"
+import { PAPER_SEARCH_TOOL_NAME, PAPER_ANALYZE_TOOL_NAME } from "@/lib/ai/paper-tool"
+import { createPaperSearchTool, createPaperAnalyzeTool, hasPaperQuestions } from "@/lib/ai/paper-tool-server"
 import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME } from "@/lib/ai/practice-tool"
 import { createPracticeTool, createRecordPracticeTool } from "@/lib/ai/practice-tool-server"
 import { hasQuestions } from "@/lib/study/question-bank"
@@ -1503,6 +1505,20 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     console.error("[chat] Failed to check knowledge chunks:", err)
   }
 
+  // 试卷库真题检索:用户名下有逐题索引才注入(物理级闸门,一张卷没录则工具不存在)。
+  // 只读工具,临时模式/对比模式均可安全使用;按需触发,不参与强制首步检索。
+  let paperSearchTool: ReturnType<typeof createPaperSearchTool> | null = null
+  let paperAnalyzeTool: ReturnType<typeof createPaperAnalyzeTool> | null = null
+  try {
+    if (!isGameMask && (await hasPaperQuestions(userId))) {
+      paperSearchTool = createPaperSearchTool(userId)
+      paperAnalyzeTool = createPaperAnalyzeTool(userId)
+      console.log(`[chat] paper search tool attached`)
+    }
+  } catch (err) {
+    console.error("[chat] Failed to check paper questions:", err)
+  }
+
   // 题库练题:双工具(practice_questions 抽题 / record_practice 判分回传)。
   // 用户名下有题目才注入(物理级闸门);抽题只读但判分回传要写错题本(StudyNote),
   // 故临时模式/对比模式整体不挂载(与其它写入类工具同闸门)。学习模式强制挂载。
@@ -1565,6 +1581,33 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       '- query 只传 2-4 个学科关键词,**禁止把用户的问题整句直接当 query**(整句匹配不到任何课文);先从题目里提取考点词再检索,如「矛盾 普遍性 特殊性」「相反数 定义」;材料题给的数字/地名是表象,提它背后的考点词,如题干给德国铁路/煤/钢增长数据问「主要原因」,检索「德国 统一 经济」或「第二次工业革命 德国」,而不是「铁路 煤产量」。',
       '- kind 分流:概念/定义/公式/翻书/讲评/出题 → kind="textbook"(查课本原文);答题思路/大题怎么答/答题模板 → kind="material"(查资料);拿不准就先用 textbook 查一次,再用 material 查一次,两边结果按来源标注使用。',
       `闲聊、翻译、写代码、通用常识不需要调用。画图表/数据可视化也不需要调用——用户要图表时按「数据可视化规范」直接用你掌握的数据输出 \`\`\`chart 块,检索无果绝不构成改写成纯文字分析的理由。${knowledgeSubjectHint}回答时优先引用检索到的原文并标注来源:课本标注「书名+章节」,资料标注「资料名」;课本原文与你的知识冲突时,以课本为准。`,
+    ].join('\n'))
+  }
+
+  // 试卷库真题检索能力段:触发清单+考次口径写在这里(模型自主决策依据)。
+  if (paperSearchTool) {
+    systemParts.push([
+      '## 真题检索能力',
+      '你拥有 search_papers 工具(检索用户录入的试卷库:真题逐题索引,含卷名/年份/题号/分值/题干/选项/考点标签)。涉及以下场景时**主动调用 search_papers**:',
+      '- 用户问某考点「考过几次/常不常考/是不是高频考点/重点考什么」→ query 用考纲考点词(如「解三角形」「命题的否定」),返回的 topicCounts 就是考次统计(含出处),直接引用作答',
+      '- 用户想要真题/例题/「找几道X的题」/「有没有考过X」→ 检索后按真题原文出题或讲评',
+      '- 用户要求「翻试卷/看看卷子里有什么」→ 按卷名关键词检索后组织内容',
+      '检索纪律:',
+      '- query 传 2-4 个考点关键词,禁止把用户问题整句当 query;考点词优先用考纲/提纲的节名(如「解三角形」「基本不等式」),题干词(如「射击成绩」)只作补充',
+      '- 真题题干含 $...$ LaTeX 与 [图N] 占位(images 是图链 URL):展示题目时用试卷块协议(:::choice/:::question + :::answer)并原样保留公式与数据,配图用 ![图N](URL) 内联;answer 为 null 的题必须告知官方答案缺失,不得编造',
+      '- 报考次数字时注明口径「按考点标签计,一题多考点各计一次」;闲聊/翻译/写代码不需要调用。',
+    ].join('\n'))
+  }
+
+  // 试卷整理/复习规划能力段:与检索共用闸门,「整理试卷」「出规划」两类指令的触发与流程纪律。
+  if (paperAnalyzeTool) {
+    systemParts.push([
+      '## 试卷整理与复习规划能力',
+      '你拥有 analyze_papers 工具(返回试卷清单/考点考次排行/错题本弱点联动)。以下场景**第一步调用 analyze_papers**:',
+      '- 「整理试卷/分析卷子/总结考点分布/看看试卷库有什么」→ 按 note 的报告结构输出整理报告',
+      '- 「出复习规划/安排复习/接下来怎么复习」→ 先拿数据再排优先级:高频考点(topicStats)×薄弱(weakTopics)×课本章定位,规划逐条可执行',
+      '- 用户本次消息已明确要求「记到待办/写进待办」的,视为已同意:规划给完直接用 manage_todo(add) 逐条落库,不要再反问;用户只要规划、没提待办的,给完规划后问一句「要不要落成待办」,同意前不写',
+      '- 用户问的是具体题目/真题原文时用 search_papers(检索),analyze_papers 只管全库统计,两者可先后都调',
     ].join('\n'))
   }
 
@@ -2189,7 +2232,7 @@ const result = streamText({
     (cmSupportsReasoning || /dashscope\.aliyuncs\.com/i.test(cmBaseURL))
       ? { providerOptions: { openai: { reasoningEffort: "medium" } } }
       : {}),
-    ...((searchTool || urlReaderTool || calcTool || timeTool || yellowFishTool || yellowFishWatchTool || yellowFishLiveTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
+    ...((searchTool || urlReaderTool || calcTool || timeTool || yellowFishTool || yellowFishWatchTool || yellowFishLiveTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || paperSearchTool || paperAnalyzeTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
       ? {
           tools: {
             ...(searchTool ? { web_search: searchTool } : {}),
@@ -2202,6 +2245,8 @@ const result = streamText({
             ...(yellowFishLiveTool ? { [YELLOW_FISH_LIVE_TOOL_NAME]: yellowFishLiveTool } : {}),
             ...(knowledgeTool ? { [KNOWLEDGE_TOOL_NAME]: knowledgeTool } : {}),
             ...(knowledgeOutlineTool ? { [KNOWLEDGE_OUTLINE_TOOL_NAME]: knowledgeOutlineTool } : {}),
+            ...(paperSearchTool ? { [PAPER_SEARCH_TOOL_NAME]: paperSearchTool } : {}),
+            ...(paperAnalyzeTool ? { [PAPER_ANALYZE_TOOL_NAME]: paperAnalyzeTool } : {}),
             ...(practiceTool ? { [PRACTICE_TOOL_NAME]: practiceTool } : {}),
             ...(recordPracticeTool ? { [RECORD_TOOL_NAME]: recordPracticeTool } : {}),
             ...(clarifyTool ? { [CLARIFY_TOOL_NAME]: clarifyTool } : {}),

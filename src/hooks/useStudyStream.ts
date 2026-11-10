@@ -10,11 +10,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 export interface StudyRef {
+  /** 引用分型:textbook=课本,paper=真题;历史步缺省按 textbook */
+  kind?: 'textbook' | 'paper'
   doc: string
   chapter: string | null
   section: string | null
   heading: string
   content: string
+  /** 真题引用附带:原卷 slug 与题号,供「查看原卷页」链接(/papers/[slug]?number=N) */
+  paperSlug?: string
+  questionNumber?: number
 }
 
 export interface StudySessionView {

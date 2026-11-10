@@ -11,13 +11,16 @@
  *   3) 图片复制到 public/exam-papers/<slug>/ 并把 src 改写为 /exam-papers/<slug>/…，
  *      使 PaperPage.html 脱离源目录也能直接渲染
  *   4) 幂等落库：同用户同 slug 更新元数据、删旧页、插新页(单事务)
+ *   5) 逐题解析：按契约抽取每道 div.question 的题干/选项/图/答案 → PaperQuestion 一题一行
+ *      (检索/考点统计的投影层；PaperPage 仍是整卷原件。缺答案题 answer=null，不回填 Question)
  *
- * 题目暂不写入 Question：卷面答案为手写或缺失，空答案题进入抽题池会污染练习。
+ * 题目写入 PaperQuestion(逐题索引层)而非 Question：卷面答案缺失(answer=null)，
+ * 与练题池隔离；官方答案齐备后由回填脚本搬运进 Question。
  *
  * 用法:
  *   node scripts/import-exam-paper.cjs data/exam-papers/guangxi-math-mock-1
  *        [--user admin@qq.com] [--slug 覆盖目录名] [--dry]
- *        [--allow-gaps] [--allow-score-mismatch]
+ *        [--allow-gaps] [--allow-score-mismatch] [--allow-empty-pages]
  */
 const fs = require('fs')
 const path = require('path')
@@ -50,9 +53,10 @@ const USER_EMAIL = args.user || 'admin@qq.com'
 const DRY = !!args.dry
 const ALLOW_GAPS = !!args['allow-gaps']
 const ALLOW_SCORE_MISMATCH = !!args['allow-score-mismatch']
+const ALLOW_EMPTY_PAGES = !!args['allow-empty-pages']
 
 if (!INPUT_DIR || !fs.existsSync(INPUT_DIR)) {
-  console.error('用法: node scripts/import-exam-paper.cjs data/exam-papers/<slug> [--user email] [--slug 名] [--dry] [--allow-gaps] [--allow-score-mismatch]')
+  console.error('用法: node scripts/import-exam-paper.cjs data/exam-papers/<slug> [--user email] [--slug 名] [--dry] [--allow-gaps] [--allow-score-mismatch] [--allow-empty-pages]')
   process.exit(1)
 }
 
@@ -177,7 +181,11 @@ function parsePages(pages) {
       }
       questions.push({ number, score, kind })
     }
-    if (!questions.length) { console.error(`${p.name}: 未解析出任何题目`); process.exit(1) }
+    if (!questions.length) {
+      const msg = `${p.name}: 未解析出任何题目`
+      if (!ALLOW_EMPTY_PAGES) { console.error(msg + '；纯语料页(整页阅读材料无题目)确认无误再加 --allow-empty-pages'); process.exit(1) }
+      console.warn('  警告: ' + msg)
+    }
 
     const answerMissing = (art.body.match(/data-answer-missing="true"/g) || []).length
     const images = []
@@ -268,6 +276,157 @@ function materializeImages(p) {
   return html
 }
 
+// —— 逐题解析（PaperQuestion 投影层）——
+
+/** 去标签转文本：表格转行(单元格用全角｜分隔,防 Markdown 管道符冲突)、小问/材料/换行处理；
+ *  其余标签剥掉，实体最后解码(防 &lt;p&gt; 被当标签误删)；LaTeX $...$ 原样保留 */
+function htmlToText(html) {
+  return decodeEntities(
+    html
+      .replace(/<table\b[^>]*>([\s\S]*?)<\/table>/gi, (_, inner) => {
+        const rows = []
+        const trRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi
+        let tr
+        while ((tr = trRe.exec(inner))) {
+          const cells = []
+          const tdRe = /<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi
+          let td
+          while ((td = tdRe.exec(tr[1]))) cells.push(htmlToText(td[1]).replace(/\s+/g, ' ').trim())
+          rows.push(cells.join('｜'))
+        }
+        return '\n' + rows.join('\n') + '\n'
+      })
+      .replace(/<p\b[^>]*class="[^"]*subquestion[^"]*"[^>]*>/gi, (tag) => {
+        const no = attr(tag, 'data-no')
+        return '\n' + (no ? `(${no}) ` : '')
+      })
+      .replace(/<blockquote\b[^>]*>/gi, '\n【材料】')
+      .replace(/<\/blockquote>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+  )
+    .split('\n')
+    .map((l) => l.trim())
+    .join('\n')
+    .replace(/\n{2,}/g, '\n')
+    .trim()
+}
+
+/** figure → [图N] / [缺图: caption] 占位标记；img src 收进 images 数组 */
+function markFigures(html, images) {
+  return html.replace(/<figure\b([^>]*)>([\s\S]*?)<\/figure>/gi, (_, fAttrs, inner) => {
+    if (/figure-missing/.test(fAttrs)) {
+      const capHtml = (inner.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i) || [])[1] || ''
+      const cap = htmlToText(capHtml).trim()
+      return `\n[缺图: ${cap || '图'}]\n`
+    }
+    const label = attr('<figure' + fAttrs + '>', 'data-label') || '图'
+    const srcM = inner.match(/<img\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/i)
+    if (srcM && srcM[2].trim()) images.push(srcM[2].trim())
+    return `\n[${label}]\n`
+  })
+}
+
+/** 平衡扫描：从 startIdx 处的 <div …> 开标签起取整个 div（嵌套安全），返回 {inner, end} */
+function extractDivBlock(html, startIdx) {
+  const openEnd = html.indexOf('>', startIdx)
+  if (openEnd < 0) return null
+  const re = /<\/?div\b[^>]*>/g
+  re.lastIndex = openEnd + 1
+  let depth = 1
+  let m
+  while ((m = re.exec(html))) {
+    if (/^<div/i.test(m[0])) depth++
+    else {
+      depth--
+      if (depth === 0) return { inner: html.slice(openEnd + 1, m.index), end: re.lastIndex }
+    }
+  }
+  return null
+}
+
+/** 取 html 内第一个 class 含 className 的 div，返回 {openTag, inner} | null */
+function extractDivByClass(html, className) {
+  const re = /<div\b[^>]*>/gi
+  let m
+  while ((m = re.exec(html))) {
+    if (!classList(m[0]).includes(className)) continue
+    const blk = extractDivBlock(html, m.index)
+    return blk ? { openTag: m[0], inner: blk.inner } : null
+  }
+  return null
+}
+
+/** 解析单个 question div 块 → PaperQuestion 行字段（不含 id/paperId/userId/topics） */
+function parseQuestionBlock(pageNo, section, openTag, block, errors) {
+  const number = intAttr(openTag, 'data-number')
+  const kind = attr(openTag, 'data-kind')
+  const score = intAttr(openTag, 'data-score')
+  const label = `page-${pageNo} Q${number}`
+  if (!Number.isInteger(number) || !['choice', 'answer'].includes(kind) || !Number.isInteger(score)) {
+    errors.push(`${label}: 开标签缺合法 data-number/kind/score`)
+    return null
+  }
+  const images = []
+  const marked = markFigures(block, images)
+
+  const stemDiv = extractDivByClass(marked, 'stem')
+  const stem = stemDiv ? htmlToText(stemDiv.inner) : ''
+  if (!stem) errors.push(`${label}: 题干为空(缺 div.stem?)`)
+
+  const options = []
+  const olM = marked.match(/<ol\b[^>]*class="[^"]*options[^"]*"[^>]*>([\s\S]*?)<\/ol>/i)
+  if (olM) {
+    const liRe = /<li\b([^>]*)>([\s\S]*?)<\/li>/gi
+    let li
+    while ((li = liRe.exec(olM[1]))) {
+      const letter = attr('<li' + li[1] + '>', 'data-letter') || ''
+      const text = htmlToText(li[2]).trim()
+      options.push(letter ? `${letter}. ${text}` : text)
+    }
+  }
+
+  const ansDiv = extractDivByClass(marked, 'answer')
+  let answer = null
+  if (ansDiv) {
+    const ansMissing = attr(ansDiv.openTag, 'data-answer-missing') === 'true'
+    const ansText = htmlToText(ansDiv.inner).trim()
+    if (!ansMissing && ansText) {
+      const anaDiv = extractDivByClass(marked, 'analysis')
+      const anaText = anaDiv ? htmlToText(anaDiv.inner).trim() : ''
+      answer = anaText ? `${ansText}\n解析：${anaText}` : ansText
+    }
+  }
+
+  if (kind === 'choice' && options.length < 2) errors.push(`${label}: 选择题选项不足(${options.length})`)
+  if (kind === 'answer' && options.length) errors.push(`${label}: 非选择题却带 ${options.length} 个选项`)
+
+  return { number, section, kind, multiple: attr(openTag, 'data-multiple') === 'true', score, stem, options, images, answer }
+}
+
+/** 逐题抽取一页（须传入图片路径已改写的 article html，images 直接是可路由 URL） */
+function extractQuestionsFromPage(p, articleHtml, errors) {
+  const out = []
+  const re = /<section\b[^>]*>|<div\b[^>]*>/gi
+  let curSection = null
+  let m
+  while ((m = re.exec(articleHtml))) {
+    if (/^<section/i.test(m[0])) {
+      const s = attr(m[0], 'data-section')
+      if (s) curSection = s
+      continue
+    }
+    if (!classList(m[0]).includes('question')) continue
+    const blk = extractDivBlock(articleHtml, m.index)
+    if (!blk) { errors.push(`page-${p.pageNo}: question div 未闭合`); break }
+    const q = parseQuestionBlock(p.pageNo, curSection, m[0], articleHtml.slice(m.index, blk.end), errors)
+    if (q) out.push(q)
+    re.lastIndex = blk.end
+  }
+  return out
+}
+
 async function main() {
   const pages = readPages()
   const { parsed, allQ, scoreSum } = parsePages(pages)
@@ -277,7 +436,8 @@ async function main() {
   console.log(`目录: ${SOURCE_DIR}  slug=${SLUG}`)
   console.log(`页数: ${parsed.length}  题数: ${allQ.length}  分值合计: ${scoreSum}/${meta.totalScore}  时长: ${meta.durationMin} 分钟`)
   parsed.forEach((p) => {
-    console.log(`  page-${String(p.pageNo).padStart(2, '0')}: Q${p.questions[0].number}–Q${p.questions[p.questions.length - 1].number}  ${p.questions.length} 题  ${p.images.length} 图  ${p.answerMissing} 题标缺答案`)
+    const range = p.questions.length ? `Q${p.questions[0].number}–Q${p.questions[p.questions.length - 1].number}` : '无题(纯语料页)'
+    console.log(`  page-${String(p.pageNo).padStart(2, '0')}: ${range}  ${p.questions.length} 题  ${p.images.length} 图  ${p.answerMissing} 题标缺答案`)
   })
   if (meta.year === null) console.log('  提示: data-year 为空，年份留空')
 
@@ -287,7 +447,29 @@ async function main() {
     console.log(`图片已复制到: ${path.relative(ROOT, PUBLIC_SLUG_DIR).split(path.sep).join('/')}/`)
   }
 
+  // 逐题解析（在图片路径改写后做，images 直接是可路由 URL）
+  const parseErrors = []
+  const paperQuestions = []
+  for (const p of parsed) {
+    const pageRow = pageHtml.find((x) => x.pageNo === p.pageNo)
+    paperQuestions.push(...extractQuestionsFromPage(p, pageRow.html, parseErrors))
+  }
+  const parsedNos = new Set(paperQuestions.map((q) => q.number))
+  if (paperQuestions.length !== allQ.length) parseErrors.push(`解析题数 ${paperQuestions.length} ≠ 卷面题数 ${allQ.length}`)
+  for (const q of allQ) if (!parsedNos.has(q.number)) parseErrors.push(`第 ${q.number} 题未被解析出`)
+  if (parseErrors.length) {
+    parseErrors.forEach((e) => console.error('  解析错误: ' + e))
+    process.exit(1)
+  }
+  const noAnswer = paperQuestions.filter((q) => q.answer === null).length
+  const imgTotal = paperQuestions.reduce((n, q) => n + q.images.length, 0)
+  console.log(`逐题解析: ${paperQuestions.length} 题（选择 ${paperQuestions.filter((q) => q.kind === 'choice').length} / 解答填空 ${paperQuestions.filter((q) => q.kind === 'answer').length}），缺答案 ${noAnswer}，题图 ${imgTotal} 张`)
+
   if (DRY) {
+    const sample = paperQuestions.find((q) => q.images.length && q.options.length) || paperQuestions[0]
+    const tableQ = paperQuestions.find((q) => q.stem.includes('｜'))
+    console.log(`\n样例 Q${sample.number}（含图/选项）:\n` + JSON.stringify({ ...sample, stem: sample.stem.slice(0, 120) }, null, 1))
+    if (tableQ) console.log(`\n表格题样例 Q${tableQ.number} stem:\n` + tableQ.stem)
     console.log('\n--dry 完成，未写数据库')
     return
   }
@@ -339,9 +521,24 @@ async function main() {
         `INSERT INTO "PaperPage" (id, "paperId", "pageNo", html) VALUES ${values.join(',')}`,
         params
       )
+      // 逐题索引层：重建 PaperQuestion（与页面同事务，保持整卷幂等）
+      await client.query(`DELETE FROM "PaperQuestion" WHERE "paperId" = $1`, [paperId])
+      const QCOLS = 13
+      const qValues = []
+      const qParams = []
+      paperQuestions.forEach((q, i) => {
+        const b = i * QCOLS
+        qValues.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9},$${b + 10},$${b + 11},$${b + 12},$${b + 13})`)
+        qParams.push(crypto.randomUUID(), paperId, userId, q.number, q.section, q.kind, q.multiple, q.score, q.stem, q.options, q.images, q.answer, [])
+      })
+      await client.query(
+        `INSERT INTO "PaperQuestion" (id, "paperId", "userId", number, section, kind, multiple, score, stem, options, images, answer, topics) VALUES ${qValues.join(',')}`,
+        qParams
+      )
       await client.query('COMMIT')
       console.log(`落库完成: Paper ${paperId}`)
       console.log(`归属用户: ${USER_EMAIL}；页面 ${pageHtml.length} 页；题目 ${allQ.length} 道`)
+      console.log(`逐题索引已写入 PaperQuestion ${paperQuestions.length} 行（缺答案 ${noAnswer} 题）。`)
       console.log('未写入 Question：待官方答案齐备后回填 paperId/number/score。')
     } catch (e) {
       await client.query('ROLLBACK').catch(() => {})

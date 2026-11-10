@@ -42,9 +42,13 @@ function plainHeadline(content: string): string {
 }
 
 function RefsChips({ refs }: { refs: StudyRef[] }) {
-  // 两级折叠:标题行收起整个引用区;展开后点单个 chip 再看课本原文
+  // 两级折叠:标题行收起整个引用区;展开后点单个 chip 再看原文
+  // 分型:paper=真题出处,paper+textbook 混合时标题只写「引用」(chip 图标区分)
   const [listOpen, setListOpen] = useState(false)
   const [detail, setDetail] = useState<number | null>(null)
+  const hasPaper = refs.some((r) => r.kind === 'paper')
+  const hasTextbook = refs.some((r) => r.kind !== 'paper')
+  const label = hasPaper ? (hasTextbook ? '引用' : '真题出处') : '课本引用'
   return (
     <div className="px-4 pb-3">
       <button
@@ -57,7 +61,7 @@ function RefsChips({ refs }: { refs: StudyRef[] }) {
           className={cn('h-3 w-3 transition-transform duration-200', listOpen && 'rotate-180')}
           aria-hidden
         />
-        课本引用 · {refs.length} 条
+        {label} · {refs.length} 条
       </button>
       {listOpen && (
         <>
@@ -74,7 +78,7 @@ function RefsChips({ refs }: { refs: StudyRef[] }) {
                     : 'bg-accent-soft text-accent hover:bg-accent/20'
                 )}
               >
-                📖 {r.doc}
+                {r.kind === 'paper' ? '📄' : '📖'} {r.doc}
                 {r.chapter ? ` · ${r.chapter}` : ''}
                 {r.section ? ` · ${r.section}` : ''}
               </button>
@@ -88,9 +92,28 @@ function RefsChips({ refs }: { refs: StudyRef[] }) {
                 {refs[detail].section ? ` · ${refs[detail].section}` : ''}
                 {refs[detail].heading ? ` · ${refs[detail].heading}` : ''}
               </div>
-              <div className="line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-content-secondary">
-                {refs[detail].content}
-              </div>
+              {refs[detail].kind === 'paper' ? (
+                // 真题 chip 的 content 是原卷题干(含 $...$ LaTeX):按纯文本渲染会把公式原样漏出来
+                <MarkdownRenderer
+                  content={refs[detail].content}
+                  rich
+                  className="line-clamp-4 text-xs leading-relaxed text-content-secondary"
+                />
+              ) : (
+                <div className="line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-content-secondary">
+                  {refs[detail].content}
+                </div>
+              )}
+              {refs[detail].paperSlug && refs[detail].questionNumber != null && (
+                <a
+                  href={`/papers/${refs[detail].paperSlug}?number=${refs[detail].questionNumber}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex items-center gap-1 text-[11px] text-accent transition-opacity hover:opacity-80"
+                >
+                  查看原卷页 ↗
+                </a>
+              )}
             </div>
           )}
         </>

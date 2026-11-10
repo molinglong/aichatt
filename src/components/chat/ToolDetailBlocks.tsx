@@ -13,14 +13,152 @@
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { knowledgeVolumeLabel, type KnowledgeHit, type KnowledgeOutlineDoc } from '@/lib/ai/knowledge-tool'
 import type { PracticeItem } from '@/lib/ai/practice-tool'
+import type { PaperSearchOutput, PaperAnalyzeOutput } from '@/lib/ai/paper-tool'
 
 const KIND_LABEL: Record<string, string> = { textbook: '课本', material: '资料' }
+
+/** 真题检索:考次统计 + 逐题出处与题干原文;官方答案只标注有无,不展示内容(防剧透) */
+export function PaperDetail({ output }: { output: PaperSearchOutput }) {
+  return (
+    <div className="flex flex-col gap-3">
+      {output.topicCounts.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-[10px] font-medium text-content-muted">考点考次（一题多考点各计一次）</div>
+          {output.topicCounts.map((t) => (
+            <div key={t.topic} className="text-[11px] leading-snug text-content-secondary">
+              <span className="font-medium text-content-primary">{t.topic}</span>
+              <span> · 考过 {t.count} 次</span>
+              {t.refs.length > 0 && <span className="text-content-muted"> · {formatPaperRefs(t.refs)}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {output.results.map((r, i) => (
+        <div key={`${r.paperSlug}-${r.number}-${i}`} className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-content-muted">
+            <span className="shrink-0 font-mono">[{i + 1}]</span>
+            <span className="text-content-secondary">{r.paperTitle}</span>
+            <span>· 第 {r.number} 题</span>
+            <MetaChip>{r.score} 分</MetaChip>
+            <MetaChip>{r.kind === 'choice' ? (r.multiple ? '选择·多选' : '选择') : '解答/填空'}</MetaChip>
+            <MetaChip>{r.answer == null ? '官方答案缺失' : '有官方答案'}</MetaChip>
+            <a
+              href={`/papers/${r.paperSlug}?number=${r.number}`}
+              target="_blank"
+              rel="noreferrer"
+              className="shrink-0 whitespace-nowrap rounded bg-surface-subtle px-1 py-0.5 text-[10px] text-content-muted underline decoration-line underline-offset-2 transition-colors hover:text-accent"
+            >
+              原卷页 ↗
+            </a>
+          </div>
+          <MarkdownRenderer content={r.stem} rich className="text-[12px] leading-[1.7] text-content-secondary" />
+          {r.options.length > 0 && (
+            <MarkdownRenderer
+              content={r.options.join('\n\n')}
+              rich
+              className="text-[12px] leading-[1.7] text-content-secondary"
+            />
+          )}
+          {r.images.map((src) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={src} src={src} alt="题图" className="max-h-28 rounded border border-line/60" />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const SUBJECT_LABEL: Record<string, string> = {
+  math: '数学',
+  chinese: '语文',
+  english: '英语',
+  physics: '物理',
+  chemistry: '化学',
+  biology: '生物',
+  history: '历史',
+  geography: '地理',
+  politics: '政治',
+}
+
+/** 试卷整理:试卷清单(题量/题型/答案与打标状态) + 考点考次榜(带课本章) + 错题本弱点联动 */
+export function PaperAnalysisDetail({ output }: { output: PaperAnalyzeOutput }) {
+  return (
+    <div className="flex flex-col gap-3">
+      {output.overview.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-[10px] font-medium text-content-muted">试卷清单</div>
+          {output.overview.map((p) => {
+            const meta = [p.year, p.region, SUBJECT_LABEL[p.subject] ?? p.subject].filter(Boolean).join(' · ')
+            return (
+              <div key={p.slug} className="text-[11px] leading-snug text-content-secondary">
+                <span className="font-medium text-content-primary">{p.title}</span>
+                {meta && <span className="text-content-muted"> · {meta}</span>}
+                <span>
+                  {' '}
+                  ·{' '}
+                  {p.questions === 0
+                    ? '未录入题目'
+                    : `${p.questions} 题（选择 ${p.choice}${p.multiChoice > 0 ? ` 含多选 ${p.multiChoice}` : ''} / 解答·填空 ${p.answerQ}）`}
+                </span>
+                {p.questions > 0 && p.answered < p.questions && <MetaChip>缺答案 {p.questions - p.answered}</MetaChip>}
+                {p.questions > 0 && <MetaChip>已打标 {p.tagged}</MetaChip>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {output.topicStats.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-[10px] font-medium text-content-muted">考点考次排行（一题多考点各计一次）</div>
+          {output.topicStats.map((s) => (
+            <div key={s.topic} className="text-[11px] leading-snug text-content-secondary">
+              <span className="font-medium text-content-primary">{s.topic}</span>
+              <span> · 考过 {s.count} 次</span>
+              {s.chapter && <span className="text-content-muted"> · {s.chapter}</span>}
+              {s.refs.length > 0 && (
+                <span className="text-content-muted"> · {formatPaperRefs(s.refs.slice(0, 3))}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {output.weakTopics.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-[10px] font-medium text-content-muted">错题本弱点联动</div>
+          {output.weakTopics.map((w) => (
+            <div key={w.topic} className="text-[11px] leading-snug text-content-secondary">
+              <span className="font-medium text-content-primary">{w.topic}</span>
+              <span> · 错题 {w.noteCount} 张</span>
+              <span> · 平均掌握度 {Math.round(w.avgMastery * 100)}%</span>
+              {w.dueCount > 0 && <MetaChip>{w.dueCount} 张待复习</MetaChip>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 const DIFFICULTY_LABEL: Record<string, string> = { basic: '基础', medium: '中等', hard: '较难' }
 
 function MetaChip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="shrink-0 rounded bg-surface-subtle px-1 py-0.5 text-[10px] text-content-muted">{children}</span>
+    <span className="shrink-0 whitespace-nowrap rounded bg-surface-subtle px-1 py-0.5 text-[10px] text-content-muted">
+      {children}
+    </span>
   )
+}
+
+/** 出处精简:全部命中同一卷时只列题号(「卷名 · 第8/7/9题」),不同卷才逐条铺开 */
+function formatPaperRefs(refs: string[]): string {
+  if (refs.length === 0) return ''
+  if (refs.length === 1) return refs[0]
+  const titles = new Set(refs.map((r) => r.replace(/\s*·\s*第\d+题$/, '')))
+  if (titles.size === 1) {
+    const nums = refs.map((r) => (r.match(/第(\d+)题/) || [])[1]).filter(Boolean)
+    if (nums.length === refs.length) return `${Array.from(titles)[0]} · 第${nums.join('/')}题`
+  }
+  return refs.join(' / ')
 }
 
 /** 查课本:每条命中的出处(书 / 册别 / 章·节) + 框题 + 正文;按页导入的书附「看原文」跳阅读器对应页 */

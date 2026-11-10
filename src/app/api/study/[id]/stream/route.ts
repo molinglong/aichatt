@@ -3,7 +3,7 @@
  * body {action: start|continue|easier|solution|followup, text?, rate?: {idx, rating}}
  *
  * 一次调用 = 讲义流里的一张新卡(StudyStep):
- * - 工具白名单:search_knowledge(引用捕获 → SSE refs 事件)+ finish_study(结构化结课)
+ * - 工具白名单:search_knowledge / search_papers(引用捕获 → SSE refs 事件)+ finish_study(结构化结课)
  * - 草稿行:创建 streaming=true 的 StudyStep,600ms 节流快照,异常/超时定格
  * - SSE 轻协议:data: {type: delta|refs|done|error, ...}
  * - 后台续跑:客户端断开不中止(serverDrain 语义等价——本路由直接消费 fullStream),
@@ -18,6 +18,8 @@ import { prisma } from "@/lib/db"
 import type { Prisma } from "@/generated/prisma/client"
 import { resolveChatModel } from "@/lib/ai/model-resolver.server"
 import { createKnowledgeTool } from "@/lib/ai/knowledge-tool-server"
+import { createPaperSearchTool, hasPaperQuestions } from "@/lib/ai/paper-tool-server"
+import { PAPER_SEARCH_TOOL_NAME, type PaperSearchOutput } from "@/lib/ai/paper-tool"
 import {
   STUDY_FINISH_TOOL_NAME,
   STUDY_MASTERY_TOOL_NAME,
@@ -43,11 +45,16 @@ const STUDY_STEP_BUDGET = 8
 const FRESH_STREAMING_MS = 60 * 1000
 
 interface KnowledgeRef {
+  /** 引用分型:textbook=课本检索,paper=真题检索;缺省按 textbook 处理(历史步无此字段) */
+  kind?: "textbook" | "paper"
   doc: string
   chapter: string | null
   section: string | null
   heading: string
   content: string
+  /** 真题引用附带:原卷 slug 与题号,供「查看原卷页」链接(/papers/[slug]?number=N) */
+  paperSlug?: string
+  questionNumber?: number
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -158,12 +165,17 @@ ${session.notes.trim()}`
   }
 
   const startLevel = isStudyStartLevel(session.startLevel) ? session.startLevel : "beginner"
-  const systemPrompt = buildStudySystemPrompt({ startLevel, action, studyContext })
 
-  // 工具白名单:课本检索 + 结构化结课 + 掌握度上报(变式判分)
+  // 工具白名单:课本检索 + 结构化结课 + 掌握度上报(变式判分);试卷库有题时再挂真题检索
   let collectedRefs: KnowledgeRef[] = []
+  let collectedPaperRefs: KnowledgeRef[] = []
   let finishSummary: string | null = null
   const knowledgeTool = createKnowledgeTool(userId)
+  const paperSearchTool = (await hasPaperQuestions(userId).catch(() => false))
+    ? createPaperSearchTool(userId)
+    : null
+  const systemPrompt = buildStudySystemPrompt({ startLevel, action, studyContext, paperSearch: !!paperSearchTool })
+
   const tools = {
     search_knowledge: {
       ...knowledgeTool,
@@ -186,6 +198,34 @@ ${session.notes.trim()}`
         return out
       },
     },
+    ...(paperSearchTool
+      ? {
+          [PAPER_SEARCH_TOOL_NAME]: {
+            ...paperSearchTool,
+            execute: async (
+              input: Parameters<typeof paperSearchTool.execute>[0],
+              opts: Parameters<typeof paperSearchTool.execute>[1]
+            ) => {
+              const out = (await paperSearchTool.execute(input, opts)) as PaperSearchOutput
+              if (Array.isArray(out?.results) && out.results.length) {
+                // 映射为 StudyRef 形状供卡上「真题出处」chips 复用:chip 显示 卷名 · 第N题 · 分值,
+                // 详情正文给题干截断;heading 借放考点首项(仅详情头显示)
+                collectedPaperRefs = out.results.slice(0, 5).map((r) => ({
+                  kind: "paper" as const,
+                  doc: r.paperTitle,
+                  chapter: `第${r.number}题 · ${r.score}分`,
+                  section: [r.year, r.region].filter(Boolean).join(" ") || null,
+                  heading: r.topics[0] ?? "",
+                  content: r.stem.slice(0, 200),
+                  paperSlug: r.paperSlug,
+                  questionNumber: r.number,
+                }))
+              }
+              return out
+            },
+          },
+        }
+      : {}),
     [STUDY_FINISH_TOOL_NAME]: tool({
       description:
         "本题讲解完成时调用。summary 传给用户的要点总结(3 条以内,每条一句)。调用后立即结束回复,不要再输出其他内容。",
@@ -329,8 +369,8 @@ ${session.notes.trim()}`
             send({ type: "thinking", text: chunk.text })
           } else if (chunk.type === "tool-result") {
             const tr = chunk as { toolName?: string; output?: unknown }
-            if (tr.toolName === "search_knowledge") {
-              send({ type: "refs", refs: collectedRefs })
+            if (tr.toolName === "search_knowledge" || tr.toolName === PAPER_SEARCH_TOOL_NAME) {
+              send({ type: "refs", refs: [...collectedRefs, ...collectedPaperRefs] })
             }
           } else if (chunk.type === "error") {
             errored = true
@@ -359,7 +399,10 @@ ${session.notes.trim()}`
             data: {
               content: errored && !content.trim() ? (note ?? "(生成失败)") : content,
               reasoning: snapReasoning || null,
-              refs: collectedRefs.length ? (collectedRefs as unknown as Prisma.InputJsonValue) : undefined,
+              refs:
+                collectedRefs.length + collectedPaperRefs.length > 0
+                  ? ([...collectedRefs, ...collectedPaperRefs] as unknown as Prisma.InputJsonValue)
+                  : undefined,
               streaming: false,
               promptTokens: usage?.promptTokens ?? null,
               completionTokens: usage?.completionTokens ?? null,

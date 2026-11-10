@@ -59,6 +59,16 @@ const CORE_RULES = [
   '- 学情参考(如提供):薄弱考点可在相关时自然带一句,不罗列清单,不提"系统给我看了你的数据"。',
 ].join('\n')
 
+/** 真题检索规则(search_papers 挂载时注入;题块协议与变式练习共用同一套输出规范) */
+const PAPER_RULES = [
+  '## 真题检索能力',
+  '你拥有 search_papers 工具(检索用户录入的试卷库:真题逐题索引,含卷名/年份/题号/分值/题干/选项/考点标签)。',
+  '- 用户问某考点「考过几次/有没有考过/是不是高频」或想要真题时,先调用 search_papers 再回答;query 传 2-4 个考点关键词(优先考纲节名,如「解三角形」「基本不等式」),禁止把整句问题当 query。',
+  '- 出真题时逐字转写题干与选项,选择题用 :::choice 块、大题用 :::question 块并紧跟 :::answer 块(仅官方答案存在时写);answer 为 null 的题必须注明「官方答案缺失」,不得编造。题干含 $...$ 公式原样保留,配图用 ![图N](URL) 内联,题块首行写出处「参考 试卷库 卷名 · 第N题」。',
+  '- 变式练习/举一反三(quiz/drill)时:检索到同考点真题就优先转写真题原文(标出处),没有合适的再自编。',
+  '- 报考次数字时注明口径「按考点标签计,一题多考点各计一次」。与卷子无关的讲解不需要调用。',
+].join('\n')
+
 /** 结课规则:finish_study 工具版 */
 const FINISH_RULES = [
   '- 完成规则:只有同时满足三条才算本题讲完——①最终答案已经给出 ②没有尚未讲解的后续步骤 ③本回合不是「等你回一句继续」的中间态。满足时给出简短总结,并立即调用 finish_study 工具(summary 传给用户的要点总结),调用后结束回复。',
@@ -86,18 +96,20 @@ export interface BuildStudySystemPromptOpts {
   action: StudyActionType
   /** 学情回灌段(路由侧查询 StudyNote 后拼好传入;可选) */
   studyContext?: string | null
+  /** 试卷库有题时挂 search_papers,注入真题检索纪律(可选,默认不挂) */
+  paperSearch?: boolean
 }
 
 /** 组装学习模式的 system prompt */
-export function buildStudySystemPrompt({ startLevel, action, studyContext }: BuildStudySystemPromptOpts): string {
+export function buildStudySystemPrompt({ startLevel, action, studyContext, paperSearch }: BuildStudySystemPromptOpts): string {
   const parts: string[] = [
     '## 学习模式(导师,独立管线)',
     `本会话是学习模式:一道题按「一步一卡」推进。当前学习起点「${startLevel}」,本步动作「${action}」。`,
     LEVEL_RULES[startLevel],
     CORE_RULES,
-    FINISH_RULES,
-    ACTION_INSTRUCTIONS[action],
   ]
+  if (paperSearch) parts.push(PAPER_RULES)
+  parts.push(FINISH_RULES, ACTION_INSTRUCTIONS[action])
   if (studyContext) parts.push(studyContext)
   return parts.join('\n\n')
 }

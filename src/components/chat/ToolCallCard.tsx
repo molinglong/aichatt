@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useState } from 'react'
-import { BookOpen, Brain, Calculator, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Fish, Globe, Link2, ListTodo, Loader2, Plug, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
+import { BookOpen, Brain, Calculator, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Fish, Globe, Link2, ListTodo, Loader2, Plug, ScrollText, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UIMessage } from 'ai'
 import { ClarifyCard } from './ClarifyCard'
@@ -35,7 +35,8 @@ import {
   type KnowledgeOutlineOutput,
 } from '@/lib/ai/knowledge-tool'
 import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME, type PracticeToolOutput } from '@/lib/ai/practice-tool'
-import { KnowledgeDetail, OutlineDetail, PracticeDetail, CalcDetail } from './ToolDetailBlocks'
+import { PAPER_SEARCH_TOOL_NAME, PAPER_ANALYZE_TOOL_NAME, type PaperSearchOutput, type PaperAnalyzeOutput } from '@/lib/ai/paper-tool'
+import { KnowledgeDetail, OutlineDetail, PracticeDetail, CalcDetail, PaperDetail, PaperAnalysisDetail } from './ToolDetailBlocks'
 import { TODO_TOOL_NAME, type TodoToolOutput } from '@/lib/ai/todo-tool'
 import { URL_READER_TOOL_NAME, type UrlReaderOutput } from '@/lib/ai/url-reader'
 import { CALC_TOOL_NAME, type CalcOutput } from '@/lib/ai/calc-tool'
@@ -673,6 +674,57 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
         streaming={view.state === 'input-streaming'}
         failed={kFailed}
         details={!kFailed && kCount > 0 ? <KnowledgeDetail results={kOut!.results} /> : undefined}
+      />
+    )
+  }
+
+  // 真题检索:一行式卡片;流式显示检索词,完成后显示命中题数与考点数,展开看考次统计与题目出处
+  if (view.tool === PAPER_SEARCH_TOOL_NAME) {
+    const psOut = view.output as PaperSearchOutput | undefined
+    const psQuery = psOut?.query ?? (view.input as { query?: string } | undefined)?.query ?? ''
+    const psCount = psOut?.results?.length ?? 0
+    const psTopics = psOut?.topicCounts?.length ?? 0
+    const psFailed = view.state === 'output-error' || !!psOut?.error
+    const psText =
+      view.state === 'input-streaming'
+        ? `正在翻试卷「${psQuery}」…`
+        : psFailed
+          ? `查真题「${psQuery}」未生效`
+          : psCount > 0 || psTopics > 0
+            ? `查真题「${psQuery}」· 命中 ${psCount} 题${psTopics ? ` · ${psTopics} 个考点考次` : ''}`
+            : `查真题「${psQuery}」· 真题中未找到`
+    return (
+      <ToolRow
+        icon={<ScrollText className="w-3.5 h-3.5" />}
+        text={psText}
+        streaming={view.state === 'input-streaming'}
+        failed={psFailed}
+        details={!psFailed && psCount + psTopics > 0 ? <PaperDetail output={psOut!} /> : undefined}
+      />
+    )
+  }
+
+  if (view.tool === PAPER_ANALYZE_TOOL_NAME) {
+    const paOut = view.output as PaperAnalyzeOutput | undefined
+    const paPapers = paOut?.overview?.length ?? 0
+    const paTopics = paOut?.topicStats?.length ?? 0
+    const paWeak = paOut?.weakTopics?.length ?? 0
+    const paFailed = view.state === 'output-error' || !!paOut?.error
+    const paText =
+      view.state === 'input-streaming'
+        ? '正在整理试卷库…'
+        : paFailed
+          ? '整理试卷未生效'
+          : paPapers > 0 || paTopics > 0
+            ? `整理试卷 · ${paPapers} 套卷 · ${paTopics} 个考点${paWeak ? ` · ${paWeak} 个薄弱考点` : ''}`
+            : '整理试卷 · 试卷库还没有卷子'
+    return (
+      <ToolRow
+        icon={<ScrollText className="w-3.5 h-3.5" />}
+        text={paText}
+        streaming={view.state === 'input-streaming'}
+        failed={paFailed}
+        details={!paFailed && paPapers + paTopics > 0 ? <PaperAnalysisDetail output={paOut!} /> : undefined}
       />
     )
   }

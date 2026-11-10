@@ -33,6 +33,7 @@ model User {
   mcpServers     McpServer[]
   courses       Course[]
   studySessions StudySession[]
+  paperQuestions PaperQuestion[]
   providerModelOverrides ProviderModelOverride[]
   compareVotes  CompareVote[]
   memoryEnabled Boolean   @default(true)
@@ -787,6 +788,7 @@ model Paper {
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   pages     PaperPage[]
   questions Question[]
+  paperQuestions PaperQuestion[]
 
   @@unique([userId, slug])
   @@index([userId, subject, createdAt])
@@ -803,6 +805,34 @@ model PaperPage {
   paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
 
   @@unique([paperId, pageNo])
+
+}
+
+// 试卷逐题索引层（方案乙）：一题一行，由导入器从 PaperPage HTML 契约确定性解析。
+// PaperPage 是整卷原件（不可动），本表是检索/统计/打标的投影：
+// 「考了几次」按 topics 数组计数（一题多考点各计一次）；answer 可空，
+// 官方答案齐备前不回填 Question 练题池（隔离原则）。
+model PaperQuestion {
+  id        String   @id @default(cuid())
+  paperId   String
+  userId    String   // 冗余存储免 join（与 KnowledgeChunk 同思路）
+  number    Int      // 卷内题号
+  section   String?  // 所在大题，如「一、单项选择题」
+  kind      String   // choice=选择题 answer=解答/填空题
+  multiple  Boolean  @default(false)
+  score     Int
+  stem      String   // 题干纯文本（保留 $...$ LaTeX；图以 [图N] 占位，链接在 images）
+  options   String[] @default([]) // 选择题选项，每项「A. …」；非选择题为空
+  images    String[] @default([]) // 题图 URL（/exam-papers/<slug>/…）
+  answer    String?  // 官方答案+解析；null=缺答案（等待官方答案卷）
+  topics    String[] @default([]) // 考点标签（受控词表，导入后 AI 打标回填）
+  createdAt DateTime @default(now())
+
+  paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([paperId, number])
+  @@index([userId, section])
 }
 
 // ===================== 待办(Todo) =====================
