@@ -269,8 +269,10 @@ model Message {
   groupId          String?  // 同一轮对比共享的分组 id
   promptTokens     Int?     // 本轮输入 token 数（assistant 消息）
   completionTokens Int?     // 本轮输出 token 数（assistant 消息）
-  // prompt caching 观测（assistant 消息，上游未报数则置 null）：
-  // cacheReadTokens > 0 即本轮命中了上游缓存，命中量=该值；cacheWriteTokens 为写入缓存的量。
+  // prompt caching 观测（assistant 消息，上游报了明细才落库）：
+  // cacheReadTokens：0=报了但未命中，null=上游未报明细；>0 即本轮命中量。
+  // 轮次命中率 = cacheReadTokens>0 的轮次 / cacheReadTokens 非空轮次（2026-11-09 起 0 不再吞成 null）。
+  // cacheWriteTokens 为写入缓存的量（Anthropic 式显式缓存才有，DeepSeek 自动缓存恒 0/无）。
   cacheReadTokens  Int?
   cacheWriteTokens Int?
   // 流式草稿标志(A 流式恢复): 生成开始即落 streaming=true 的 assistant 行,

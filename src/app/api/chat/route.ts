@@ -1232,11 +1232,9 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   const replyLengthPrompt = getReplyLengthPrompt(effectiveReplyLength)
   if (replyLengthPrompt && !isGameMask) systemParts.push(replyLengthPrompt)
 
-  // 当前时间锚点：模型自己不知道"今天"是哪天，而 todo 的 dueAt 要 ISO 绝对时间，
-  // "周五/明天"的换算也必须有基准。缺这段时模型会额外调 web_search 查日期，
-  // 把普通对话 5 步工具预算白烧一步（线上实例：删待办→重建→搜日期→再删再建→撞上限）。
-  // 游戏回合自管世界时间，注入真实日期会与设定冲突，故跳过。
-  if (!isGameMask) systemParts.push(buildTimeAnchorPrompt())
+  // 当前时间锚点已挪到 finalSystem 组装前注入（动因注释见该处）：
+  // 分钟级时间戳留在 system 中段，会把之后 ~14k token 的前缀缓存每分钟打碎
+  // （2026-11-09 实测：同分钟复发命中 98.8%，跨分钟复发跌回 28%）。
 
   // 公式书写规范: 全局生效——模型(尤其中文系)常用 Unicode 拼凑数学式(a^m·a^n、√2、≠),
   // KaTeX 只认 LaTeX 定界符,这些写法被原样当字符显示,用户侧表现就是"公式全是乱码"。
@@ -2138,6 +2136,16 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     console.log(`[chat] Mask persona injected: ${effectiveMask.ref}`)
   }
 
+  // 时间锚点放 system 最末尾（原在中段 replyLength 后，2026-11-09 挪尾）：
+  // 模型自己不知道"今天"是哪天，而 todo 的 dueAt 要 ISO 绝对时间，"周五/明天"的
+  // 换算也必须有基准。缺这段时模型会额外调 web_search 查日期，把普通对话 5 步
+  // 工具预算白烧一步（线上实例：删待办→重建→搜日期→再删再建→撞上限）。
+  // 位置考量：它含分钟级时间戳，是 system 里唯一每请求必变的段——放尾部，
+  // 分钟翻页时前面（工具 schema+全部稳定段）依旧全量命中缓存，只有末尾
+  // ~150 token 全价重付（2026-11-09 实测：同分钟复发命中 98.8%，跨分钟 28%）。
+  // 游戏回合自管世界时间，注入真实日期会与设定冲突，故跳过。
+  if (!isGameMask) systemParts.push(buildTimeAnchorPrompt())
+
   // systemParts 可能被上面 unshift 过,重新 join
   const finalSystem = systemParts.length > 0 ? systemParts.join('\n\n') : undefined
 
@@ -2659,11 +2667,12 @@ const result = streamText({
           // token 消耗统计(某些提供商可能不返回 usage)
           promptTokens: usage?.inputTokens,
           completionTokens: usage?.outputTokens,
-          // prompt caching 命中观测:上游报了才算,0 与未上报都存 null(与 promptTokens 同哲学)
-          ...(usage?.inputTokenDetails?.cacheReadTokens
+          // prompt caching 命中观测:上游报了明细就落库——0=报了但未命中,null=上游没报明细,
+          // 两者区分后轮次命中率才可算(2026-11-09 前 0 被吞成 null,历史轮次口径不可复原)
+          ...(usage?.inputTokenDetails?.cacheReadTokens != null
             ? { cacheReadTokens: usage.inputTokenDetails.cacheReadTokens }
             : {}),
-          ...(usage?.inputTokenDetails?.cacheWriteTokens
+          ...(usage?.inputTokenDetails?.cacheWriteTokens != null
             ? { cacheWriteTokens: usage.inputTokenDetails.cacheWriteTokens }
             : {}),
           ...(toolCallsMetadata ? { metadata: toolCallsMetadata } : {}),
