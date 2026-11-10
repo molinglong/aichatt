@@ -172,3 +172,9 @@ __pycache__/
 /qoder_bogo.html
 /qoder_bogo.txt
 /public/wallpaper/preview.html
+
+# ===== 2026-11-10 卫生追加 =====
+# 本地备份目录(数据库/文档快照,严禁入库)
+/backups/
+# 一次性图片 BOM 处理脚本(临时工具,不入库)
+/crop9-bom.ps1
