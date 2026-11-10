@@ -6,7 +6,9 @@ import {
   getEffectiveModels,
   getEffectiveModel,
   createProviderInstanceForEffectiveModel,
+  getCappedPublicPoolModel,
 } from "@/lib/ai/registry"
+import { getPublicPoolKey } from "@/lib/quota"
 import { buildCustomModelDefinition, resolveApiKey, createCustomLanguageModel } from "@/lib/ai/custom-model"
 import type { ModelDefinition } from "@/lib/ai/types"
 import { monitor } from "@/lib/monitor"
@@ -263,34 +265,55 @@ export async function POST(req: Request) {
       return Response.json({ error: `模型不存在或已下架：${modelId}` }, { status: 400 })
     }
     modelDef = builtinModelDef
-
-    const apiKeyRecord = await prisma.apiKey.findUnique({
-      where: { userId_provider: { userId, provider: modelDef.provider } },
-    })
-    if (!apiKeyRecord && modelDef.provider === "qianwen") {
-      // 与 /api/chat 同规则:千问回落到环境变量 Key(免配置免费额度)
-      apiKey = process.env.API_KEY_DASHSCOPE
+    // 公共池门面模型(如 bailian-qwen3.8-27b):必须映射到 upstreamId 再发上游,
+    // 并用公共池服务端 Key + 额度闸 —— 与 /api/chat 的 resolver 同规则。
+    // 缺这条会把门面 id 原样发给 DashScope,报「model does not exist」(2026-11-08 踩坑)
+    if (modelDef.upstreamId) realModelId = modelDef.upstreamId
+    if (modelDef.publicPool) {
+      const capped = await getCappedPublicPoolModel(modelId).catch(() => null)
+      if (capped) {
+        return Response.json(
+          { error: `「${capped.name}」的公共额度已用完，请换个模型` },
+          { status: 429 }
+        )
+      }
+      apiKey = (await getPublicPoolKey(modelDef.provider)) ?? undefined
       if (!apiKey) {
         return Response.json(
-          { error: "服务端未配置通义千问的 API Key（环境变量 API_KEY_DASHSCOPE）" },
+          { error: `公共池未配置 ${modelDef.provider} 的服务端 Key` },
           { status: 400 }
         )
       }
-    } else if (!apiKeyRecord) {
-      return Response.json(
-        { error: `还没有配置 ${modelDef.provider} 的 API Key，请先到设置里填写` },
-        { status: 400 }
-      )
+      provider = createProviderInstanceForEffectiveModel(modelDef, apiKey)
     } else {
-      try {
-        apiKey = decrypt(apiKeyRecord.encryptedKey)
-      } catch (err) {
-        console.error(`[write-generate] Failed to decrypt API key for user ${userId}:`, err)
-        return Response.json({ error: "已保存的 API Key 解密失败，请在设置里重新填写一次" }, { status: 500 })
+      const apiKeyRecord = await prisma.apiKey.findUnique({
+        where: { userId_provider: { userId, provider: modelDef.provider } },
+      })
+      if (!apiKeyRecord && modelDef.provider === "qianwen") {
+        // 与 /api/chat 同规则:千问回落到环境变量 Key(免配置免费额度)
+        apiKey = process.env.API_KEY_DASHSCOPE
+        if (!apiKey) {
+          return Response.json(
+            { error: "服务端未配置通义千问的 API Key（环境变量 API_KEY_DASHSCOPE）" },
+            { status: 400 }
+          )
+        }
+      } else if (!apiKeyRecord) {
+        return Response.json(
+          { error: `还没有配置 ${modelDef.provider} 的 API Key，请先到设置里填写` },
+          { status: 400 }
+        )
+      } else {
+        try {
+          apiKey = decrypt(apiKeyRecord.encryptedKey)
+        } catch (err) {
+          console.error(`[write-generate] Failed to decrypt API key for user ${userId}:`, err)
+          return Response.json({ error: "已保存的 API Key 解密失败，请在设置里重新填写一次" }, { status: 500 })
+        }
       }
+      // 与 /api/chat 同规则:provider 变量持工厂,调用 provider(realModelId) 才得到语言模型
+      provider = createProviderInstanceForEffectiveModel(modelDef, apiKey as string)
     }
-    // 与 /api/chat 同规则:provider 变量持工厂,调用 provider(realModelId) 才得到语言模型
-    provider = createProviderInstanceForEffectiveModel(modelDef, apiKey as string)
   }
 
   try {

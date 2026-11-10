@@ -26,7 +26,7 @@ import { WorkSidePane } from '@/components/workspace/WorkSidePane'
 import { OutlineSidebar } from './OutlineSidebar'
 import { useChatScroll } from './useChatScroll'
 import { useYellowFishAutoFollow } from './useYellowFishAutoFollow'
-import { INPUT_SEND_EVENT } from '@/lib/input-bridge'
+import { INPUT_SEND_EVENT, INPUT_STOP_EVENT } from '@/lib/input-bridge'
 import { InfoAsidePanel, INFO_PANEL_WIDTH, INFO_TAB_WIDTH } from './InfoAsidePanel'
 import { ContextMeter } from './ContextMeter'
 import { NEW_CHAT_MASK_SIGNAL_KEY, useChatStore, liveCodeDoc } from '@/store/chat-store'
@@ -366,6 +366,8 @@ export function ChatPanel({
   })
   const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
   const setSettingsSection = useChatStore((s) => s.setSettingsSection)
+  const setChatModelId = useChatStore((s) => s.setChatModelId)
+  const setChatBusy = useChatStore((s) => s.setChatBusy)
   // 当前生效面具:内置直接查;user: 前缀从自定义列表解析（列表未加载时短暂不显示 badge）
   const activeMask = useMemo(() => {
     const builtin = getBuiltinMask(conversationMaskId)
@@ -694,6 +696,8 @@ export function ChatPanel({
   const conversationReplyLengthRef = useRef(conversationReplyLength)
   useEffect(() => {
     currentModelRef.current = currentModel
+    // 写作画布划词生成跟随对话模型(面板不再单独设模型),同步到 store
+    setChatModelId(currentModel || null)
     deepThinkRef.current = deepThink
     webSearchRef.current = webSearch
     searchEngineRef.current = searchEngine
@@ -1533,6 +1537,12 @@ export function ChatPanel({
     return () => window.removeEventListener(INPUT_SEND_EVENT, onSend)
   }, [handleSend])
 
+  // 聊天流生成中状态广播进 store: 画布迷你输入条显示「AI 正在改这篇文档…」
+  // (2026-11-08 治「点 chip 发送后黑盒,要退出去看」)
+  useEffect(() => {
+    setChatBusy(status === 'submitted' || status === 'streaming')
+  }, [status, setChatBusy])
+
   // 闲鱼监控自动回报：add_yellow_fish_watch 超时软状态（crawlPending）后，前端每 15s 轮询
   // /api/yellow-fish/watch/status，爬完自动发一条【监控回报】user 消息让模型当场查行情补报
   // ——用户不必手动追问（渲染端把该消息显示为 chip，见 MessageBubble）。
@@ -1998,6 +2008,15 @@ export function ChatPanel({
     stop()
   }, [stop, messages, currentModel, setPendingContinuation, remoteStreamingId])
 
+  // 停止桥: 写作画布迷你输入条的「停止」按钮 → handleStop(与聊天输入框同源)
+  useEffect(() => {
+    function onStop() {
+      handleStop()
+    }
+    window.addEventListener(INPUT_STOP_EVENT, onStop)
+    return () => window.removeEventListener(INPUT_STOP_EVENT, onStop)
+  }, [handleStop])
+
   /**
    * 「接着说」:把停下来的最后一段作为上下文,发送一条提示让模型接着输出。
    * 与 regenerate() 不同,这里不会替换已有内容,而是新增一轮对话。
@@ -2305,7 +2324,13 @@ export function ChatPanel({
     /* data-chat-state: 壁纸主题据此区分两张脸 —— 欢迎页(照片尽兴)与对话页(加厚纸),
        规则在 globals.css「主题: 壁纸」段。空消息 = 欢迎页;首条消息落地即转 thread */
     <div className="flex h-full min-h-0" data-chat-state={messages.length === 0 ? 'welcome' : 'thread'}>
-      <div className="flex flex-col h-full min-w-0 flex-1 relative overflow-hidden">
+      {/* 写作画布打开(案3):聊天列淡出退场,画布接管主区 —— 组件保持挂载,
+          流式/会话状态不中断;关闭画布即回来。出场用 --ease,时长 --motion-base */}
+      <div
+        className={`flex flex-col h-full min-w-0 flex-1 relative overflow-hidden transition-[opacity,transform] duration-[var(--motion-base)] ease-[var(--ease)] ${
+          writePanelOpen ? 'opacity-0 -translate-x-6 pointer-events-none' : ''
+        }`}
+      >
 
       {/* Error banner —— 仅欢迎态按列顶常规排布(此时没有消息流可推挤);
           会话态改浮在消息区下缘，见下方 relative wrapper */}
@@ -2549,9 +2574,12 @@ export function ChatPanel({
         </>
       )}
 
-      <WriteDocPanel />
       <ChatPreviewPanel />
       </div>
+
+      {/* 写作画布(案3):必须渲染在上方退场列之外 —— 列 opacity-0/translate 时
+          fixed 子元素会跟着淡出且包含块被 translate 劫持,画布会整块消失 */}
+      <WriteDocPanel />
 
       {/* [P1]常驻 Side Pane:预览/文件树/编辑器/代码 四 tab 并存,取代互斥覆盖面板 */}
       <WorkSidePane messages={messages} />

@@ -52,6 +52,28 @@ export function createWriteDocTool(userId: string) {
           })
           return { ok: true, action: "append", docId: updated.id, title: updated.title, charCount: updated.charCount }
         }
+        if (action === "replace") {
+          // 整篇替换:压缩/扩写/改写全文等「改这篇」诉求,标题保持不变,避免模型新建「xx 版」副本
+          if (!docId) {
+            return { ok: false, message: "缺少要替换的文档 id" }
+          }
+          const doc = await prisma.writeDoc.findFirst({
+            where: { id: docId, userId },
+            select: { id: true, title: true },
+          })
+          if (!doc) {
+            return { ok: false, message: "要替换的文档不存在或无权限" }
+          }
+          if (body.length > MAX_WRITE_CONTENT_CHARS) {
+            return { ok: false, message: "替换后超过文档长度上限，请缩短本次内容" }
+          }
+          const updated = await prisma.writeDoc.update({
+            where: { id: doc.id },
+            data: { content: body, charCount: body.length },
+            select: { id: true, title: true, charCount: true },
+          })
+          return { ok: true, action: "replace", docId: updated.id, title: updated.title, charCount: updated.charCount }
+        }
         const doc = await prisma.writeDoc.create({
           data: {
             userId,

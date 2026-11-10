@@ -61,8 +61,8 @@ function WriteDocCardInner({ view }: WriteDocCardProps) {
     if (!pendingToolCalls.delete(id)) return
     if (view.state !== 'output-available' || !okOutput || autoOpenedToolCalls.has(id)) return
     autoOpenedToolCalls.add(id)
-    if (okOutput.action === 'append') {
-      // 续写:面板通常已开着,广播刷新让编辑器拉最新内容
+    if (okOutput.action === 'append' || okOutput.action === 'replace') {
+      // 续写/整篇替换:文档就地更新,面板通常已开着,广播刷新让编辑器拉最新内容
       window.dispatchEvent(new CustomEvent('aichatt:write-doc-updated', { detail: { docId: okOutput.docId } }))
       return
     }

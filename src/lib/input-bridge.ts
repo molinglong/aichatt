@@ -24,3 +24,28 @@ export function sendTextAsUser(text: string) {
   if (typeof window === 'undefined' || !text) return
   window.dispatchEvent(new CustomEvent(INPUT_SEND_EVENT, { detail: { text } }))
 }
+
+/**
+ * 停止桥 —— 写作画布迷你输入条的「停止」按钮叫停当前聊天流,
+ * ChatPanel 监听后调 handleStop(与聊天输入框的停止同源)。
+ */
+export const INPUT_STOP_EVENT = 'aichatt:stop-streaming'
+
+export function stopChatStreaming() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(INPUT_STOP_EVENT))
+}
+
+/**
+ * 选区改写桥 —— 写作画布选中文字后,迷你输入条发送的指令不再进聊天流,
+ * 而是走 /api/write/generate 的 rewrite 动作:只改选中段落、预览卡确认后应用。
+ * 不经 write_document 的好处:flash 档模型不必「整篇输出+逐字保留」两头烧,
+ * 也不会误建副本;代价是不留聊天记录(画布内预览即反馈)。
+ * WriteEditor 监听同名事件;无选区或非画布页静默。
+ */
+export const WRITE_SEL_REWRITE_EVENT = 'aichatt:write-sel-rewrite'
+
+export function requestSelRewrite(instruction: string) {
+  if (typeof window === 'undefined' || !instruction) return
+  window.dispatchEvent(new CustomEvent(WRITE_SEL_REWRITE_EVENT, { detail: { instruction } }))
+}

@@ -253,9 +253,11 @@ export function TopBar() {
 
   // 样式维度:两套顶栏 DOM 独立(见 TopbarShell),按钮组共用
   const uiStyle = useUiStyle()
-  const actionOffset = inTauri && workMode && !writePanelOpen && !previewOpen
+  // 写作画布(案3)展开后接管整个主区,顶栏整体被盖住 —— 不再为它做按钮偏移;
+  // 预览面板仍是 46vw 浮层,保留偏移让动作簇露在其左侧
+  const actionOffset = inTauri && workMode && !previewOpen
     ? `${sidePaneWidth + 12}px`
-    : writePanelOpen || previewOpen
+    : previewOpen
       ? 'calc(min(46vw, 720px) + 12px)'
       : infoSlotOccupied
         ? `${infoRightOffset}px`

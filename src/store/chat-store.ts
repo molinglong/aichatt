@@ -131,6 +131,14 @@ interface ChatState {
   writePanelDocId: string | null
   openWritePanel: (docId: string) => void
   closeWritePanel: () => void
+  /** 聊天输入框当前选中的模型(ChatPanel 同步写入):写作画布划词生成跟随对话模型,
+   *  面板内不再单独设模型(2026-11-08 用户定案「一键跟随对话使用的」)。 */
+  chatModelId: string | null
+  setChatModelId: (id: string | null) => void
+  /** 聊天流是否生成中(useChat status 同步):画布迷你输入条据此显示「AI 正在改这篇文档…」,
+   *  治「发送后黑盒,要退出去看」(2026-11-08 用户定案)。 */
+  chatBusy: boolean
+  setChatBusy: (v: boolean) => void
   /** 本地文件编辑器面板:当前打开的工作区相对路径,null=关闭(与写作画布同款右侧滑出)。
    *  diff=true 时以「审查模式」打开:DiffEditor 左侧展示磁盘现状,右侧为编辑缓冲。 */
   editorFile: { path: string; diff: boolean } | null
@@ -401,6 +409,10 @@ const storeInitializer: StateCreator<ChatState> = (set) => ({
       }
       return patch
     }),
+  chatModelId: null,
+  setChatModelId: (id) => set({ chatModelId: id }),
+  chatBusy: false,
+  setChatBusy: (v) => set({ chatBusy: v }),
   editorFile: null,
   openEditor: (path, diff = false) => set({ editorFile: { path, diff }, sideTab: 'editor' }),
   closeEditor: () =>
