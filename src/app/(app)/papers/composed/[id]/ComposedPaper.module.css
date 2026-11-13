@@ -66,7 +66,8 @@
 /* 卷头 */
 .paperHead {
   text-align: center;
-  border-bottom: 2.5px solid #000;
+  /* 屏显灰阶(2026-11-13 降噪);打印恢复纯黑见 @media print */
+  border-bottom: 1.5px solid #b9b9c0;
   padding-bottom: 10px;
 }
 .examTag {
@@ -102,7 +103,7 @@
 .material {
   margin: 10px 0;
   padding: 2px 0 2px 14px;
-  border-left: 2.5px solid #000;
+  border-left: 2.5px solid #c9c9cf;
   line-height: 1.8;
   text-align: justify;
   break-inside: avoid;
@@ -167,7 +168,7 @@
 
 /* 题目 */
 .q {
-  margin-bottom: 10px;
+  margin-bottom: 18px;
   break-inside: avoid;
 }
 .qText {
@@ -190,8 +191,23 @@
   vertical-align: super;
 }
 
+/* 屏显降噪:题块 hover 才浮现操作行(触屏常显) */
+.qWrap:hover .editBar {
+  opacity: 1;
+}
+@media (hover: none) {
+  .editBar {
+    opacity: 1;
+  }
+}
+
 /* ── 编辑层(仅屏幕;打印整层隐藏) ──────────────────── */
 .editBar {
+  /* 屏显降噪:操作行 hover 显现(触屏常显);打印 display:none 不变 */
+  opacity: 0;
+  transition: opacity 0.15s;
+  border-bottom: 1px dashed #e2e2e6;
+  padding-bottom: 8px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -308,6 +324,16 @@
 @media print {
   .printHide {
     display: none !important;
+  }
+  /* 屏显降噪的恢复:打印纸面纯黑 + 原题距(分页口径不变) */
+  .paperHead {
+    border-bottom: 2.5px solid #000 !important; /* paperHead 打印恢复纯黑 */
+  }
+  .material {
+    border-left-color: #000 !important;
+  }
+  .q {
+    margin-bottom: 10px !important;
   }
   .flow {
     height: auto !important;

@@ -363,6 +363,7 @@ function SortableQuestionBlock({
   return (
     <div
       ref={setNodeRef}
+      className={styles.qWrap}
       style={{
         transform: CSS.Translate.toString(transform),
         transition,
