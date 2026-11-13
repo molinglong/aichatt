@@ -81,6 +81,11 @@ interface CandidateItem {
   section: string | null
   paperTitle: string
   number: number
+  /** official=官方 ai=AI 参考答案 */
+  answerSource?: string
+  /** 全量题干与选项(查看完整题目用) */
+  fullStem: string
+  options: string[]
 }
 
 const SUBJECT_LABELS: Record<string, string> = {
@@ -469,6 +474,7 @@ function CandidatePanel({
 }) {
   const [q, setQ] = useState('')
   const [dq, setDq] = useState('')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   useEffect(() => {
     const t = setTimeout(() => setDq(q.trim()), 250)
     return () => clearTimeout(t)
@@ -495,16 +501,18 @@ function CandidatePanel({
         if (target.score > 0) params.set('score', String(target.score))
         if (target.section) params.set('section', target.section)
       }
-      return fetchJson<{ candidates: CandidateItem[] | { poolStats?: { official: number; ai: number }; candidates: CandidateItem[] } }>(
+      return fetchJson<{ candidates: CandidateItem[] }>(
         `/api/papers/composed/${id}/candidates?${params.toString()}`,
         { signal }
-      ).then((r) => {
-        // 兼容两代形状:老=数组;新=对象(带 poolStats 题源闸门,数组在 .candidates)
-        const c = r.candidates
-        return Array.isArray(c) ? c : (c?.candidates ?? [])
-      })
+      ).then((r) => r.candidates ?? [])
     },
   })
+
+  /** 来源卷名缩短显示:去公共考试前缀(「广西普通高中学业水平合格性考试」→ 尾段),无「考试」保持原样 */
+  const shortSrc = (t: string) => {
+    const i = t.lastIndexOf('考试')
+    return i >= 0 ? t.slice(i + 2) : t
+  }
 
   return (
     <div
@@ -515,7 +523,7 @@ function CandidatePanel({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[74vh] w-full flex-col rounded-t-2xl border border-line bg-surface shadow-2xl sm:max-w-lg sm:rounded-2xl"
+        className="flex max-h-[74vh] w-full flex-col rounded-t-2xl border border-line bg-surface shadow-2xl sm:max-w-xl sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 px-5 pt-4">
@@ -525,6 +533,7 @@ function CandidatePanel({
             </h3>
             <p className="mt-0.5 text-[11.5px] text-content-muted">
               从试卷库有官方答案的真题里选 · {searchMode ? '关键词搜索全库' : `同题型（${target.kind === 'choice' ? '选择题' : '解答题'} · ${target.score} 分）优先`}
+              <span className="ml-2 hidden sm:inline">点候选行可展开完整题目</span>
             </p>
           </div>
           <button
@@ -555,24 +564,61 @@ function CandidatePanel({
               题库里没有可加的题{searchMode ? '，换个关键词试试' : '，试试输入关键词搜索全库'}
             </p>
           ) : (
-            (cands ?? []).map((c) => (
-              <div key={c.id} className="flex items-start gap-2 rounded-xl px-3 py-2.5 transition-colors hover:bg-surface-subtle/70">
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-2 text-[13px] leading-relaxed text-content-primary">{c.stem}</p>
-                  <p className="mt-1 truncate text-[11px] text-content-muted">
-                    {c.paperTitle} · 原卷第 {c.number} 题 · {c.score} 分
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={!!busyKey}
-                  onClick={() => onAdd(c.id)}
-                  className="mt-0.5 h-7 shrink-0 rounded-lg bg-accent px-3 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            (cands ?? []).map((c, i) => {
+              const expanded = expandedId === c.id
+              return (
+                <div
+                  key={c.id}
+                  className={`flex items-start gap-2.5 rounded-xl px-3 py-2.5 transition-colors hover:bg-surface-subtle/70 ${i > 0 ? 'border-t border-line/60' : ''}`}
                 >
-                  {busyKey === `insert:${c.id}` ? '加入中…' : '加入'}
-                </button>
-              </div>
-            ))
+                  <span
+                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10.5px] font-bold tabular-nums ${expanded ? 'bg-accent text-accent-foreground' : 'bg-accent-soft text-accent'}`}
+                    aria-hidden
+                  >
+                    {i + 1}
+                  </span>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => setExpandedId((v) => (v === c.id ? null : c.id))}
+                    title={expanded ? '收起' : '查看完整题目'}
+                  >
+                    {expanded ? (
+                      <>
+                        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-content-primary">{c.fullStem}</p>
+                        {c.options.length > 0 && (
+                          <div className="mt-1.5 space-y-0.5 rounded-lg bg-surface-subtle/70 px-3 py-2">
+                            {c.options.map((o, oi) => (
+                              <div key={oi} className="text-[12.5px] leading-relaxed text-content-secondary">{o}</div>
+                            ))}
+                          </div>
+                        )}
+                        <span className="mt-1 inline-block text-[11px] font-medium text-accent">▲ 收起</span>
+                      </>
+                    ) : (
+                      <>
+                        <p className="truncate text-[13px] leading-relaxed text-content-primary">{c.stem}</p>
+                        <p className="mt-0.5 truncate text-[11px] text-content-muted">
+                          {shortSrc(c.paperTitle)} · 原卷第 {c.number} 题 · {c.score} 分
+                          {c.answerSource === 'ai' && <span className="ml-1.5 text-[10px] text-amber-600">AI 答案</span>}
+                        </p>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!!busyKey}
+                    onClick={() => onAdd(c.id)}
+                    className="mt-0.5 h-7 shrink-0 rounded-lg border border-accent bg-surface px-3 text-xs font-medium text-accent opacity-0 transition-all hover:bg-accent hover:text-white focus:opacity-100 disabled:opacity-50 group-hover:opacity-100"
+                    style={{ opacity: undefined }}
+                    onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.opacity = '' }}
+                  >
+                    {busyKey === `insert:${c.id}` ? '加入中…' : '加入'}
+                  </button>
+                </div>
+              )
+            })
           )}
         </div>
       </div>

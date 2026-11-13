@@ -7,6 +7,7 @@
  */
 import { NextRequest } from "next/server"
 import { getUserId } from "@/lib/api-auth"
+import { prisma } from "@/lib/db"
 import { listCandidates } from "@/lib/papers/compose"
 
 export const dynamic = "force-dynamic"
@@ -32,5 +33,17 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     q,
   })
   if (!candidates) return Response.json({ error: "not_found" }, { status: 404 })
-  return Response.json({ candidates })
+  // 面板「查看完整题目」用:补全量题干+选项(listCandidates 的 stem 截 120 字,共享形状不动)
+  const list = Array.isArray(candidates) ? candidates : candidates?.candidates ?? []
+  const ids = list.map((c) => c.id)
+  const fullMap = new Map(
+    ids.length
+      ? await prisma.paperQuestion.findMany({ where: { id: { in: ids } }, select: { id: true, stem: true, options: true } }).then((rows) => rows.map((r) => [r.id, r]))
+      : []
+  )
+  const full = list.map((c: (typeof list)[number]) => {
+    const f = fullMap.get(c.id)
+    return { ...c, fullStem: f?.stem ?? c.stem, options: f?.options ?? [] }
+  })
+  return Response.json({ candidates: full })
 }
