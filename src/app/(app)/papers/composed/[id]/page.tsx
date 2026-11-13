@@ -494,10 +494,14 @@ function CandidatePanel({
         if (target.score > 0) params.set('score', String(target.score))
         if (target.section) params.set('section', target.section)
       }
-      return fetchJson<{ candidates: CandidateItem[] }>(
+      return fetchJson<{ candidates: CandidateItem[] | { poolStats?: { official: number; ai: number }; candidates: CandidateItem[] } }>(
         `/api/papers/composed/${id}/candidates?${params.toString()}`,
         { signal }
-      ).then((r) => r.candidates ?? [])
+      ).then((r) => {
+        // 兼容两代形状:老=数组;新=对象(带 poolStats 题源闸门,数组在 .candidates)
+        const c = r.candidates
+        return Array.isArray(c) ? c : (c?.candidates ?? [])
+      })
     },
   })
 
