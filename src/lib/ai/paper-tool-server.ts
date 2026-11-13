@@ -14,6 +14,7 @@ import { Prisma } from '@/generated/prisma/client'
 import {
   paperSearchInputSchema,
   paperAnalyzeInputSchema,
+  composePaperInputSchema,
   type PaperQuestionHit,
   type PaperSearchOutput,
   type PaperTopicCount,
@@ -21,7 +22,9 @@ import {
   type PaperTopicStat,
   type PaperWeakTopic,
   type PaperAnalyzeOutput,
+  type ComposePaperOutput,
 } from './paper-tool'
+import { composePaper, getComposedPaper } from '@/lib/papers/compose'
 import { tool } from 'ai'
 
 /** 检索返回题数上限 */
@@ -262,7 +265,7 @@ async function getWeakTopics(userId: string, topicStats: PaperTopicStat[], subje
 }
 
 /** 整理报告/复习规划的使用纪律（note 随结果注入模型上下文） */
-function buildAnalyzeNote(overview: PaperOverviewItem[], weakTopics: PaperWeakTopic[]): string {
+function buildAnalyzeNote(overview: PaperOverviewItem[], weakTopics: PaperWeakTopic[], flaggedCount: number): string {
   const unanswered = overview.reduce((acc, p) => acc + (p.questions - p.answered), 0)
   return [
     '以上为用户试卷库的全量分析数据。两种用法:',
@@ -273,6 +276,9 @@ function buildAnalyzeNote(overview: PaperOverviewItem[], weakTopics: PaperWeakTo
       : '- 错题本中没有能对上考点标签的卡片:规划只按考频与课本章节排,不要编造薄弱点。',
     unanswered
       ? `- 共 ${unanswered} 题官方答案缺失(answer=null):涉及其的讲解要披露,不得编造答案。`
+      : '',
+    flaggedCount
+      ? `- 共 ${flaggedCount} 题被用户标记「存疑」并已退出拟卷题池;涉及这些题的讲解要提示以原卷原件为准。`
       : '',
   ]
     .filter(Boolean)
@@ -287,7 +293,7 @@ function buildAnalyzeNote(overview: PaperOverviewItem[], weakTopics: PaperWeakTo
 export function createPaperAnalyzeTool(userId: string) {
   return tool({
     description:
-      '试卷库整理/分析工具。用户要求「整理试卷」「分析卷子」「看看试卷情况」「总结考点分布」「出复习规划」「安排复习计划」时调用。返回:试卷清单(题量/题型/答案与打标状态)、考点考次排行(带课本章节定位)、错题本弱点考点联动。出复习规划时先调本工具再给结论。',
+      '试卷库整理/分析工具。用户要求「整理试卷」「分析卷子」「看看试卷情况」「总结考点分布」「出复习规划」「安排复习计划」时调用。返回:试卷清单(题量/题型/答案与打标状态)、考点考次排行(带课本章节定位)、错题本弱点考点联动。出复习规划时先调本工具再给结论。注意:「拼卷/拟卷/组卷」类请求不要调用本工具，直接用 compose_paper(自带题源校验)；本工具只服务整理报告与复习规划。',
     inputSchema: paperAnalyzeInputSchema,
     execute: async ({ subject }): Promise<PaperAnalyzeOutput> => {
       try {
@@ -295,9 +301,12 @@ export function createPaperAnalyzeTool(userId: string) {
         const stats = await getPaperTopicStats(userId, subject)
         const topicStats = stats.slice(0, 15)
         const weakTopics = await getWeakTopics(userId, stats, subject)
+        const flaggedCount = await prisma.paperQuestion.count({
+          where: { userId, flagged: true, ...(subject ? { paper: { subject } } : {}) },
+        })
         const note =
           overview.length || topicStats.length
-            ? buildAnalyzeNote(overview, weakTopics)
+            ? buildAnalyzeNote(overview, weakTopics, flaggedCount)
             : '试卷库还没有录入任何试卷。请如实告知用户（可建议把试卷拍照/发文件来录入），不要编造数据。'
         return { overview, topicStats, weakTopics, note }
       } catch (err) {
@@ -309,6 +318,89 @@ export function createPaperAnalyzeTool(userId: string) {
           weakTopics: [],
           error: message,
           note: '试卷整理暂时不可用。请按你自己的知识回答用户，不要提及检索失败细节。',
+        }
+      }
+    },
+  })
+}
+
+// ===================== compose_paper 智能拟卷（真题重组卷） =====================
+
+/** 拟卷挂载闸门：存在「有官方答案」的题才挂载（重组卷只用有答案池，没答案=不可用） */
+export async function hasAnsweredPaperQuestions(userId: string): Promise<boolean> {
+  const row = await prisma.paperQuestion.findFirst({
+    where: { userId, answer: { not: null }, flagged: false },
+    select: { id: true },
+  })
+  return !!row
+}
+
+/**
+ * 创建智能拟卷工具（compose_paper）。同位换题组卷：以一套有官方答案的卷为底，
+ * 逐槽从其他有答案卷同桶(section/kind/score)换题；候选池只含有官方答案且未拉黑的题，
+ * 结构自检(答案编号对位/选项字母范围)不过的题不进池。写入类工具：临时/对比模式不挂载。
+ */
+export function createComposePaperTool(userId: string) {
+  return tool({
+    description:
+      '智能拟卷工具（真题重组卷）。用户要求「拼一套卷/拟一张卷/出一张卷子做/组卷/重新拼一张」时调用。' +
+      '从用户试卷库的有官方答案的真题里同位换题组卷：卷子结构仿底卷真题、每题带官方答案、可打印。' +
+      '难度定位（学考/期末/高考）决定底卷与题源——用户未明确难度时先问清再调用，明确了就把同难度段真题的 slug 传 baseSlug。' +
+      '用户给出明确结构/大纲（如「选择10道各3分+解答3道各12分」「学考结构，只出函数」）时解析成 slotDefs 走大纲模式，底卷失效。' +
+      '题源与答案零 AI 编造；组卷后在卷面页可换题/删题/加题/整卷重摇（大纲卷无底卷、重摇不可用）。',
+    inputSchema: composePaperInputSchema,
+    execute: async ({ subject, onlyChoice, baseSlug, slotDefs, title, allowAiAnswers }): Promise<ComposePaperOutput> => {
+      try {
+        const result = await composePaper(userId, { subject, onlyChoice, baseSlug, slotDefs, title, allowAiAnswers })
+        if (!result.ok) {
+          return {
+            ok: false,
+            reason: result.reason,
+            note:
+              result.reason === 'bad_outline'
+                ? '大纲槽位定义无效（题型/分值/题数不合法或全为空）。请与用户确认大纲后重新解析，不要编造卷子。'
+                : '该学科试卷库里还没有带官方答案的题，组不了卷。请如实告知用户（可建议把官方答案卷拍照/发文件来录入后再组）；' +
+                  '并询问用户是否接受 AI 参考答案组卷——参考答案由 AI 解题生成、非官方，卷面答案页会逐题标注；' +
+                  '用户明确接受后以 allowAiAnswers=true 重试。不要编造卷子或题；也不要转为在聊天里手拟题目冒充重组卷。',
+          }
+        }
+        const paper = result.composedId ? await getComposedPaper(userId, result.composedId) : null
+        const aiCount = paper ? paper.slots.filter((s) => s.answerSource === 'ai').length : 0
+        const officialCount = (paper?.slots.length ?? 0) - aiCount
+        const shortageNote = (result.shortages ?? [])
+          .map((s) => `${s.kind === 'choice' ? '选择题' : '解答/填空题'}${s.score}分:要 ${s.requested} 道,真题池只有 ${s.filled} 道`)
+          .join('；')
+        return {
+          ok: true,
+          composedId: result.composedId,
+          url: result.composedId ? `/papers/composed/${result.composedId}` : undefined,
+          title: result.title,
+          questionCount: paper?.slots.length ?? 0,
+          totalScore: paper?.totalScore ?? 0,
+          durationMin: paper?.durationMin ?? 0,
+          sources: paper?.sources ?? [],
+          shortages: result.shortages,
+          note: [
+            '组卷完成。使用纪律:',
+            aiCount > 0
+              ? `- 题目出自真题卷原文;答案:${officialCount} 题官方、${aiCount} 题 AI 参考答案(非官方,答案页已逐题标注)。给用户的话术必须披露这一点,不得只说「官方答案」。`
+              : '- 全部题目与答案均出自官方答案卷原文,零 AI 拟题;来源卷清单已随结果返回。',
+            '- 给用户卷面入口(标题+题数/总分/时长),引导点开卷面页;**不要在聊天里重复贴整卷内容**,卷面页里有完整排版与打印按钮。',
+            '- 卷面页支持:换一题/移除/加一题/整卷重摇/「这题有误」报错(报错题全局退池,以后不再入卷)。用户要调整时引导去卷面页操作,或用户明确说「第N题换一题」时可用 PATCH 接口代操作。',
+            '- 答案页在卷面末尾,打印时自动随卷输出。',
+            ...(shortageNote
+              ? [`- 大纲有缺口(已有多少放多少):${shortageNote}。如实告知用户,可建议改大纲或补录带官方答案的真题,不要硬凑。`]
+              : []),
+            ...(slotDefs?.length ? ['- 本卷走大纲模式:无底卷,整卷重摇不可用;用户要调整结构建议重建一张。'] : []),
+          ].join('\n'),
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '未知组卷错误'
+        console.error('[paper-compose]', message)
+        return {
+          ok: false,
+          error: message,
+          note: '组卷暂时不可用。请如实告知用户稍后再试，不要编造卷子，不要提及失败细节。',
         }
       }
     },

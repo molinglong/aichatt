@@ -6,6 +6,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MessageBubble } from './MessageBubble'
+import { ContinueRoundBar } from './ContinueRoundBar'
 import { PingCard } from './PingCard'
 import { useChatStore } from '@/store/chat-store'
 import {
@@ -67,6 +68,13 @@ interface MessageListProps {
   onLoadEarlier?: () => void
   /** 键盘导航属于主动回看,先交还滚动控制权。 */
   onNavigate?: () => void
+  /** 工具步数耗尽的「继续处理」条:ChatPanel 判定最后一条消息带 continuePending 标记
+   *  且 status=ready 时传入,渲染在最后一条消息下方;null 不渲染 */
+  continueRound?: {
+    toolCallCount?: number
+    exhausted: boolean
+    onContinue: () => void
+  } | null
 }
 
 export function MessageList({
@@ -89,6 +97,7 @@ export function MessageList({
   restoreAnchor,
   onLoadEarlier,
   onNavigate,
+  continueRound,
 }: MessageListProps) {
   useRenderProbe('MessageList')
   // 只按来源标记隐藏学习按钮指令，不用文案匹配，手输同一句话仍会显示。
@@ -504,6 +513,17 @@ export function MessageList({
     </div>
   ) : null
 
+  // 「继续处理」条:两个渲染分支共用,与气泡同水平内距(桌面 px-4 / 移动 15px)
+  const continueRoundBar = continueRound ? (
+    <div className="px-4 max-md:px-[15px] pt-1 pb-2">
+      <ContinueRoundBar
+        toolCallCount={continueRound.toolCallCount}
+        exhausted={continueRound.exhausted}
+        onContinue={continueRound.onContinue}
+      />
+    </div>
+  ) : null
+
   if (virtualized && scrollElement) {
     const items = virtualizer.getVirtualItems()
     const measurements = virtualizer.measurementsCache
@@ -594,6 +614,7 @@ export function MessageList({
             })}
           </div>
           {pendingPlaceholder}
+          {continueRoundBar}
         </div>
       </div>
     )
@@ -622,6 +643,7 @@ export function MessageList({
       <div className="max-w-2xl mx-auto overflow-x-hidden w-full">
         {messages.map((message, index) => renderOrPing(message, index))}
         {pendingPlaceholder}
+        {continueRoundBar}
       </div>
     </div>
   )

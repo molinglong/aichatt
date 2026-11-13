@@ -177,6 +177,13 @@ function remoteRowToUIMessage(row: RemoteMessageRow): UIMessage {
 }
 
 /**
+ * 「继续处理」续跑的熔断上限:同一条消息后连续确认续跑达到该次数,按钮转灰并附建议文案。
+ * 每次真实用户发送(含编辑/重答)归零。预算耗尽轮的续跑会拿到全新 stepBudget(按请求算),
+ * 没有这个上限,模型在检索类任务里可能带着用户无限打转。
+ */
+const CONTINUE_ROUND_CAP = 8
+
+/**
  * sendAutomaticallyWhen 判据:仅当最后一条 assistant 消息里存在“已回填结果”的无 execute 客户端工具
  * (local_file / code_edit / preview_check)、全部 tool part 都已有 output、且最后一个 tool part 之后
  * 没有实质文本/推理(模型尚未据结果续答)时,才自动再发一次请求让模型收尾。
@@ -667,8 +674,9 @@ export function ChatPanel({
     }
   }, [initialConversationId, conversationTitle, setCurrentConversationId, setConversationTitle, markConversationRead])
 
-  // 切换会话时清掉"接着说"横幅(避免上一个会话的提示残留)
+  // 切换会话时清掉"接着说"横幅(避免上一个会话的提示残留)与续跑熔断计数
   useEffect(() => {
+    continueRoundCountRef.current = 0
     return () => setPendingContinuation(null)
   }, [initialConversationId, setPendingContinuation])
 
@@ -817,6 +825,9 @@ export function ChatPanel({
 
   // local_file 工具调用去重:防 StrictMode/重渲导致同一 call 被重复执行(尤其 delete)
   const executedLocalFileCallsRef = useRef<Set<string>>(new Set())
+
+  // 「继续处理」连续续跑计数:真实用户发送时归零(handleSend/编辑/重答),达 CAP 熔断
+  const continueRoundCountRef = useRef(0)
 
   const { messages, sendMessage, setMessages, stop, status, error, clearError, regenerate, addToolOutput } = useChat<UIMessage>({
     // 流式 UI 更新节流(AI SDK 官方机制): 不节流时每个 chunk 都触发强制同步重渲染,
@@ -1230,17 +1241,36 @@ export function ChatPanel({
         if (!latest || latest.role !== "assistant" || typeof latest.content !== "string") return
         // 服务端 onFinish 已更新 conversation.updatedAt,通知 Sidebar 刷新列表(更新未读/排序)
         bumpConversationVersion()
+        let latestMeta: unknown = null
+        try {
+          latestMeta = typeof latest.metadata === 'string' ? JSON.parse(latest.metadata) : latest.metadata
+        } catch {
+          latestMeta = null
+        }
+        // 步数耗尽轮(continuePending):只把 metadata 合入本地状态供「继续处理」条渲染,
+        // **保留流式 parts** —— 续跑请求要靠消息数组里 output-available 的 tool part 组装
+        // tool-call/tool-result(服务端 convertToModelMessages 消费);走常规分支的
+        // reasoning+text 替换会把工具结果从客户端剥掉,续跑就只剩文字重猜。库中正文与
+        // 流式一致(服务端已不再追加"回复继续"死文本),无需替换。
+        if (
+          latestMeta &&
+          typeof latestMeta === 'object' &&
+          (latestMeta as { continuePending?: unknown }).continuePending === true
+        ) {
+          setMessagesRef.current?.((prev: UIMessage[]) =>
+            prev.map((m) =>
+              m.id !== message.id
+                ? m
+                : { ...m, metadata: { ...(m.metadata ?? {}), ...(latestMeta as object) } }
+            )
+          )
+          return
+        }
         setMessagesRef.current?.((prev: UIMessage[]) =>
           prev.map((m) => {
             if (m.id !== message.id) return m
             // 澄清问答: parts 替换会丢掉本地流式的 tool part,
             // 合并库中 metadata(含 ask_clarification 明细)让卡片经历史回放路径继续渲染
-            let latestMeta: unknown = null
-            try {
-              latestMeta = typeof latest.metadata === 'string' ? JSON.parse(latest.metadata) : latest.metadata
-            } catch {
-              latestMeta = null
-            }
             return {
               ...m,
               ...(latestMeta && typeof latestMeta === 'object' ? { metadata: latestMeta } : {}),
@@ -1489,6 +1519,8 @@ export function ChatPanel({
 
   const handleSend = useCallback(
     (text: string, attachments?: Attachment[], studyAction?: StudyAction, automatic = false) => {
+      // 真实用户发送(含排队)重置「继续处理」熔断计数:新任务开新账
+      continueRoundCountRef.current = 0
       // 仅显式发送恢复跟随;排队自动出队、后台续显不能夺走阅读位置。
       if (!automatic) handleScrollToBottom()
       // 生成中不丢弃输入:入队,本轮结束后由下方 effect 自动发出
@@ -2039,6 +2071,34 @@ export function ChatPanel({
     setPendingContinuation(null)
   }, [setPendingContinuation])
 
+  /**
+   * 「继续处理」: 工具步数耗尽后由用户确认续跑。sendMessage 无参调用 = 不新增
+   * 用户消息直接重发(与 sendAutomaticallyWhen 的自动续跑同一条底层链路),
+   * body.continueRound 让服务端跳过用户落库/第 0 步强制检索;stepBudget 按请求
+   * 重算,每确认一次拿全新预算。连续计数达 CAP 后按钮已灰化,这里双保险拦截。
+   */
+  const handleContinueTools = useCallback(() => {
+    if (status !== 'ready') return
+    if (continueRoundCountRef.current >= CONTINUE_ROUND_CAP) return
+    continueRoundCountRef.current += 1
+    attachmentsRef.current = undefined
+    handleScrollToBottom()
+    sendMessage(undefined, { body: { continueRound: true } })
+  }, [status, sendMessage, handleScrollToBottom])
+
+  // 渲染判据:status=ready 且最后一条 assistant 带 continuePending 标记(服务端在
+  // 步数预算耗尽时写入 metadata,onFinish 同步进本地状态;刷新后从库回放同样命中)。
+  // 提交/流式中不渲染;续跑开始后最后一条换成流式消息,条自动消失。
+  const lastChatMessage = messages.length > 0 ? messages[messages.length - 1] : null
+  const continuePendingActive =
+    status === 'ready' &&
+    !error &&
+    lastChatMessage?.role === 'assistant' &&
+    (lastChatMessage.metadata as { continuePending?: unknown } | null | undefined)?.continuePending === true
+  const continueRoundToolCount = continuePendingActive
+    ? (lastChatMessage.metadata as { toolCalls?: unknown[] } | null | undefined)?.toolCalls?.length
+    : undefined
+
   const handleModelChange = useCallback((modelId: string) => {
     setCurrentModel(modelId)
     userToggledDeepThink.current = false // Reset on model change to allow auto-enable
@@ -2443,6 +2503,15 @@ export function ChatPanel({
                   restoreAnchor={restoreAnchor}
                   onLoadEarlier={onLoadEarlier ? () => void handleLoadEarlier() : undefined}
                   onNavigate={detachScroll}
+                  continueRound={
+                    continuePendingActive
+                      ? {
+                          toolCallCount: continueRoundToolCount,
+                          exhausted: continueRoundCountRef.current >= CONTINUE_ROUND_CAP,
+                          onContinue: handleContinueTools,
+                        }
+                      : undefined
+                  }
                 />
                 {/* 资料面板占住右墙时,刻度列不隐藏,只按面板实际宽度整体左移;
                     drawer 打开时右墙由 fixed 抽屉接管,刻度列才撤下 */}

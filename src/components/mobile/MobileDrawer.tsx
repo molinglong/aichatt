@@ -622,7 +622,10 @@ export function MobileDrawer() {
           uiStyle === 'google'
             ? 'inset-y-0 left-0 w-[300px] max-w-[82vw] bg-surface text-content-primary shadow-[2px_0_12px_rgba(60,64,67,.24)]'
             : 'inset-0 bg-surface-muted/85 text-content-primary',
-          'transition-transform duration-slow ease-standard',
+          // 入场(滑入)微弹,出场保持标准曲线不带过冲(2026-11-11 动效二波)
+          open
+            ? 'transition-transform duration-slow ease-enter'
+            : 'transition-transform duration-slow ease-standard',
           open ? 'translate-x-0 mdrawer-open' : '-translate-x-full'
         )}
         style={uiStyle === 'google' ? {

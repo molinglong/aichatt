@@ -1513,9 +1513,10 @@ function MessageBubbleInner({
               {copyMenuOpen && (
                 <div
                   role="menu"
+                  data-panel-state="open"
                   // 菜单位置默认 below-left(桌面端常见);移动端 / 窄屏由 effect 测距后
   // 用 data-pos 改写定位(下方/上方 × 左/右),避免溢出屏幕
-  className="copy-menu absolute z-30 top-full mt-1 right-0 sm:left-0 min-w-[140px] rounded-lg border border-line/60 bg-surface shadow-xl py-1 text-xs
+  className="copy-menu panel-motion absolute z-30 top-full mt-1 right-0 sm:left-0 min-w-[140px] rounded-lg border border-line/60 bg-surface shadow-xl py-1 text-xs
                     [&[data-pos='below-right']]:top-full [&[data-pos='below-right']]:mt-1 [&[data-pos='below-right']]:right-0 [&[data-pos='below-right']]:left-auto
                     [&[data-pos='below-left']]:top-full [&[data-pos='below-left']]:mt-1 [&[data-pos='below-left']]:left-0 [&[data-pos='below-left']]:right-auto
                     [&[data-pos='above-right']]:top-auto [&[data-pos='above-right']]:bottom-full [&[data-pos='above-right']]:mb-1 [&[data-pos='above-right']]:right-0 [&[data-pos='above-right']]:left-auto

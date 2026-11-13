@@ -98,12 +98,14 @@
 
   /* 动效时长四档(2026-10-31 全站统一定稿): 与 tailwind.config.ts 同值, 改一处必须同改另一处。
      micro 颜色/透明度反馈 · fast 按压与小浮层 · base 面板与折叠 · slow 抽屉位移。
-     曲线只两条: --ease(状态切换与出场) + --ease-enter(入场)。 */
+     曲线只两条: --ease(状态切换与出场) + --ease-enter(入场)。
+     入场曲线 2026-11-11 升级为微弹 Q 弹(定稿自 preview-motion-q, 过冲实测 ≈5.3%、63% 进度到峰):
+     透明度被物理钳制, 弹性只作用在位移/缩放上; 出场保持 --ease 不带过冲。 */
   --motion-micro: 150ms;
   --motion-fast: 180ms;
   --motion-base: 260ms;
   --motion-slow: 420ms;
-  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-enter: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   /* 推理档位滑杆:紫色渐变轨 + 最高档发光色(定稿自 preview-reasoning-tier A 充能流) */
   --slider-grad: linear-gradient(90deg, #f472b6, #c084fc, #818cf8);
@@ -645,6 +647,23 @@ body {
     animation: slide-in-left var(--motion-base) var(--ease-enter) both;
   }
 
+  /* 确认框卡片入场(2026-11-11 动效二波): 挂载即播一次;backwards 填充 ——
+     动画结束后不再占位,leaving 的退场 transition 才能接管 transform/opacity */
+  .confirm-card-in {
+    animation: confirm-card-in var(--motion-fast) var(--ease-enter) backwards;
+  }
+  /* 全屏浮层(灯箱等)整层淡入: 纯 opacity,不参与 transform 手势 */
+  .overlay-fade {
+    animation: overlay-fade var(--motion-fast) var(--ease) both;
+  }
+  @keyframes overlay-fade {
+    from { opacity: 0; }
+  }
+
+  @keyframes confirm-card-in {
+    from { opacity: 0; transform: scale(0.92) translateY(8px); }
+  }
+
   /* ── 面板开合动效层（2026-10-24）──
      只负责动画，不接管定位：外层继续用 absolute/bottom-full/-translate-x-1/2 等
      定位类，内层或自身挂 .panel-motion 即可。用独立 translate/scale 属性，
@@ -656,6 +675,12 @@ body {
   }
 
   .panel-motion[data-panel-side="bottom"] {
+    --panel-from-y: -4px;
+    --panel-origin: top center;
+  }
+
+  /* 复用 data-pos 定向的菜单(如消息复制菜单): below* 向下弹,与 side=bottom 同参; above* 走默认(向上) */
+  .panel-motion[data-pos^='below'] {
     --panel-from-y: -4px;
     --panel-origin: top center;
   }
@@ -734,7 +759,7 @@ body {
 }
 
 .sidebar-item-enter {
-  animation: sidebar-item-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation: sidebar-item-in 0.3s var(--ease-enter) backwards;
 }
 
 /* 右键菜单弹出(全局 ContextMenuHost):快速淡入,transform-origin 由组件用 origin-top-left 指定 */
@@ -750,7 +775,7 @@ body {
 }
 
 .context-menu-enter {
-  animation: context-menu-in 0.1s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation: context-menu-in 0.1s var(--ease-enter) backwards;
 }
 
 /* 欢迎页签名「书写」入场: 一层从左往右扫过的柔边 mask 揭过透明墨迹,
@@ -1609,7 +1634,7 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   animation: none;
 }
 .md-blk-rise {
-  animation: md-blk-rise 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation: md-blk-rise 0.34s var(--ease-enter) both;
 }
 @media (prefers-reduced-motion: reduce) {
   .md-blk-rise {
@@ -2563,7 +2588,7 @@ html.dark .rich-md .exam-yellow-fish-risk {
 }
 
 .auth-reveal {
-  animation: auth-fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: auth-fade-up 0.7s var(--ease-enter) both;
 }
 .auth-delay-1 { animation-delay: 0.02s; }
 .auth-delay-2 { animation-delay: 0.1s; }

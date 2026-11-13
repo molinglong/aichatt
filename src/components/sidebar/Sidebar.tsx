@@ -529,7 +529,11 @@ export function Sidebar() {
           // 铺在整个面板上而不是只铺会话列表容器 —— 否则列表顶边会多一条断层
           'bg-surface-muted glass-blur text-content-primary sidebar-panel',
           'rounded-xl border border-line/50 overflow-hidden',
-          'transition-transform duration-slow ease-standard',
+          // 入场(滑入)微弹,出场保持标准;桌面端宽度过渡仍压回 standard,
+          // 避免宽度也跟着过冲出现果冻感(2026-11-11 动效二波)
+          sidebarEffectiveOpen
+            ? 'transition-transform duration-slow ease-enter md:ease-standard'
+            : 'transition-transform duration-slow ease-standard',
           'm-1.5',
           sidebarEffectiveOpen ? 'translate-x-0' : '-translate-x-full',
           // Tablets and above: always static (taking layout space)
@@ -678,7 +682,8 @@ export function Sidebar() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMaskMenuOpen(false)} />
                 <div
-                  className="absolute left-2 top-full -mt-1.5 z-50 w-[13rem] max-h-72 overflow-y-auto
+                  data-panel-side="bottom" data-panel-state="open"
+                  className="panel-motion absolute left-2 top-full -mt-1.5 z-50 w-[13rem] max-h-72 overflow-y-auto
                     rounded-xl border border-line bg-surface shadow-lg py-1.5"
                   role="menu"
                 >

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, KeyboardEvent, ChangeEvent } from 'react'
-import { Send, Square, X, Plus, AlertCircle, FileText, Play, ArrowUp, Columns2, Drama, Brain, Globe, Plug, Check, ChevronRight, ChevronDown, MoreHorizontal, Copy, ClipboardPaste, TextSelect, Eraser, Paperclip } from 'lucide-react'
+import { Send, Square, X, Plus, AlertCircle, FileText, Play, ArrowUp, Columns2, Drama, Brain, Globe, Plug, Check, ChevronRight, ChevronLeft, ChevronDown, MoreHorizontal, Copy, ClipboardPaste, TextSelect, Eraser, Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
 import { useContextMenuStore, type ContextMenuItem } from '@/store/contextMenuStore'
@@ -182,25 +182,18 @@ export function ChatInput({
   const [maskMenuOpen, setMaskMenuOpen] = useState(false)
   // MCP 工具下拉菜单开合(总开关+逐工具开关)
   const [mcpMenuOpen, setMcpMenuOpen] = useState(false)
-  // 平台定向弹层(桌面): absolute 锚在胶囊行内 + document pointerdown 收合。
-  // 不用 fixed 遮罩: 祖先带 backdrop-blur 时 fixed 会退化(同推理面板定案口径)。
-  const [platformMenuOpen, setPlatformMenuOpen] = useState(false)
-  const platformWrapRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!platformMenuOpen) return
-    function onDown(e: PointerEvent) {
-      if (!platformWrapRef.current?.contains(e.target as Node)) setPlatformMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [platformMenuOpen])
-  // ⋯ 更多工具菜单开合(收纳: 对比模式 + 移动端的面具/MCP)
+  // ⋯ 更多工具菜单开合(收纳: 搜索平台定向 + 对比模式 + 移动端的面具/MCP)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  // ⋯ 菜单里的平台定向二级面板(方案A 2026-11-11): 行点击换页成九站网格,返回箭头回主列表。
+  // 只是同一弹层内的层级态,开合随 ⋯ 菜单走;⋯ 关闭时复位回第一层
+  const [platformGridOpen, setPlatformGridOpen] = useState(false)
+  useEffect(() => {
+    if (!moreMenuOpen) setPlatformGridOpen(false)
+  }, [moreMenuOpen])
   // 手机端模型入口:胶囊内不放 ModelSelector,改由 ⋯ 唤 iOS 半屏快切
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
   // 面板退场统一入口:关闭后保留 180ms 播完动效再卸载；动效本体见 globals.css 的 .panel-motion
   const morePanel = usePanelPresence(moreMenuOpen)
-  const platformPanel = usePanelPresence(platformMenuOpen)
   const maskPanel = usePanelPresence(maskMenuOpen)
   const isMobileViewport = useIsMobileViewport()
   // 面具菜单盒高: 桌面在胶囊里向下弹;手机端改走 MobileSheet(自带 portal,不受输入卡 glass-blur 的包含块影响)
@@ -240,7 +233,7 @@ export function ChatInput({
       setMoreMenuOpen(false)
       setMaskMenuOpen(false)
       setMcpMenuOpen(false)
-      setPlatformMenuOpen(false)
+      setPlatformGridOpen(false)
       setModelSheetOpen(false)
     },
   })
@@ -583,17 +576,20 @@ export function ChatInput({
   const pillIdle = 'bg-surface-muted hover:bg-surface-subtle text-content-secondary'
   const pillActive = 'bg-accent text-accent-foreground'
   const hasCompareEntry = compareModeAvailable && !!onCompareModeChange
+  // 搜索平台定向(方案A 2026-11-11): 桌面不再外露胶囊,收进 ⋯ 菜单作二级面板。
+  // 与联网开关绑定为从属项:搜索关着时整条不出现(能力开关仍外显在工具行)
+  const hasPlatformEntry = webSearch && webSearchAvailable && !!onSearchPlatformChange
   const currentModel = models.find((m) => m.id === selectedModel)
   const hasMcpEntry = mcpAvailable && !!onMcpEnabledChange
   const hasMaskEntry = !!onMaskChange
   // ⋯ 更多工具(welcome 与 standard 两变体共用):
-  // 桌面端只剩「对比模式」(面具/MCP 桌面已外显),仍以 ⋯ 钮为锚向上弹小气泡;
+  // 桌面端 =「搜索平台定向」(联网开启才出,点开原地换页成九站网格)+「对比模式」,以 ⋯ 钮为锚向上弹小气泡;
   // 手机端整套工具改走统一底部面板 MobileSheet(把手 / 居中标题 / 取消行 / 下滑关闭)。
   // 宽度钳制必须用视口单位(calc(100vw-2rem)):百分比 max-w 相对锚点 wrapper(仅 44px)解析,
   // 会把弹层压瘪成竖条(曾实测 28px)。w-60 加视口钳制后任何屏宽不溢出视口。
   const moreMenus = (
     <>
-      {!isMobileViewport && hasCompareEntry && morePanel.rendered && (
+      {!isMobileViewport && (hasCompareEntry || hasPlatformEntry) && morePanel.rendered && (
         <>
           <div
             className={cn('fixed inset-0 z-40', morePanel.closing && 'pointer-events-none')}
@@ -607,7 +603,25 @@ export function ChatInput({
             data-panel-side="top"
             role="menu"
           >
-            {hasCompareEntry && (
+            {hasPlatformEntry && !platformGridOpen && (
+              <>
+                <button
+                  className="flex items-center gap-3 w-full px-2.5 py-2.5 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors text-left"
+                  onClick={() => setPlatformGridOpen(true)}
+                >
+                  <Globe className="w-3.5 h-3.5 shrink-0" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-medium">搜索平台定向</span>
+                    <span className="block mt-0.5 truncate text-[10px] text-content-muted">
+                      {getSearchPlatform(searchPlatform).sub}
+                    </span>
+                  </span>
+                  <ChevronRight className="w-3.5 h-3.5 shrink-0 opacity-55" aria-hidden />
+                </button>
+                {hasCompareEntry && <div className="mx-2 my-1 h-px bg-line" aria-hidden />}
+              </>
+            )}
+            {hasCompareEntry && !platformGridOpen && (
               <button
                 className="flex items-center gap-3 w-full px-2.5 py-2.5 rounded-lg text-xs text-content-primary hover:bg-surface-subtle active:bg-surface-subtle transition-colors text-left"
                 onClick={() => { onCompareModeChange(!compareMode); setMoreMenuOpen(false) }}
@@ -619,6 +633,54 @@ export function ChatInput({
                 </span>
                 {compareMode && <Check className="w-3.5 h-3.5 shrink-0" />}
               </button>
+            )}
+            {/* 二级面板: 九站网格原地替换主列表(同弹层同锚点,视觉上是翻页不是换弹层)。
+                网格口径沿用原桌面胶囊弹层的定稿(3列 h-9 圆角钮,选中 accent+对勾) */}
+            {hasPlatformEntry && platformGridOpen && (
+              <div role="menu" aria-label="搜索平台定向">
+                <div className="flex items-center gap-1 px-1 pb-1 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setPlatformGridOpen(false)}
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded-lg text-content-secondary transition-colors hover:bg-surface-subtle"
+                    aria-label="返回"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                  <span className="flex-1 text-xs font-semibold text-content-primary">搜索平台定向</span>
+                  <span className="shrink-0 text-[10px] text-content-muted">
+                    当前 {getSearchPlatform(searchPlatform).label}
+                  </span>
+                </div>
+                <p className="px-1 pb-1.5 text-[10px] leading-relaxed text-content-muted">
+                  站内索引较稀薄，查不到时会自动回退全网并说明。
+                </p>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {SEARCH_PLATFORMS.map((p) => {
+                    const on = p.id === searchPlatform
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          onSearchPlatformChange?.(p.id)
+                          setMoreMenuOpen(false)
+                          setPlatformGridOpen(false)
+                        }}
+                        className={cn(
+                          'flex items-center justify-center gap-1 h-9 rounded-lg text-xs transition-colors',
+                          on
+                            ? 'bg-accent text-accent-foreground'
+                            : 'bg-surface-muted hover:bg-surface-subtle text-content-secondary'
+                        )}
+                      >
+                        {p.label}
+                        {on && <Check className="w-3 h-3" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             )}
           </div>
         </>
@@ -892,63 +954,6 @@ export function ChatInput({
                 <Globe className="w-3.5 h-3.5" />
               </button>
             )}
-            {/* 平台定向(桌面外显): 联网开启才出。默认「自动」= 不干涉模型,与改造前一致;
-                选定具体平台后服务端直接按域白名单过滤,并把 platform 参数从工具 schema 摘掉 */}
-            {webSearch && webSearchAvailable && onWebSearchChange && onSearchPlatformChange && (
-              <div ref={platformWrapRef} className="relative hidden sm:block">
-                <button
-                  onClick={() => setPlatformMenuOpen((v) => !v)}
-                  disabled={isLoading}
-                  className={cn(
-                    'flex items-center gap-1 h-7 min-h-[38px] sm:min-h-0 px-2.5 rounded-full text-xs transition-colors shrink-0',
-                    searchPlatform === 'auto' ? pillIdle : pillActive,
-                    isLoading && 'opacity-50 cursor-not-allowed'
-                  )}
-                  title="平台定向：只查某个站（B站/小红书/知乎…）。自动=由模型按问题判断"
-                  aria-label="搜索平台定向"
-                  aria-haspopup="menu"
-                  aria-expanded={platformMenuOpen}
-                >
-                  <span className="max-w-[5rem] truncate">{getSearchPlatform(searchPlatform).label}</span>
-                  <ChevronDown className="w-3 h-3 opacity-70" />
-                </button>
-                {platformPanel.rendered && (
-                  <div
-                    className="panel-motion absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-50 w-[236px] rounded-xl border border-line bg-surface shadow-lg p-2"
-                    data-panel-state={platformPanel.closing ? 'closed' : 'open'}
-                    data-panel-side="top"
-                  >
-                    <p className="px-1 pb-1.5 text-[10px] leading-relaxed text-content-muted">
-                      限定检索站点。站内索引比全网稀薄，查不到时会自动回退全网并说明。
-                    </p>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {SEARCH_PLATFORMS.map((p) => {
-                        const on = p.id === searchPlatform
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => {
-                              onSearchPlatformChange(p.id)
-                              setPlatformMenuOpen(false)
-                            }}
-                            className={cn(
-                              'flex items-center justify-center gap-1 h-9 rounded-lg text-xs transition-colors',
-                              on
-                                ? 'bg-accent text-accent-foreground'
-                                : 'bg-surface-muted hover:bg-surface-subtle text-content-secondary'
-                            )}
-                          >
-                            {p.label}
-                            {on && <Check className="w-3 h-3" />}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
             {/* 面具钮:桌面(欢迎页胶囊)外显;手机端改由 ⋯ 面板进入,列表用贴底浮层展示。
                 会话页桌面端仍由 ChatPanel 顶部面具 chip 承担,故 standard 变体桌面隐藏 */}
             {hasMaskEntry && !isMobileViewport && (
@@ -994,10 +999,10 @@ export function ChatInput({
                 )}
               </div>
             )}
-            {/* ⋯ 更多工具(收纳菜单): 桌面=对比模式;手机=附件/面具/模型/深度思考/搜索/MCP/对比。
+            {/* ⋯ 更多工具(收纳菜单): 桌面=搜索平台定向+对比模式;手机=附件/面具/模型/深度思考/搜索/MCP/对比。
                 手机端弹层要贴输入卡右缘,故 max-md:static 撤掉自身定位锚点;
-                手机端恒显(它是唯一工具入口),桌面仅当有「对比模式」项时出现 */}
-            <div className={cn('relative shrink-0 max-md:static', !hasCompareEntry && 'hidden max-md:block', mobileStack && 'max-md:ml-auto')}>
+                手机端恒显(它是唯一工具入口),桌面仅当有收纳项(平台定向/对比模式)时出现 */}
+            <div className={cn('relative shrink-0 max-md:static', !hasCompareEntry && !hasPlatformEntry && 'hidden max-md:block', mobileStack && 'max-md:ml-auto')}>
               <button
                 onClick={() => setMoreMenuOpen((v) => !v)}
                 className={cn(iconBtnBase, moreMenuOpen ? pillActive : pillIdle)}

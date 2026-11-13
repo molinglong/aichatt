@@ -102,7 +102,7 @@ export function ModelSelector({ models, value, onChange, compact = false }: Mode
           <ChevronDown className={cn('w-3 h-3 transition-transform', open && 'rotate-180')} />
         </button>
         {open && (
-          <div className="absolute top-full left-0 mt-1 w-56 max-h-60 overflow-y-auto bg-surface border border-line/60 rounded-lg shadow-xl z-50 py-1">
+          <div data-panel-side="bottom" data-panel-state="open" className="panel-motion absolute top-full left-0 mt-1 w-56 max-h-60 overflow-y-auto bg-surface border border-line/60 rounded-lg shadow-xl z-50 py-1">
             {legacyToggle}
             {Object.keys(grouped).length > 0 ? (
               Object.entries(grouped).map(([providerId, { providerName, models: providerModels }]) => (
@@ -147,7 +147,7 @@ export function ModelSelector({ models, value, onChange, compact = false }: Mode
         <ChevronDown className={cn('w-4 h-4 shrink-0 transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div className="absolute top-full left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-surface border border-line/60 rounded-lg shadow-xl z-50 py-1">
+        <div data-panel-side="bottom" data-panel-state="open" className="panel-motion absolute top-full left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-surface border border-line/60 rounded-lg shadow-xl z-50 py-1">
           {legacyToggle}
           {Object.keys(grouped).length > 0 ? (
             Object.entries(grouped).map(([providerId, { providerName, models: providerModels }]) => (

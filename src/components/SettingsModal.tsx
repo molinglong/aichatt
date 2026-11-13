@@ -1060,6 +1060,9 @@ export function SettingsModal({
   const [memoryEnabled, setMemoryEnabled] = useState(true)
   const [clarifyEnabled, setClarifyEnabled] = useState(true)
   const [aiControlEnabled, setAiControlEnabled] = useState(true)
+  // 通用页签不等全局 loading 直接渲染,用户可能在首次拉取返回前就拨动此开关;
+  // 置位后本次加载的迟到响应不再覆盖,避免开关被弹回
+  const aiControlTouchedRef = useRef(false)
   // 用户中心:用户名 + 称呼 + 档案草稿(打开设置时随 /api/profiles 一起拉取)
   const [profile, setProfile] = useState<UserProfileInfo | null>(null)
   const [nameDraft, setNameDraft] = useState('')
@@ -1822,6 +1825,7 @@ export function SettingsModal({
       return
     }
     setLoading(true)
+    aiControlTouchedRef.current = false
     // 预置模型覆盖记录：设置面板常驻挂载，useProviderModels 仅在挂载时拉一次，
     // 每次打开设置时补拉，保证 AI 卡片（manage_provider_models）等外部入口的改动能同步进来
     void fetchProviderOverrides()
@@ -1848,7 +1852,9 @@ export function SettingsModal({
         setClarifyEnabled(clarifyData?.clarifyEnabled ?? true)
         setLocalFilesEnabled(localFilesData?.localFilesEnabled ?? false)
         setLocalFilesExecAutoRun(localFilesData?.localFilesExecAutoRun ?? false)
-        setAiControlEnabled(aiControlData?.aiSettingsControl ?? true)
+        if (!aiControlTouchedRef.current) {
+          setAiControlEnabled(aiControlData?.aiSettingsControl ?? true)
+        }
         // 账号资料:打开设置时拉取,并同步用户名/称呼草稿
         if (profileData && typeof profileData === 'object') {
           setProfile(profileData)
@@ -2415,6 +2421,7 @@ export function SettingsModal({
 
   async function handleToggleAiControl(enabled: boolean) {
     setAiControlEnabled(enabled)
+    aiControlTouchedRef.current = true
     try {
       const res = await fetch('/api/settings/ai-control', {
         method: 'PATCH',
@@ -3101,7 +3108,7 @@ export function SettingsModal({
         onPointerMove={onCardPointerMove}
         onPointerUp={onCardPointerUp}
         onPointerCancel={onCardPointerCancel}
-        className={`m-set relative flex flex-col overflow-hidden transition-[transform,opacity,background-color,border-color] duration-base ease-standard ${visible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 md:translate-y-0'} ${forceOpen
+        className={`m-set relative flex flex-col overflow-hidden transition-[transform,opacity,background-color,border-color] duration-base ${visible ? 'ease-enter' : 'ease-standard'} ${visible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 md:translate-y-0'} ${forceOpen
           ? 'h-full w-full rounded-none border-0 shadow-none'
           : 'w-full md:w-[90%] lg:w-[750px] max-w-none md:max-w-[calc(100vw-2rem)] h-[100dvh] md:h-[36rem] max-h-none md:max-h-[calc(100dvh-2rem)] rounded-none md:rounded-xl border-0 md:border border-line/60 shadow-2xl md:pointer-events-auto'}`}
       >
@@ -3693,15 +3700,16 @@ export function SettingsModal({
               </div>
             )}
 
-            {/* 其他需要数据的页面 - 显示 loading */}
-            {activeSection !== 'overview' && loading && (
+            {/* 需要数据的页面 - 显示 loading(总览/通用零请求,不等全局 loading;否则页面刚加载时的
+                首波请求风暴会把通用拖到 30s 才渲染) */}
+            {activeSection !== 'overview' && activeSection !== 'general' && loading && (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="w-5 h-5 animate-spin text-content-muted" />
               </div>
             )}
 
-            {/* 其他页面内容 */}
-            {activeSection !== 'overview' && !loading && (
+            {/* 页面内容:通用页签全部来自 store/localStorage,loading 中也直接渲染 */}
+            {activeSection !== 'overview' && (!loading || activeSection === 'general') && (
               <>
                 {/* 联网搜索 */}
                 {activeSection === 'search' && (() => {

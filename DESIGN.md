@@ -24,7 +24,7 @@
 - 双环 `--glass-ring` + 双层窗影 `--shadow-window` 仅 bigsur、仅真浮层。
 - 结构级分歧用组件分流(TopbarShell / useUiStyle 模式),禁 CSS 套壳硬拗。
 - 动效只有四档时长 `--motion-micro/fast/base/slow` + 两条曲线 `--ease`(切换/出场)、`--ease-enter`(入场);新动画从这六项里选。
-- 数字宽度抖动已由 'Noto Sans Digits' 子集接管(在 `--font-sans`),禁为此引新字体;新字体需求先问。
+- 数字宽度抖动已由 'Noto Sans Digits' 子集接管(在 `--font-sans`),禁为此引新字体;新字体需求先问。已获批例外仅一枚:拟卷卷面页局部引入霞鹜文楷屏幕版 `LXGW WenKai Screen`(public/fonts/lxgw-wenkai-screen/,97 分块按需加载,仅 `papers/composed` 页用,不得外溢到其他界面)。
 - 手机输入框 font-size ≥ 16px(防 iOS 聚焦缩放);设置面板按钮命中区 ≥ 40px、常规交互 ≥ 44px。
 - 设置页组件统一出自 settings/primitives.tsx,禁在页面里另写一套卡/开关/分段控件。
 - data-style 三维度 classic / bigsur / google 各有 accent 与圆角档;动 accent 或圆角必须三维度全验证。

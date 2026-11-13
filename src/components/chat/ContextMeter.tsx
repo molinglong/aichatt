@@ -19,6 +19,18 @@ interface ContextInfo {
     createdAt: string
     preview: string
   } | null
+  /** 本会话 prompt caching 统计(与设置·用量页同口径):
+      只统计上游报了缓存明细的轮次;rounds=0 表示无可统计数据 */
+  cache: {
+    /** 命中量(promptTokens 的子集,逐轮 clamp) */
+    hitTokens: number
+    /** 有缓存明细轮次的输入 token 合计 */
+    promptTokens: number
+    /** 有缓存明细的轮次数 */
+    rounds: number
+    /** 其中命中(>0)的轮次数 */
+    hitRounds: number
+  }
 }
 
 interface ContextMeterProps {
@@ -117,7 +129,7 @@ export function ContextMeter({ conversationId, contextWindow, refreshSignal }: C
       </button>
 
       {open && (
-        <div className="absolute bottom-full right-0 z-20 mb-2 w-72 rounded-xl border border-line bg-surface p-3 shadow-lg">
+        <div data-panel-state="open" className="panel-motion absolute bottom-full right-0 z-20 mb-2 w-72 rounded-xl border border-line bg-surface p-3 shadow-lg">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-medium text-content-primary">上下文用量</span>
             <span className={cn('text-xs font-semibold', tone.split(' ')[0])}>{pct}%</span>
@@ -149,6 +161,65 @@ export function ContextMeter({ conversationId, contextWindow, refreshSignal }: C
               <span>真实用量(已统计轮次)</span>
               <span>{info.realTokens > 0 ? info.realTokens.toLocaleString() : '—'}</span>
             </div>
+            {/* 输入命中率迷你圆环:输入拆成 未命中(蓝)+命中(琥珀),配色与设置·用量页同款 */}
+            {(() => {
+              const c = info.cache
+              const miss = Math.max(c.promptTokens - c.hitTokens, 0)
+              const denom = c.promptTokens > 0 ? c.promptTokens : 0
+              const missRatio = denom > 0 ? miss / denom : 0
+              const hitRatio = denom > 0 ? Math.min(c.hitTokens, denom) / denom : 0
+              const rate = denom > 0 ? Math.round(hitRatio * 100) : null
+              return (
+                <div
+                  className="my-1 flex items-center gap-2.5"
+                  title={
+                    c.rounds > 0
+                      ? `已报缓存明细的 ${c.rounds} 轮中 ${c.hitRounds} 轮命中 · 命中 ${c.hitTokens.toLocaleString()} / 输入 ${c.promptTokens.toLocaleString()} tokens`
+                      : undefined
+                  }
+                >
+                  <div className="relative h-11 w-11 shrink-0">
+                    {c.rounds > 0 ? (
+                      <>
+                        <svg viewBox="0 0 42 42" className="h-full w-full -rotate-90">
+                          {/* 背景环 */}
+                          <circle cx="21" cy="21" r="15.9155" fill="none" stroke="currentColor" strokeWidth="6" className="text-line/40" />
+                          {/* 未命中输入段(蓝) */}
+                          <circle cx="21" cy="21" r="15.9155" fill="none" stroke="#3b82f6" strokeWidth="6" strokeDasharray={`${missRatio * 100} 100`} strokeDashoffset="0" strokeLinecap="butt" />
+                          {/* 缓存命中段(琥珀) */}
+                          {c.hitTokens > 0 && (
+                            <circle cx="21" cy="21" r="15.9155" fill="none" stroke="#f59e0b" strokeWidth="6" strokeDasharray={`${hitRatio * 100} 100`} strokeDashoffset={`${-missRatio * 100}`} strokeLinecap="butt" />
+                          )}
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <span className="font-mono text-[10px] font-semibold text-content-primary tabular-nums">{rate}%</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center rounded-full border-2 border-dashed border-line/60">
+                        <span className="text-[9px] text-content-muted">无数据</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-0.5 text-[11px]">
+                    <div className="flex justify-between text-content-secondary">
+                      <span>输入命中率</span>
+                      <span className="tabular-nums">{c.rounds > 0 ? `${c.hitRounds}/${c.rounds} 轮` : '未统计'}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-content-muted">
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
+                        命中 {c.hitTokens.toLocaleString()}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />
+                        未命中 {miss.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
             <div className="flex justify-between">
               <span>最近压缩</span>
               <span>

@@ -33,7 +33,14 @@ export async function GET(
   const messages = await prisma.message.findMany({
     where: { conversationId: id, archived: false, role: { in: ["user", "assistant"] } },
     orderBy: { createdAt: "asc" },
-    select: { id: true, role: true, content: true, promptTokens: true, completionTokens: true },
+    select: {
+      id: true,
+      role: true,
+      content: true,
+      promptTokens: true,
+      completionTokens: true,
+      cacheReadTokens: true,
+    },
   })
 
   const lastSummary = await prisma.conversationSummary.findFirst({
@@ -63,6 +70,22 @@ export async function GET(
     0
   )
 
+  // 本会话 prompt caching 统计(与 设置·用量页 同口径): 只统计上游报了缓存明细的
+  // 轮次(cacheReadTokens 非空;0=报了但未命中,null=上游没报明细),命中量是
+  // promptTokens 的子集,逐轮 clamp 防御异常报数。rounds=0 → 前端显示「未统计」。
+  let cacheHitTokens = 0
+  let cachePromptTokens = 0
+  let cacheRounds = 0
+  let cacheHitRounds = 0
+  for (const m of messages) {
+    if (m.cacheReadTokens == null) continue
+    cacheRounds++
+    const prompt = m.promptTokens ?? 0
+    cachePromptTokens += prompt
+    cacheHitTokens += Math.min(m.cacheReadTokens, prompt)
+    if (m.cacheReadTokens > 0) cacheHitRounds++
+  }
+
 
   return NextResponse.json({
     estimatedTokens,
@@ -70,6 +93,12 @@ export async function GET(
     realTokens,
     messageCount: messages.length,
     coveredMessages: coveredCount,
+    cache: {
+      hitTokens: cacheHitTokens,
+      promptTokens: cachePromptTokens,
+      rounds: cacheRounds,
+      hitRounds: cacheHitRounds,
+    },
     lastSummary: lastSummary
       ? {
           coveredMessages: lastSummary.coveredMessages,

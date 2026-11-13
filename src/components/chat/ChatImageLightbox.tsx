@@ -311,7 +311,7 @@ export function ChatImageLightbox({
       role="dialog"
       aria-modal="true"
       aria-label={`图片预览:${att.name}`}
-      className="fixed inset-0 z-[300] flex flex-col bg-black/90 select-none"
+      className="overlay-fade fixed inset-0 z-[300] flex flex-col bg-black/90 select-none"
       style={{ overscrollBehavior: 'contain' }}
       onClick={onClose}
     >

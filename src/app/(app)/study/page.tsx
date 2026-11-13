@@ -16,7 +16,7 @@ import { useSession } from 'next-auth/react'
 import { NoteList } from '@/components/study/NoteList'
 import { FavoriteList } from '@/components/study/FavoriteList'
 import { ReviewCard } from '@/components/study/ReviewCard'
-import { StudyHome, type StudySessionListItem } from '@/components/study/StudyHome'
+import { StudyHome, type StudySessionListItem, type ComposedPaperListItem } from '@/components/study/StudyHome'
 import { StudyWorkspace } from '@/components/study/StudyWorkspace'
 import { FileUpload } from '@/components/chat/FileUpload'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
@@ -294,6 +294,13 @@ function StudyContent() {
     staleTime: 60_000,
   })
   const kbCount = kbDocs?.length ?? 0
+  // 拟卷列表(学习台「拟卷练习」区块 + 统计行 chip;GET /api/papers/composed)
+  const { data: composedList } = useQuery({
+    queryKey: queryKeys.papers.composedList(),
+    queryFn: ({ signal }) => fetchJson<{ papers: ComposedPaperListItem[] }>('/api/papers/composed', { signal }),
+    staleTime: 30_000,
+  })
+  const composedPapers = composedList?.papers ?? []
 
   const refreshAll = () => {
     void queryClient.invalidateQueries({ queryKey: ['study', 'sessions'] })
@@ -409,6 +416,7 @@ function StudyContent() {
             kbCount={kbCount}
             masteryAvg={masteryAvg}
             totalSessions={totalSessions}
+            papers={composedPapers}
             loading={listQuery.isLoading}
             onResume={openSession}
             onNew={(text) => setView({ kind: 'setup', draft: text })}

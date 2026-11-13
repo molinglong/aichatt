@@ -173,7 +173,17 @@ export function TopBar() {
   // 学习流不再让位顶栏(2026-11-02):独立学习室头部整条撤下,
   // 题目与讲解都跑在普通聊天壳里,顶栏/浮钮照常渲染。
   const isWritePage = pathname?.startsWith('/write')
-  const displayTitle = isImagesPage ? '生图工作台' : isExplorePage ? '观点探索' : isWritePage ? '写作画布' : (title || '新对话')
+  // 「新对话」仅聊天页显示:/papers /kb 等非聊天页不兜底会话标题(2026-11-13 用户定案)
+  const isChatPage = pathname?.startsWith('/chat')
+  const displayTitle = isImagesPage
+    ? '生图工作台'
+    : isExplorePage
+      ? '观点探索'
+      : isWritePage
+        ? '写作画布'
+        : isChatPage
+          ? title || '新对话'
+          : ''
   // 学习模式:左上角用手写体 Study 词标替代会话标题(用户定稿,参考手绘 logo)
   const isStudyPage = pathname?.startsWith('/study')
   const studyLogo = isStudyPage ? (
@@ -427,7 +437,7 @@ export function TopBar() {
             onClick={handleBranchConversation}
             disabled={isBranching}
             className={cn(
-              'inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition duration-150 touch-manipulation shrink-0',
+              'inline-flex items-center justify-center p-1.5 rounded-full transition duration-150 touch-manipulation shrink-0',
               'text-content-secondary hover:text-content-primary hover:bg-surface-subtle active:scale-95',
               isBranching && 'opacity-60 cursor-wait'
             )}
@@ -436,7 +446,6 @@ export function TopBar() {
             style={{ WebkitTapHighlightColor: 'transparent', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
             <MessageSquarePlus className={cn('w-3.5 h-3.5', isBranching && 'animate-pulse')} />
-            <span className="hidden sm:inline">在新对话继续</span>
           </button>
         )}
         {/* 代码编辑器入口([P1]):跳到 Side Pane 的代码 tab(已开则激活);写作画布覆盖层打开时隐藏;
@@ -469,7 +478,8 @@ export function TopBar() {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setHotkeysOpen(false)} />
               <div
-                className="absolute right-0 top-full mt-1.5 z-50 w-64 rounded-xl border border-line bg-surface shadow-lg p-3"
+                data-panel-side="bottom" data-panel-state="open"
+                className="panel-motion absolute right-0 top-full mt-1.5 z-50 w-64 rounded-xl border border-line bg-surface shadow-lg p-3"
                 role="dialog"
                 aria-label="键盘快捷键"
               >

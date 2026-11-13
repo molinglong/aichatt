@@ -71,13 +71,16 @@ const config: Config = {
         slow: "420ms",
       },
       transitionTimingFunction: {
-        // 曲线只留两条：standard 管所有状态切换与出场，enter 只管"从无到有"的入场。
+        // 曲线只留两条：standard 管所有状态切换与出场，enter 管所有"从无到有"的入场。
+        // enter 2026-11-11 换为微弹 Q 弹（定稿自 preview-motion-q，过冲 ≈5.3%），
+        // 与 globals.css --ease-enter 同值，改一处必须同改另一处；透明度天生物理钳制，
+        // 弹性只作用在位移/缩放上。
         // DEFAULT 必须与 standard 同值 —— 未写 ease-* 的过渡类全部吃 DEFAULT，
         // 改这一处就把 400+ 处颜色过渡从 Tailwind 原曲线一次性归位。
         // pop 是 standard 的旧别名，保留仅为兼容存量调用点。
         DEFAULT: "cubic-bezier(0.32, 0.72, 0.28, 1)",
         standard: "cubic-bezier(0.32, 0.72, 0.28, 1)",
-        enter: "cubic-bezier(0.16, 1, 0.3, 1)",
+        enter: "cubic-bezier(0.34, 1.4, 0.64, 1)",
         pop: "cubic-bezier(0.32, 0.72, 0.28, 1)",
       },
       fontFamily: {
@@ -85,15 +88,15 @@ const config: Config = {
         mono: ['var(--font-geist-mono)', 'ui-monospace', 'monospace'],
       },
       keyframes: {
-        // 发送按钮由禁用变为可用时的轻微弹入
+        // 发送按钮由禁用变为可用时的弹入：过冲交由 enter 曲线接管，
+        // keyframe 不再自带 1.06（避免与曲线双重过冲）
         'pop-in': {
           '0%': { transform: 'scale(0.85)' },
-          '60%': { transform: 'scale(1.06)' },
           '100%': { transform: 'scale(1)' },
         },
       },
       animation: {
-        'pop-in': 'pop-in 240ms ease-out',
+        'pop-in': 'pop-in 240ms cubic-bezier(0.34, 1.4, 0.64, 1)',
       },
     },
   },

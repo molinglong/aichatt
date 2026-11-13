@@ -1,0 +1,356 @@
+/* 拟卷卷面 —— 字体改版「霞鹜文楷全卷」定案(design/preview-paper-fonts.html 用户已挑,替换原方案A 三体仿真):
+   全卷唯一字体 = 霞鹜文楷屏幕版(本地打包 woff2,层级靠字重/字号),材料块左细线锚定。
+   纪律:黑白打印禁灰阶(纸面元素只用纯黑)、正文 ≥10.5pt(现 11.5pt);纸面恒白,页面底色随主题。 */
+
+.scroller {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(128 128 140 / 0.25) transparent;
+  overscroll-behavior-y: contain;
+}
+.scroller::-webkit-scrollbar {
+  width: 8px;
+}
+.scroller::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgb(128 128 140 / 0.28);
+  border: 2px transparent solid;
+  background-clip: padding-box;
+}
+.scroller::-webkit-scrollbar-thumb:hover {
+  background: rgb(128 128 140 / 0.45);
+  background-clip: padding-box;
+}
+.scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+@media (hover: none) {
+  .scroller {
+    scrollbar-width: none;
+  }
+  .scroller::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ── 卷面本体(A4,霞鹜文楷全卷) ──────────────────────── */
+.sheet {
+  width: 210mm;
+  margin: 0 auto;
+  background: #ffffff;
+  color: #000000;
+  padding: 14mm 15mm;
+  border-radius: 12px;
+  box-shadow: 0 2px 14px rgb(0 0 0 / 0.1);
+  font-family: 'LXGW WenKai Screen', 'KaiTi', '楷体', serif;
+  font-size: 11.5pt;
+  line-height: 1.7;
+  overflow-wrap: break-word;
+}
+@media (max-width: 760px) {
+  .sheet {
+    width: 100%;
+    padding: 24px 18px;
+    border-radius: 10px;
+  }
+}
+
+.sheet :global(.katex) {
+  font-size: 1.05em;
+}
+.sheet :global(.pv-tex-block) {
+  display: block;
+  text-align: center;
+  margin: 6px 0;
+}
+
+/* 卷头 */
+.paperHead {
+  text-align: center;
+  border-bottom: 2.5px solid #000;
+  padding-bottom: 10px;
+}
+.examTag {
+  font-size: 10.5pt;
+  letter-spacing: 0.5px;
+}
+.paperTitle {
+  font-size: 17pt;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 4px 0 6px;
+}
+.paperMeta {
+  font-size: 10.5pt;
+}
+.paperMeta span {
+  margin: 0 10px;
+}
+
+/* 大题头(全卷文楷,层级靠字重字号) */
+.sectionHead {
+  font-size: 12.5pt;
+  font-weight: 700;
+  margin: 14px 0 8px;
+  line-height: 1.5;
+}
+.sectionNote {
+  font-size: 10.5pt;
+  font-weight: 400;
+}
+
+/* 材料(文楷同族+左细线锚定,材料只排一次) */
+.material {
+  margin: 10px 0;
+  padding: 2px 0 2px 14px;
+  border-left: 2.5px solid #000;
+  line-height: 1.8;
+  text-align: justify;
+  break-inside: avoid;
+}
+/* 多源来源徽章:纯黑文字标注,打印同效 */
+.srcBadge {
+  font-size: 9pt;
+  letter-spacing: 0.5px;
+}
+
+.materialTag {
+  font-weight: 700;
+}
+
+/* 拖拽落点指示线(仅拖动中存在;accent 屏显示能,非纸面内容) */
+.dropLine {
+  height: 0;
+  border-top: 2.5px dashed #0a84ff;
+  margin: 4px 0;
+  position: relative;
+}
+.dropLine::after {
+  content: '松手放到这里';
+  position: absolute;
+  right: 0;
+  top: -16px;
+  font-size: 10px;
+  color: #0a84ff;
+  font-family: 'Noto Sans Digits', 'MiSans', 'Microsoft YaHei UI', sans-serif;
+}
+
+/* 拖拽成功的轻浮窗(挂被移动的题块右上,2.2s 自愈) */
+.movedTag {
+  position: absolute;
+  right: 0;
+  top: -12px;
+  background: #0a84ff;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgb(10 132 255 / 0.35);
+  font-family: 'Noto Sans Digits', 'MiSans', 'Microsoft YaHei UI', sans-serif;
+  z-index: 30;
+  white-space: nowrap;
+}
+
+/* 材料标记重建(渲染层恢复的「加点/划线」标记):纸面纯黑,打印同效 */
+.markDot {
+  text-decoration: underline dotted #000 1.5px;
+  text-underline-offset: 4px;
+}
+.markWavy {
+  text-decoration: underline wavy #000 1px;
+  text-underline-offset: 3px;
+}
+.markLine {
+  text-decoration: underline #000 1px;
+  text-underline-offset: 3px;
+}
+
+/* 题目 */
+.q {
+  margin-bottom: 10px;
+  break-inside: avoid;
+}
+.qText {
+  font-size: 11.5pt;
+  line-height: 1.75;
+  text-align: justify;
+  white-space: pre-wrap;
+}
+.qNo {
+  font-weight: 700;
+  margin-right: 4px;
+}
+.opts {
+  margin: 2px 0 0 1.6em;
+  font-size: 11.5pt;
+  line-height: 1.85;
+}
+.scoreTag {
+  font-size: 9.5pt;
+  vertical-align: super;
+}
+
+/* ── 编辑层(仅屏幕;打印整层隐藏) ──────────────────── */
+.editBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin: 6px 0 14px;
+  font-family: -apple-system, 'MiSans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+}
+.editBtn {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid #e2e2e6;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #55555c;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s;
+}
+.editBtn:hover {
+  border-color: #c9c9cf;
+  background: #f7f7f8;
+  color: #1d1d1f;
+}
+.editBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.editBtnDanger:hover:not(:disabled) {
+  border-color: #f0b4b4;
+  background: #fdf5f5;
+  color: #c0392b;
+}
+
+/* ── 答案页 ────────────────────────────────────────── */
+.ansHead {
+  text-align: center;
+  font-size: 15pt;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.ansSrc {
+  text-align: center;
+  font-size: 9.5pt;
+  margin-bottom: 14px;
+}
+.ansGrid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  border: 1px solid #000;
+  break-inside: avoid;
+}
+.ansCell {
+  border: 0.5px solid #000;
+  padding: 4px 6px;
+  font-size: 10.5pt;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.ansCellK {
+  font-weight: 700;
+}
+.ansDetail {
+  margin-top: 14px;
+}
+.ansItem {
+  margin-bottom: 8px;
+  break-inside: avoid;
+}
+.ansDt {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.ansDd {
+  line-height: 1.7;
+  text-align: justify;
+  white-space: pre-wrap;
+}
+
+/* AI 参考答案标注(方案A,2026-11-13 用户挑定):速查卡「AI」小徽 + 详解「AI 参考」胶囊。
+   无衬线小字与文楷正文形成「标签」质感;print-color-adjust 保底色进打印,黑白打印时
+   退化为灰底描边仍可辨。 */
+.aiChip {
+  display: inline-block;
+  vertical-align: 0.12em;
+  font-size: 7.5pt;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #9a6a00;
+  background: #fdf3dd;
+  border: 0.5px solid #d8a940;
+  border-radius: 4px;
+  padding: 1.5px 4px;
+  margin-left: 5px;
+  font-family: -apple-system, 'MiSans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.aiChipLong {
+  border-radius: 999px;
+  padding: 1.5px 7px;
+}
+
+/* ── 打印版式(局部类部分) ──
+   解除 shell 裁剪链/隐藏导航的「全局选择器」规则不能进 CSS 模块(purity 检查要求
+   选择器必须带本地类),由 page.tsx 里的 <style> 注入;这里只保留本地类的打印覆盖。
+   页边距在 @page(margin 14mm 15mm),卷面自身 padding 打印时归零,保证每一页都有边距。 */
+@media print {
+  .printHide {
+    display: none !important;
+  }
+  .flow {
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+  .sheetColumn {
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    gap: 0 !important;
+  }
+  .sheet {
+    width: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    page-break-after: always;
+  }
+  .sheet:last-child {
+    page-break-after: auto;
+  }
+  /* 分页落点纪律(2026-11-12 修「分页奇怪」之二):
+     卷头/大题头不落页尾(keep-with-next);题块整体不跨页(原有 break-inside: avoid);
+     材料允许跨页续排——长材料带 avoid 会把整块推到新页,前一页留大片空白;
+     孤行控制避免切开只剩 1 行的碎尾。 */
+  .paperHead {
+    break-after: avoid;
+  }
+  .sectionHead {
+    break-after: avoid;
+  }
+  .material {
+    break-inside: auto;
+    orphans: 2;
+    widows: 2;
+  }
+  .qText {
+    orphans: 3;
+    widows: 3;
+  }
+}
+
+

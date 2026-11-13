@@ -139,3 +139,73 @@ export interface PaperAnalyzeOutput {
   note: string
   error?: string
 }
+
+// ===================== compose_paper 智能拟卷（真题重组卷） =====================
+
+export const COMPOSE_PAPER_TOOL_NAME = 'compose_paper'
+
+export const composePaperInputSchema = z.object({
+  subject: z
+    .string()
+    .max(20)
+    .describe(
+      '学科(math/chinese/english/physics/chemistry/biology/history/geography/politics/other)，必填'
+    ),
+  baseSlug: z
+    .string()
+    .max(80)
+    .optional()
+    .describe(
+      '底卷 slug(=结构模板,组卷按它的题位/题型/分值找同位题)。难度定位(学考/期末/高考)不同,底卷与抽题来源都不同——用户明确了难度/卷种时,从 analyze_papers 的试卷清单里选同难度段真题的 slug 传入;不传=自动选题量最多的卷'
+    ),
+  onlyChoice: z
+    .boolean()
+    .optional()
+    .describe('用户只要选择题/想要小卷时传 true；默认 false=按底卷完整结构组卷'),
+  allowAiAnswers: z
+    .boolean()
+    .optional()
+    .describe(
+      '放行 AI 参考答案题入池(默认 false=只用官方答案)。仅当该科没有(或不够)带官方答案的题、且用户明确接受「AI 参考答案(非官方,卷面会逐题标注)」时传 true;不许未经用户同意擅自传'
+    ),
+  slotDefs: z
+    .array(
+      z.object({
+        section: z.string().max(30).optional().describe('大题名,如「一、选择题」;不传按题型命名'),
+        kind: z.enum(['choice', 'answer']).describe('题型:choice=选择题,answer=解答/填空题'),
+        score: z.number().int().min(1).max(30).describe('每题分值'),
+        count: z.number().int().min(1).max(20).describe('题数'),
+      })
+    )
+    .max(12)
+    .optional()
+    .describe(
+      '大纲组卷模式:用户给出明确结构/大纲(如「选择10道各3分+解答3道各12分」「按学考结构,只出函数与不等式」)时,解析成槽位定义传入;传了 slotDefs 则 baseSlug 失效、整卷重摇不可用。总题数建议 ≤25;某桶真题不够时有多少放多少,缺口经 shortages 返回,要如实转告用户'
+    ),
+  title: z
+    .string()
+    .max(60)
+    .optional()
+    .describe('自定义卷名;不传自动命名(大纲模式生效)'),
+})
+
+export type ComposePaperInput = z.infer<typeof composePaperInputSchema>
+
+export interface ComposePaperOutput {
+  ok: boolean
+  composedId?: string
+  /** 卷面页地址（换/删/加题与打印都在这个页面） */
+  url?: string
+  title?: string
+  questionCount?: number
+  totalScore?: number
+  durationMin?: number
+  /** 当前在卷题目的来源卷名清单（来源声明用） */
+  sources?: string[]
+  /** 大纲模式:某桶真题池不够的缺口,如实转告用户 */
+  shortages?: Array<{ kind: string; score: number; requested: number; filled: number }>
+  /** 失败原因: no_pool=该科没有带官方答案的题;bad_outline=大纲槽位定义无效 */
+  reason?: string
+  note: string
+  error?: string
+}

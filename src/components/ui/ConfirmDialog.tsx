@@ -65,7 +65,7 @@ export function ConfirmDialog({
       <div className="absolute inset-0 bg-black/40" />
       <div
         className={cn(
-          'relative w-full max-w-sm rounded-xl border border-line bg-surface shadow-2xl',
+          'confirm-card-in relative w-full max-w-sm rounded-xl border border-line bg-surface shadow-2xl',
           'px-4 pt-4 pb-3.5'
         )}
         onClick={(e) => e.stopPropagation()}
@@ -207,7 +207,7 @@ export function ConfirmDialogHost() {
         role="alertdialog"
         aria-modal="true"
         aria-label={current.title ?? '确认操作'}
-        className={`relative w-[300px] max-w-full rounded-3xl bg-surface px-5 pt-5 pb-4 shadow-[0_24px_70px_rgba(0,0,0,0.28)] transition-[opacity,transform] duration-fast ease-standard ${
+        className={`confirm-card-in relative w-[300px] max-w-full rounded-3xl bg-surface px-5 pt-5 pb-4 shadow-[0_24px_70px_rgba(0,0,0,0.28)] transition-[opacity,transform] duration-fast ease-standard ${
           leaving ? 'scale-[0.97] opacity-0' : 'scale-100 opacity-100'
         }`}
       >

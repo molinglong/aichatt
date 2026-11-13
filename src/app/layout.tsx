@@ -158,9 +158,11 @@ export default function RootLayout({
         className={`${geistMono.variable} font-sans antialiased bg-background text-foreground`}
       >
         <Providers>
-          {/* Tauri/Web 双端统一结构:不再渲染自定义标题栏,浏览器/原生窗口各自负责头部控件 */}
-          <div className="flex h-screen flex-col overflow-hidden">
-            <div className="flex-1 overflow-hidden">{children}</div>
+          {/* Tauri/Web 双端统一结构:不再渲染自定义标题栏,浏览器/原生窗口各自负责头部控件。
+              app-viewport / app-viewport-body 是打印豁免链的成员(papers/composed 的
+              PRINT_GLOBAL_CSS 按这些类名解除裁剪),改名/换结构前先对齐那边的名单 */}
+          <div className="app-viewport flex h-screen flex-col overflow-hidden">
+            <div className="app-viewport-body flex-1 overflow-hidden">{children}</div>
           </div>
           {/* 客户端专属视觉增强(失焦降饱和灰罩 + 毛玻璃同步);Web 端渲染 null */}
           <TauriVisualFX />

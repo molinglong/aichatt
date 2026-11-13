@@ -41,11 +41,16 @@ import {
 import { createWebSearchTool } from "@/lib/ai/search"
 import { KNOWLEDGE_TOOL_NAME, KNOWLEDGE_OUTLINE_TOOL_NAME, KNOWLEDGE_SUBJECT_LABELS } from "@/lib/ai/knowledge-tool"
 import { createKnowledgeOutlineTool, createKnowledgeTool, hasKnowledgeChunks } from "@/lib/ai/knowledge-tool-server"
-import { PAPER_SEARCH_TOOL_NAME, PAPER_ANALYZE_TOOL_NAME } from "@/lib/ai/paper-tool"
+import { PAPER_SEARCH_TOOL_NAME, PAPER_ANALYZE_TOOL_NAME, COMPOSE_PAPER_TOOL_NAME } from "@/lib/ai/paper-tool"
 import { createPaperSearchTool, createPaperAnalyzeTool, hasPaperQuestions } from "@/lib/ai/paper-tool-server"
+import { createComposePaperTool, hasAnsweredPaperQuestions } from "@/lib/ai/paper-tool-server"
 import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME } from "@/lib/ai/practice-tool"
 import { createPracticeTool, createRecordPracticeTool } from "@/lib/ai/practice-tool-server"
 import { hasQuestions } from "@/lib/study/question-bank"
+import {
+  SAVE_WRONG_QUESTION_TOOL_NAME,
+} from "@/lib/ai/wrong-question-tool"
+import { createSaveWrongQuestionTool } from "@/lib/ai/wrong-question-tool.server"
 import { STUDY_COMPLETE_MARKER, getStudyAction, isStudyComplete, stripStudyMarker } from "@/lib/study/lesson-flow"
 import { archiveStudyLesson } from "@/lib/study/archive-lesson"
 import { CLARIFY_TOOL_NAME, CLARIFY_TOOL_PROMPT, createClarifyTool } from "@/lib/ai/clarify"
@@ -186,6 +191,10 @@ interface ChatRequestBody {
   studyApproach?: 'beginner' | 'partial' | 'review' // 学习起点;服务端白名单校验,缺省或未知值保留默认导师行为
   /** 「只重答这条」:就地改写该 user 消息并把新回答插回原时间位置,后续消息不归档 */
   reanswerEdit?: { editedId?: string; oldContent: string }
+  /** 工具步数耗尽后的「继续处理」续跑轮:前端不发新用户消息,服务端跳过用户消息落库与
+   *  user 文本相关的意图强制(第 0 步检索等),直接按消息数组里已有的工具结果续答。
+   *  仅已有会话的单聊生效(新会话/临时/对比泳道一律视为普通请求)。 */
+  continueRound?: boolean
 }
 
 /** 客户端传入的消息（UIMessage 格式的结构化子集）*/
@@ -553,6 +562,9 @@ export async function POST(req: NextRequest) {
     // 学习模式(导师对话流):仅正式单聊生效。页面级封锁在 middleware,
     // 这里再挡一层防伪造请求把工具强行挂进临时/对比泳道。
     const studyModeOn = body.studyMode === true && !isEphemeral && !groupId
+    // 「继续处理」续跑轮:仅已有会话的单聊生效。conversationId 缺失时降级为普通请求,
+    // 保证"新建会话 + 用户消息落库"的既有路径不会被续跑标记误伤。
+    const isContinueRound = body.continueRound === true && !!conversationId && !isEphemeral && !groupId
 
     console.log(`[chat] Processing request for user ${userId}, model: ${modelId}, messages: ${rawMessages?.length || 0}, deepThink: ${deepThink}, webSearch: ${webSearch}, mcpEnabled: ${mcpEnabled}`)
 
@@ -880,6 +892,18 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
 
   // Convert incoming messages to ModelMessage format for streamText
   const messages = convertToModelMessages(effectiveRawMessages)
+
+  // 续跑轮思考降级:DeepSeek/受控思考系在「assistant 收尾」的 prompt 里若历史 assistant
+  // 缺 reasoning_content,思考模式会被上游直接拒绝(实测 400 "reasoning_content must be
+  // passed back";普通发送以 user 收尾不受限,见上方 convertToModelMessages 的 reasoning
+  // 回传注释)。续跑轮天然 assistant 收尾,而撞步数上限的那一轮若是非思考轮(reasoning
+  // 本来就空),本轮开思考必踩。此时整轮强制关思考,换一个能跑的请求形态。
+  const tailModelMsg = messages[messages.length - 1]
+  const tailAssistantLacksReasoning =
+    tailModelMsg?.role === "assistant" &&
+    !(Array.isArray(tailModelMsg.content) &&
+      (tailModelMsg.content as Array<{ type?: string }>).some((p) => p.type === "reasoning"))
+  const effectiveDeepThink = deepThink === true && !(isContinueRound && tailAssistantLacksReasoning)
 
   // 附件内容注入:图片转多模态 image part(仅视觉模型),文本文件读入正文
   if (attachments.length > 0) {
@@ -1517,6 +1541,20 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     console.error("[chat] Failed to check paper questions:", err)
   }
 
+  // 智能拟卷(真题重组):写入类工具(落 ComposedPaper),临时模式/对比模式不挂载
+  // (与练题判分回传同闸门)。闸门=存在有官方答案且未拉黑的题(重组卷只用有答案池)。
+  let composePaperTool: ReturnType<typeof createComposePaperTool> | null = null
+  if (!isEphemeral && !groupId && !isGameMask) {
+    try {
+      if (await hasAnsweredPaperQuestions(userId)) {
+        composePaperTool = createComposePaperTool(userId)
+        console.log(`[chat] compose paper tool attached`)
+      }
+    } catch (err) {
+      console.error("[chat] Failed to check answered paper questions:", err)
+    }
+  }
+
   // 题库练题:双工具(practice_questions 抽题 / record_practice 判分回传)。
   // 用户名下有题目才注入(物理级闸门);抽题只读但判分回传要写错题本(StudyNote),
   // 故临时模式/对比模式整体不挂载(与其它写入类工具同闸门)。学习模式强制挂载。
@@ -1606,6 +1644,26 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       '- 「出复习规划/安排复习/接下来怎么复习」→ 先拿数据再排优先级:高频考点(topicStats)×薄弱(weakTopics)×课本章定位,规划逐条可执行',
       '- 用户本次消息已明确要求「记到待办/写进待办」的,视为已同意:规划给完直接用 manage_todo(add) 逐条落库,不要再反问;用户只要规划、没提待办的,给完规划后问一句「要不要落成待办」,同意前不写',
       '- 用户问的是具体题目/真题原文时用 search_papers(检索),analyze_papers 只管全库统计,两者可先后都调',
+    ].join('\n'))
+  }
+
+  // 智能拟卷能力段:「拼卷/拟卷/出卷子做」类指令的触发与表述纪律。
+  if (composePaperTool) {
+    systemParts.push([
+      '## 智能拟卷能力',
+      '你拥有 compose_paper 工具(真题重组卷:从试卷库有官方答案的真题里同位换题组卷,每题带官方答案,可打印)。以下场景**主动调用 compose_paper**:',
+      '- 用户说「拼一套X卷/拟一张卷/出一张卷子给我做/组卷/来套题」→ 调用后给卷面入口,不要在聊天里重复贴整卷',
+      '- 用户对某科「想练一套新的/再来一张不同的卷子」→ 同样走本工具(每张都是新组合的真题)',
+      '- 用户只要练选择题(「出50分的」「只要选择」)→ 传 onlyChoice=true',
+      '难度定位(硬性纪律,必须先问清):',
+      '- 学考/期末考/高考(含中考/模拟)难度差异极大:题型结构、分值分布、题池来源都不同,**不许默认任何一档**',
+      '- 用户组卷请求里没说清难度时,必须先问(优先用 ask_clarification 给「学考/期末考/高考」选项),问清前不调用 compose_paper',
+      '- 用户已明确难度 → 先调 analyze_papers 看试卷库存,把同难度段真题的 slug 作为 baseSlug 传给 compose_paper;抽题优先同难度来源',
+      '- 库里没有该难度的卷子 → 如实列出现有库存的难度段让用户挑,不要拿别的难度冒充',
+      '纪律:',
+      '- 题目与答案零编造:全部出自官方答案卷原文;组卷失败(该科没有带官方答案的题)时如实说明并建议录入,不要手写卷子冒充组卷',
+      '- AI 参考答案车道:该科没有官方答案卷时,可询问用户「是否接受 AI 参考答案(非官方,答案页逐题标注)」;用户明确接受才传 allowAiAnswers=true,给卷入口时必须同时披露参考答案性质',
+      '- 组卷结果给「标题+题数/总分/时长+卷面入口」;换题/删题/加题/打印都引导到卷面页;来源卷清单随结果返回,用户问出处时引用',
     ].join('\n'))
   }
 
@@ -1944,7 +2002,9 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   let editedUserId: string | null = null
 
   // Persist the last user message before streaming
-  if (userContent) {
+  // 续跑轮跳过:此时消息数组里最后一条 user 消息是本轮原始问题(不是新消息),
+  // 不挡会把同一条问题重复落库一行。
+  if (userContent && !isContinueRound) {
     if (groupId) {
       // 对比模式: N 个泳道并发执行,事务内查重防止同一条用户消息入库多次。
       await prisma.$transaction(async (tx) => {
@@ -2218,8 +2278,8 @@ const result = streamText({
       ? {
           providerOptions: {
             deepseek: {
-              thinking: { type: deepThink ? "enabled" : "disabled" },
-              ...(deepThink ? { reasoningEffort: "high" } : {}),
+              thinking: { type: effectiveDeepThink ? "enabled" : "disabled" },
+              ...(effectiveDeepThink ? { reasoningEffort: "high" } : {}),
             },
           },
         }
@@ -2228,19 +2288,30 @@ const result = streamText({
     // reasoning_effort 翻译成 enable_thinking(见 providers/qianwen.ts)。
     // deepThink 关 → 不带参数(fetch 层强制 enable_thinking: false);
     // deepThink 开 → 传档位开启思考。
-    ...(modelDef.provider === "qianwen" && modelDef.supportsReasoning && deepThink
+    ...(modelDef.provider === "qianwen" && modelDef.supportsReasoning && effectiveDeepThink
       ? { providerOptions: { openai: { reasoningEffort: "medium" } } }
+      : {}),
+    // 方舟思考受控模型思考联动(经 doubao provider 的 OpenAI 兼容通道,含公共池门面;
+    // 覆盖 deepseek-* 与 doubao-seed 系):契约与 qianwen 一致——deepThink 开 → 传
+    // reasoning_effort 档位,同时作为 doubao fetch 层注入 thinking enabled 的标记;
+    // 关 → 不传,fetch 层注入 thinking disabled(两族默认开思考,快答必须显式关,
+    // 见 providers/doubao.ts)。
+    ...(modelDef.provider === "doubao" &&
+    modelDef.supportsReasoning &&
+    effectiveDeepThink &&
+    /^(deepseek|doubao-seed)/.test(modelDef.upstreamId ?? modelDef.id)
+      ? { providerOptions: { openai: { reasoningEffort: "high" } } }
       : {}),
     // 自定义模型思考联动:DashScope 兼容端点的 fetch 层把 reasoning_effort
     // 翻译成 enable_thinking(见 openai-reasoning-adapter.ts);勾了推理的模型
     // 在其他端点也传档位(OpenAI 兼容网关普遍接受/忽略该参数)。
     // deepThink 关 → 不传,DashScope fetch 层强制关闭思考,快答不受影响。
     ...(modelDef.provider === "custom" &&
-    deepThink &&
+    effectiveDeepThink &&
     (cmSupportsReasoning || /dashscope\.aliyuncs\.com/i.test(cmBaseURL))
       ? { providerOptions: { openai: { reasoningEffort: "medium" } } }
       : {}),
-    ...((searchTool || urlReaderTool || calcTool || timeTool || yellowFishTool || yellowFishWatchTool || yellowFishLiveTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || paperSearchTool || paperAnalyzeTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
+    ...((searchTool || urlReaderTool || calcTool || timeTool || yellowFishTool || yellowFishWatchTool || yellowFishLiveTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || paperSearchTool || paperAnalyzeTool || composePaperTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
       ? {
           tools: {
             ...(searchTool ? { web_search: searchTool } : {}),
@@ -2255,6 +2326,7 @@ const result = streamText({
             ...(knowledgeOutlineTool ? { [KNOWLEDGE_OUTLINE_TOOL_NAME]: knowledgeOutlineTool } : {}),
             ...(paperSearchTool ? { [PAPER_SEARCH_TOOL_NAME]: paperSearchTool } : {}),
             ...(paperAnalyzeTool ? { [PAPER_ANALYZE_TOOL_NAME]: paperAnalyzeTool } : {}),
+            ...(composePaperTool ? { [COMPOSE_PAPER_TOOL_NAME]: composePaperTool } : {}),
             ...(practiceTool ? { [PRACTICE_TOOL_NAME]: practiceTool } : {}),
             ...(recordPracticeTool ? { [RECORD_TOOL_NAME]: recordPracticeTool } : {}),
             ...(clarifyTool ? { [CLARIFY_TOOL_NAME]: clarifyTool } : {}),
@@ -2304,7 +2376,9 @@ const result = streamText({
           instructions: [finalSystem, FINAL_STEP_TOOLS_NOTE].filter(Boolean).join("\n\n"),
         }
       }
-      if (stepNumber !== 0) return undefined
+      // 续跑轮跳过第 0 步强制检索:上一轮已经检索过(预算正是耗在那上面),
+      // 再强制只会白烧一步然后原样撞上限。
+      if (stepNumber !== 0 || isContinueRound) return undefined
       // 提纲/翻目录优先强制目录工具；普通课本问题强制 search_knowledge。
       // 两者都不命中且面具无学科倾向时，维持 auto。
       const forceOutline = wantsTextbookOutline && !!knowledgeOutlineTool
@@ -2319,9 +2393,15 @@ const result = streamText({
       const thinkingOff: SharedV4ProviderOptions | undefined =
         modelDef.provider === "deepseek"
           ? { deepseek: { thinking: { type: "disabled" } } }
-          : modelDef.provider === "qianwen"
-            ? { openai: { reasoningEffort: "none" } }
-            : undefined
+          : modelDef.provider === "doubao" &&
+              modelDef.supportsReasoning &&
+              /^(deepseek|doubao-seed)/.test(modelDef.upstreamId ?? modelDef.id)
+            ? // 方舟思考受控系:effort "none" 经 doubao fetch 层转 thinking disabled,
+              // 与 deepThink 关的已验证请求形态一致(见 providers/doubao.ts)
+              { openai: { reasoningEffort: "none" } }
+            : modelDef.provider === "qianwen"
+              ? { openai: { reasoningEffort: "none" } }
+              : undefined
       // deepThink 开且思考关不掉(自定义/中转站)→ 不强制,维持 auto(避免上游 400)
       if (deepThink && !thinkingOff) return undefined
       // as const 必须保留:无上下文类型的字面量会把 toolName 拓宽成 string,
@@ -2543,13 +2623,13 @@ const result = streamText({
       if (studyModeOn) content = stripStudyMarker(content)
 
       // 步数到顶收尾:流结束时模型仍在要工具(finishReason='tool-calls'),说明预算用尽前
-      // 它没来得及把结果写成回答——典型形态是只剩一句过渡语("再搜一次。")。补一句可操作
-      // 提示,不让用户对着半句话发愣;正文为空时也补上,避免历史里出现空白助手消息。
-      if (finishReason === 'tool-calls' && !pausedForHostTool) {
+      // 它没来得及把结果写成回答——典型形态是只剩一句过渡语("再搜一次。")。不再往正文
+      // 尾部追加"回复继续"死文本(污染历史),改为在 metadata 打 continuePending 标记:
+      // 前端据此在消息下方渲染「继续处理」按钮(点它 = 不发用户消息直接续跑一轮),
+      // 见 ChatPanel onFinish 的 continuePending 分支与下方 toolCallsMetadata 组装处。
+      const stepBudgetExhausted = finishReason === 'tool-calls' && !pausedForHostTool
+      if (stepBudgetExhausted) {
         console.warn(`[chat] STEP_BUDGET_EXHAUSTED: model=${modelId}, textLen=${content.length}`)
-        content = content.trim()
-          ? `${content}\n\n（本轮工具调用已达上限，回复「继续」我接着处理。）`
-          : '（本轮工具调用已达上限，回复「继续」我接着处理。）'
       }
 
       // 检出 [IMG:...] 标记并调用生图(自动根据用户选择的模型分发)
@@ -2634,8 +2714,13 @@ const result = streamText({
       try {
         // 工具调用明细随消息入库(前端历史回显工具卡片);超限时 shrinkToolCallsMeta
         // 定向裁剪闲鱼条目数组,裁不动才放弃(仍保留结课状态)。
-        const completionMetadata = studyCompleted ? { studyCompleted: true } : {}
-        let toolCallsMetadata: string | undefined = studyCompleted
+        // continuePending(步数耗尽)与 studyCompleted 一样属于"没有 toolCalls 也要落"的
+        // 状态标记:前端靠它在消息下方渲染「继续处理」条(历史回放/刷新后同样生效)。
+        const completionMetadata = {
+          ...(studyCompleted ? { studyCompleted: true } : {}),
+          ...(stepBudgetExhausted ? { continuePending: true } : {}),
+        }
+        let toolCallsMetadata: string | undefined = studyCompleted || stepBudgetExhausted
           ? JSON.stringify(completionMetadata)
           : undefined
         if (!studyCompleted && collectedToolCalls.length > 0) {
@@ -2723,8 +2808,10 @@ const result = streamText({
           })
         }
         // Extract long-term memories in the background (never blocks the chat)
-        // 临时模式永不提取:借号者的聊天不得污染长期记忆;游戏回合同样不提取(沉浸叙事非用户事实)
-        if (memoryEnabled && !isEphemeral && !isGameMask && content) {
+        // 临时模式永不提取:借号者的聊天不得污染长期记忆;游戏回合同样不提取(沉浸叙事非用户事实);
+        // 步数耗尽轮跳过:此时正文多半只是一句过渡语("再搜一次。"),没有记忆价值,
+        // 续跑轮出正式回答时会以原问题+完整答案正常提取。
+        if (memoryEnabled && !isEphemeral && !isGameMask && content && !stepBudgetExhausted) {
           extractAndSaveMemories({
             userId,
             model: provider(realModelId),

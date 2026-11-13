@@ -64,7 +64,7 @@ export function FactCheckModal({ content, role, topic, onClose }: FactCheckModal
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl border border-line/60 overflow-hidden">
+      <div className="confirm-card-in relative w-full max-w-lg bg-surface rounded-2xl shadow-2xl border border-line/60 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-line/60">
           <div className="flex items-center gap-2">

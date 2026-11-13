@@ -255,7 +255,7 @@ const WHEEL_CSS = `
 }
 .dark .wheel-wrap { --wheel-danger: 248 113 113; background: rgb(var(--surface) / 0.42); }
 .wheel-svg { display: block; overflow: visible; }
-.wheel-svg .seg { cursor: pointer; transition: opacity .15s; animation: wheelIn .28s cubic-bezier(.2,.9,.3,1.2) backwards; }
+.wheel-svg .seg { cursor: pointer; transition: opacity .15s; animation: wheelIn var(--motion-base) var(--ease-enter) backwards; }
 @keyframes wheelIn { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: scale(1); } }
 .wheel-svg .seg path { fill: rgb(255 255 255 / .62); stroke: rgb(15 23 42 / .14); stroke-width: 1.5; transition: fill .12s, stroke .12s; }
 .dark .wheel-svg .seg path { fill: rgb(255 255 255 / .16); stroke: rgb(255 255 255 / .22); }

@@ -34,6 +34,7 @@ model User {
   courses       Course[]
   studySessions StudySession[]
   paperQuestions PaperQuestion[]
+  composedPapers ComposedPaper[]
   providerModelOverrides ProviderModelOverride[]
   compareVotes  CompareVote[]
   memoryEnabled Boolean   @default(true)
@@ -787,6 +788,11 @@ model Paper {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // ── legacy：DB 存量列，代码零引用（弃用实验残留，2026-11-13 收编入 schema 排掉
+  //    db push 的 data-loss 地雷；数据保留不删）──
+  origin        String   @default("imported")
+  blueprintJson Json?
+
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   pages     PaperPage[]
   questions Question[]
@@ -827,14 +833,76 @@ model PaperQuestion {
   options   String[] @default([]) // 选择题选项，每项「A. …」；非选择题为空
   images    String[] @default([]) // 题图 URL（/exam-papers/<slug>/…）
   answer    String?  // 官方答案+解析；null=缺答案（等待官方答案卷）
+  /// 答案来源：official=官方答案卷/手批补录（默认），ai=AI 参考答案（双模型比对一致才落库，
+  /// 卷面页答案页逐题挂「AI」标注；后续补录官方答案时改回 official，标注自动消失）
+  answerSource String @default("official")
   topics    String[] @default([]) // 考点标签（受控词表，导入后 AI 打标回填）
+  /// 存疑拉黑：录入错/答案存疑的题（拟卷「这题有误」标记）。true=不再进入组卷候选池，
+  /// 原卷数据(PaperPage)永远不动；修复对照原件后手动改回 false
+  flagged   Boolean  @default(false)
   createdAt DateTime @default(now())
 
   paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  composedSlots ComposedSlot[]
 
   @@unique([paperId, number])
   @@index([userId, section])
+}
+
+// ===================== 智能拟卷（真题重组卷） =====================
+// 同位换题组卷：以一套有官方答案的卷为底，逐槽从其他有答案卷的同桶(section/kind/score)
+// 换题。与 Paper 真题库严格分表——重组卷不进考频统计、不算试卷清单。纪律：
+// 候选池只含有官方答案且未 flagged 的题；卷面分值/题号永远由槽位实时重算，不写死。
+model ComposedPaper {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String   // 如「政治重组卷 11-11」；retitle 可改
+  subject     String   // 与 Note 学科枚举对齐
+  baseSlug    String   // 底卷 slug（结构模板来源；reshuffle 按它重摇）
+  onlyChoice  Boolean  @default(false) // 组卷参数：只取选择题
+  /// 组卷参数：是否放行 AI 参考答案题入池（answerSource=ai）。false=纯官方池。
+  /// 换题/加题/重摇沿用本卷记录的口径，保证槽位候选与组卷时一致
+  allowAiAnswers Boolean @default(false)
+  totalScore  Int      @default(0)     // 槽位分值之和，增删后实时重算
+  durationMin Int      @default(0)     // 取底卷时长
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slots ComposedSlot[]
+
+  @@index([userId, subject, createdAt])
+}
+
+// 重组卷槽位：一槽一题，position 升序 = 卷面顺序与题号（渲染时 = index+1）。
+// 换/删/加全部是槽位操作。position 不设唯一约束：重排会中途撞键，唯一性由
+// 写路径在事务内整体重排保证。paperQuestion 删除(重录)时置 null，渲染跳过空槽容错。
+model ComposedSlot {
+  id              String  @id @default(cuid())
+  composedPaperId String
+  position        Int
+  section         String? // 所在大题（来自底卷题）
+  kind            String  // choice=选择题 answer=解答/填空题
+  score           Int
+  paperQuestionId String?
+  /// 换题溯源冗余：该槽历经哪些题（首=当前）。答案页来源声明与「换一题」排除集用
+  historyIds String[] @default([])
+
+
+  /// 多源题目:非真题槽的内联题(真题槽走 paperQuestionId 引用,这四列留空)
+  inlineStem    String?
+  inlineOptions String[] @default([])
+  inlineAnswer  String?
+  /// 槽位题目来源:paper=真题(默认/空) textbook=课本拟题 ai-variant=AI变式 web=网络搜题
+  source    String?
+  sourceRef String?
+
+    composedPaper  ComposedPaper  @relation(fields: [composedPaperId], references: [id], onDelete: Cascade)
+  paperQuestion  PaperQuestion? @relation(fields: [paperQuestionId], references: [id], onDelete: SetNull)
+
+  @@index([composedPaperId, position])
+  @@index([paperQuestionId])
 }
 
 // ===================== 待办(Todo) =====================

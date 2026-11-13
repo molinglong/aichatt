@@ -35,8 +35,8 @@ import {
   type KnowledgeOutlineOutput,
 } from '@/lib/ai/knowledge-tool'
 import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME, type PracticeToolOutput } from '@/lib/ai/practice-tool'
-import { PAPER_SEARCH_TOOL_NAME, PAPER_ANALYZE_TOOL_NAME, type PaperSearchOutput, type PaperAnalyzeOutput } from '@/lib/ai/paper-tool'
-import { KnowledgeDetail, OutlineDetail, PracticeDetail, CalcDetail, PaperDetail, PaperAnalysisDetail } from './ToolDetailBlocks'
+import { PAPER_SEARCH_TOOL_NAME, PAPER_ANALYZE_TOOL_NAME, COMPOSE_PAPER_TOOL_NAME, type PaperSearchOutput, type PaperAnalyzeOutput, type ComposePaperOutput } from '@/lib/ai/paper-tool'
+import { KnowledgeDetail, OutlineDetail, PracticeDetail, CalcDetail, PaperDetail, PaperAnalysisDetail, ComposeDetail } from './ToolDetailBlocks'
 import { TODO_TOOL_NAME, type TodoToolOutput } from '@/lib/ai/todo-tool'
 import { URL_READER_TOOL_NAME, type UrlReaderOutput } from '@/lib/ai/url-reader'
 import { CALC_TOOL_NAME, type CalcOutput } from '@/lib/ai/calc-tool'
@@ -725,6 +725,30 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
         streaming={view.state === 'input-streaming'}
         failed={paFailed}
         details={!paFailed && paPapers + paTopics > 0 ? <PaperAnalysisDetail output={paOut!} /> : undefined}
+      />
+    )
+  }
+
+  // 智能拟卷:一行式卡片;流式「正在组卷」,完成后显示卷名/题数/总分,展开有卷面页入口与来源声明。
+  // 整卷内容不进聊天——换题/删题/打印都在卷面页(与工具 note 纪律一致)
+  if (view.tool === COMPOSE_PAPER_TOOL_NAME) {
+    const cpOut = view.output as ComposePaperOutput | undefined
+    const cpFailed = view.state === 'output-error' || cpOut?.ok === false || !!cpOut?.error
+    const cpText =
+      view.state === 'input-streaming'
+        ? '正在从试卷库组卷…'
+        : cpFailed
+          ? '组卷未生效'
+          : cpOut?.title
+            ? `拟卷「${cpOut.title}」· ${cpOut.questionCount ?? 0} 题 · ${cpOut.totalScore ?? 0} 分`
+            : '已组卷'
+    return (
+      <ToolRow
+        icon={<ScrollText className="w-3.5 h-3.5" />}
+        text={cpText}
+        streaming={view.state === 'input-streaming'}
+        failed={cpFailed}
+        details={!cpFailed && cpOut?.composedId ? <ComposeDetail output={cpOut} /> : undefined}
       />
     )
   }

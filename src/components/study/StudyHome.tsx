@@ -7,6 +7,7 @@
  */
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
+import { SUBJECT_LABELS } from '@/lib/study/subject-labels'
 import { MasteryWidget, SessionCountWidget } from './StudyWidgets'
 
 export interface StudySessionListItem {
@@ -19,6 +20,18 @@ export interface StudySessionListItem {
   lastStepBrief?: string | null
 }
 
+/** 拟卷列表条目(GET /api/papers/composed);区块展示最近几张,统计行 chip 显总数 */
+export interface ComposedPaperListItem {
+  id: string
+  title: string
+  subject: string
+  totalScore: number
+  durationMin: number
+  onlyChoice: boolean
+  createdAt: string
+  slotCount: number
+}
+
 interface Props {
   sessions: StudySessionListItem[]
   dueCount: number
@@ -29,6 +42,8 @@ interface Props {
   masteryAvg: number | null
   /** 累计学习场次(列表接口 total) */
   totalSessions: number
+  /** 拟卷列表(createdAt 倒序全量,组件内取最近 3 张);空 = 区块与 chip 都不渲染 */
+  papers: ComposedPaperListItem[]
   loading: boolean
   onResume: (id: string) => void
   /** text = 输入框里已敲的题目,带进 setup 预填 */
@@ -40,8 +55,8 @@ function shortTitle(q: string): string {
   return q.replace(/[#*`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24) || '未命名题目'
 }
 
-/** 相对时间:今天/昨天/N 天前,超过一周回退日期 */
-function dateRel(iso: string): string {
+/** 相对时间:今天/昨天/N 天前,超过一周回退日期(学习台条卡与拟卷列表页共用) */
+export function dateRel(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   const days = Math.floor((Date.now() - d.getTime()) / 86_400_000)
@@ -91,6 +106,17 @@ function PencilIcon() {
   )
 }
 
+function DocIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+      <path d="M8 13h8" />
+      <path d="M8 17h5" />
+    </svg>
+  )
+}
+
 function ArrowRightIcon({ size = 13 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -100,12 +126,12 @@ function ArrowRightIcon({ size = 13 }: { size?: number }) {
   )
 }
 
-/* 区块小标签:「继续学习 · N 道进行中」 */
-function SecLabel({ children, count }: { children: React.ReactNode; count?: number }) {
+/* 区块小标签:「继续学习 · N 道进行中」;unit 换量词(拟卷=张) */
+function SecLabel({ children, count, unit = '道进行中' }: { children: React.ReactNode; count?: number; unit?: string }) {
   return (
     <div className="mb-2 px-0.5 text-[11px] text-content-muted">
       {children}
-      {count != null && count > 0 && <span className="ml-1 font-medium text-content-secondary">· {count} 道进行中</span>}
+      {count != null && count > 0 && <span className="ml-1 font-medium text-content-secondary">· {count} {unit}</span>}
     </div>
   )
 }
@@ -118,6 +144,7 @@ export function StudyHome({
   kbCount,
   masteryAvg,
   totalSessions,
+  papers,
   loading,
   onResume,
   onNew,
@@ -206,6 +233,48 @@ export function StudyHome({
             </div>
           </div>
         </div>
+
+        {/* ── 拟卷练习:最近 3 张卷条卡点击直达卷面,「全部拟卷」进列表页;无卷整块不渲染 ── */}
+        {papers.length > 0 && (
+          <div className="mb-5">
+            <SecLabel count={papers.length} unit="张">拟卷练习</SecLabel>
+            <div className="space-y-2.5">
+              {papers.slice(0, 3).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => router.push(`/papers/composed/${p.id}`)}
+                  className="group glass-blur flex w-full items-center gap-3.5 rounded-[14px] border border-line/60 bg-surface-glass px-4 py-3 text-left transition-all duration-150 hover:-translate-y-px hover:border-line-strong"
+                >
+                  <IconBadge>
+                    <DocIcon />
+                  </IconBadge>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] font-semibold text-content-primary">{p.title}</span>
+                    <span className="mt-0.5 block truncate text-xs text-content-muted">
+                      {SUBJECT_LABELS[p.subject as keyof typeof SUBJECT_LABELS] ?? p.subject} · 满分 {p.totalScore} · {p.slotCount} 题
+                      {p.onlyChoice ? ' · 只取选择题' : ''}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-3">
+                    <span className="text-[11.5px] text-content-muted">{dateRel(p.createdAt)}</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-[7px] text-[12.5px] font-semibold text-accent-foreground transition-transform duration-150 group-hover:translate-x-0.5">
+                      打开
+                      <ArrowRightIcon size={12} />
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => router.push('/papers/composed')}
+              className="mt-2.5 inline-flex items-center gap-1 text-[12.5px] font-medium text-accent transition-opacity hover:opacity-80"
+            >
+              全部拟卷 ›
+            </button>
+          </div>
+        )}
 
         {/* ── 学新题:有进行中时通栏虚线;没有时用入口卡承担 ── */}
         {continueTarget && (
@@ -302,6 +371,11 @@ export function StudyHome({
           <button type="button" className="flex items-baseline gap-1.5 rounded-full border border-line bg-surface-subtle/60 px-3.5 py-1.5 text-xs text-content-muted transition-colors hover:border-line-strong hover:text-content-primary" onClick={() => router.push('/kb')}>
             <b className="text-[13px] font-semibold tabular-nums text-content-primary">{kbCount}</b>课本
           </button>
+          {papers.length > 0 && (
+            <button type="button" className="flex items-baseline gap-1.5 rounded-full border border-line bg-surface-subtle/60 px-3.5 py-1.5 text-xs text-content-muted transition-colors hover:border-line-strong hover:text-content-primary" onClick={() => router.push('/papers/composed')}>
+              <b className="text-[13px] font-semibold tabular-nums text-content-primary">{papers.length}</b>拟卷
+            </button>
+          )}
         </div>
       </div>
     </div>

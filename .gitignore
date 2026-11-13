@@ -178,3 +178,9 @@ __pycache__/
 /backups/
 # 一次性图片 BOM 处理脚本(临时工具,不入库)
 /crop9-bom.ps1
+
+# 本地临时探针/脚本与运行时数据
+.tmp-*
+.tmp-font-pack/
+data/
+handoff-*.md

@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>试卷人工核对台</title>
+<style>
+:root{
+  --bg:#f2f2ef; --panel:#ffffff; --panel2:#f7f7f5;
+  --ink:#1a1d23; --ink2:#69707a; --ink3:#9ba1ab;
+  --line:#e5e6e2; --line2:#ececea;
+  --accent:#2563eb; --accent-ink:#1d4fd8; --accent-soft:#eaf1fe; --accent-line:#bcd2fa;
+  --ok:#16a34a; --ok-soft:#e9f7ee; --ok-line:#bfe6cd;
+  --warn:#b45309; --warn-soft:#fdf3e7;
+  --shadow:0 1px 2px rgba(20,24,32,.05),0 4px 16px rgba(20,24,32,.07);
+  --radius:12px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#131417; --panel:#1c1e22; --panel2:#22252a;
+    --ink:#e7e9ec; --ink2:#9aa0a8; --ink3:#62676f;
+    --line:#2b2e34; --line2:#24262b;
+    --accent:#7aa5f8; --accent-ink:#9dbcfa; --accent-soft:#232e44; --accent-line:#33507e;
+    --ok:#5edb8d; --ok-soft:#1c2f24; --ok-line:#2e5240;
+    --warn:#e2a860; --warn-soft:#2d2418;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font:14px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);display:flex;flex-direction:column;overflow:hidden}
+
+/* ---------- 顶栏 ---------- */
+header{display:flex;align-items:center;gap:12px;height:50px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+.brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:650;letter-spacing:.01em;white-space:nowrap}
+.brand i{width:9px;height:9px;border-radius:3px;background:var(--accent);flex:none;transform:rotate(45deg)}
+.task-pick select{
+  appearance:none;-webkit-appearance:none;max-width:340px;
+  background:var(--panel2) url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888d95' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center;
+  border:1px solid var(--line);border-radius:8px;padding:5px 28px 5px 11px;font-size:13px;color:var(--ink);cursor:pointer;transition:border-color .15s
+}
+.task-pick select:hover{border-color:var(--accent-line)}
+.task-pick select:focus{outline:none;border-color:var(--accent)}
+.progress-wrap{display:flex;align-items:center;gap:9px}
+.progress-bar{width:110px;height:5px;border-radius:99px;background:var(--line2);overflow:hidden}
+.progress-fill{height:100%;border-radius:99px;background:var(--ok);transition:width .35s cubic-bezier(.2,.7,.3,1)}
+.progress-num{font-size:12.5px;color:var(--ink2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.progress-num b{color:var(--ink);font-weight:650}
+.hint{margin-left:auto;font-size:12px;color:var(--ink3);white-space:nowrap}
+kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;font:11px/1.6 inherit;font-family:inherit;color:var(--ink2)}
+
+/* ---------- 主区 ---------- */
+main{flex:1;display:flex;min-height:0}
+
+/* 左：图片查看器 */
+.viewer{flex:1.4;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+.viewer-bar{display:flex;align-items:center;gap:6px;height:42px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+.vbtn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--line);background:var(--panel);color:var(--ink2);border-radius:7px;cursor:pointer;transition:all .12s;flex:none}
+.vbtn:hover{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
+.vbtn.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+.vbtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.viewer-bar .photo-label{font-size:13px;font-weight:650;margin:0 6px;white-space:nowrap}
+.viewer-bar .page-of{font-size:12px;color:var(--ink3);white-space:nowrap}
+.viewer-bar .spacer{flex:1}
+.zoom-pill{display:flex;align-items:center;gap:2px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:2px}
+.zoom-pill .vbtn{border:none;background:transparent;width:24px;height:24px}
+.zoom-pill .val{min-width:46px;text-align:center;font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums;cursor:pointer;padding:2px 0;border-radius:5px}
+.zoom-pill .val:hover{background:var(--line2)}
+.canvas{
+  flex:1;overflow:hidden;position:relative;cursor:grab;touch-action:none;user-select:none;
+  background:var(--bg);
+}
+.canvas::before{content:"";position:absolute;inset:0;background-image:radial-gradient(var(--line2) 1px,transparent 1.2px);background-size:22px 22px;pointer-events:none}
+.canvas.dragging{cursor:grabbing}
+.canvas.marking{cursor:crosshair}
+.canvas.animating img,.canvas.animating #overlay{transition:transform .3s cubic-bezier(.2,.7,.3,1)}
+.canvas img{
+  position:absolute;left:0;top:0;transform-origin:0 0;
+  user-select:none;-webkit-user-drag:none;max-width:none;
+  box-shadow:0 3px 24px rgba(0,0,0,.16),0 1px 4px rgba(0,0,0,.08);
+}
+#overlay{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;overflow:visible}
+#overlay rect.mark{fill:rgba(226,168,96,.10);stroke:#c07f1e;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-dasharray:7 5}
+#overlay rect.mark.resolved{stroke:var(--ok);fill:rgba(22,163,74,.06);stroke-dasharray:none}
+#overlay rect.mark.hot{fill:rgba(226,168,96,.22);stroke-width:2.4}
+#overlay rect.mark.active{stroke-width:2.4;stroke-dasharray:none;animation:markPulse 1.6s infinite}
+@keyframes markPulse{0%,100%{stroke-opacity:1}50%{stroke-opacity:.4}}
+#overlay rect.tmp{fill:rgba(122,165,248,.16);stroke:var(--accent);stroke-width:1.5;vector-effect:non-scaling-stroke;stroke-dasharray:4 3;display:none}
+.viewer-tip{
+  position:absolute;left:50%;bottom:16px;transform:translateX(-50%);
+  background:var(--panel);border:1px solid var(--line);border-radius:999px;
+  padding:5px 14px;font-size:12px;color:var(--ink2);opacity:.9;pointer-events:none;white-space:nowrap;
+  box-shadow:var(--shadow);
+}
+.toast{
+  position:absolute;top:14px;left:50%;transform:translateX(-50%);
+  background:var(--panel);border:1px solid var(--line);border-radius:9px;
+  padding:7px 16px;font-size:12.5px;color:var(--ink);white-space:nowrap;
+  box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s;z-index:5;
+}
+.toast.show{opacity:1}
+.photo-tabs{display:flex;gap:5px;padding:8px 10px;background:var(--panel);border-top:1px solid var(--line);flex:none;flex-wrap:wrap}
+.ptab{
+  display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--panel);
+  color:var(--ink2);border-radius:8px;padding:3.5px 10px;font-size:12px;cursor:pointer;transition:all .12s;
+}
+.ptab:hover{border-color:var(--accent-line);color:var(--ink)}
+.ptab.active{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-ink);font-weight:600}
+.ptab .badge{
+  min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--warn-soft);
+  color:var(--warn);font-size:10.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;
+}
+
+/* 右：核对项 */
+.side{flex:1;min-width:400px;max-width:560px;display:flex;flex-direction:column;background:var(--panel)}
+.side-head{padding:14px 18px 0;flex:none}
+.side-head .t{font-size:12px;font-weight:650;color:var(--ink3);letter-spacing:.08em;margin-bottom:8px}
+.items{flex:1;overflow-y:auto;padding:4px 14px 60px}
+.page-group{display:flex;align-items:center;gap:8px;margin:16px 2px 8px;font-size:12px;font-weight:650;color:var(--ink2)}
+.page-group::after{content:"";flex:1;height:1px;background:var(--line)}
+.page-group .cnt{font-weight:500;color:var(--ink3);font-size:11.5px}
+
+.item{
+  border:1px solid var(--line);border-radius:var(--radius);margin-bottom:9px;background:var(--panel);
+  overflow:hidden;transition:border-color .15s, box-shadow .15s;
+}
+.item:hover{border-color:var(--accent-line)}
+.item.open{border-color:var(--accent-line);box-shadow:var(--shadow)}
+.item.resolved{border-color:transparent;background:var(--panel2)}
+.item.resolved:hover{border-color:var(--ok-line)}
+.item-head{display:flex;align-items:center;gap:8px;padding:10px 13px;cursor:pointer}
+.qtag{
+  flex:none;background:var(--accent-soft);color:var(--accent-ink);border-radius:6px;
+  padding:1.5px 7px;font-size:11.5px;font-weight:700;letter-spacing:.02em;
+}
+.item.resolved .qtag{background:var(--ok-soft);color:var(--ok)}
+.pg{
+  flex:none;font-size:11px;color:var(--ink3);background:var(--panel2);
+  border:1px solid var(--line2);border-radius:5px;padding:1px 6px;white-space:nowrap;
+}
+.ttl{flex:1;min-width:0;font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item.resolved .ttl{color:var(--ink2);font-weight:500}
+.mark{flex:none;font-size:11.5px;color:var(--ink3);display:inline-flex;align-items:center;gap:6px}
+.mark .pin{color:var(--warn);font-size:10px;border:1px solid var(--warn-soft);background:var(--warn-soft);border-radius:4px;padding:0 4px;font-weight:700}
+.item.resolved .mark{color:var(--ok);font-weight:700}
+.item-body{display:none;padding:3px 13px 13px;border-top:1px solid var(--line2)}
+.item.open .item-body{display:block}
+.item.resolved .item-body{border-top-color:transparent}
+.field{margin-top:10px}
+.lab{font-size:11.5px;color:var(--ink3);margin-bottom:5px;letter-spacing:.02em}
+.cur{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:7px 10px;font-size:12.5px;color:var(--ink);white-space:pre-wrap;word-break:break-all}
+.iss{font-size:12.5px;color:var(--warn);white-space:pre-wrap;background:var(--warn-soft);border-radius:8px;padding:7px 10px}
+.draft-hint{margin-top:10px;font-size:12px;color:var(--warn);display:flex;align-items:center;gap:5px}
+.draft-hint::before{content:"●";font-size:8px}
+
+.cands{display:flex;flex-wrap:wrap;gap:6px}
+.cands label{
+  position:relative;display:inline-flex;align-items:center;
+  border:1px solid var(--line);border-radius:999px;padding:5px 13px;font-size:12.5px;
+  cursor:pointer;transition:all .13s;background:var(--panel);color:var(--ink2);
+}
+.cands label:hover{border-color:var(--accent-line);color:var(--ink)}
+.cands input{position:absolute;opacity:0;pointer-events:none}
+.cands label.picked{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink);font-weight:650}
+.cands label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
+
+textarea{
+  width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--ink);
+  padding:8px 10px;font:12.5px/1.6 inherit;font-family:inherit;resize:vertical;min-height:46px;transition:border-color .15s;
+}
+textarea::placeholder{color:var(--ink3)}
+textarea:focus{outline:none;border-color:var(--accent);background:var(--panel)}
+
+.verdict-view{
+  background:var(--ok-soft);border:1px solid var(--ok-line);border-radius:9px;padding:8px 11px;font-size:12.5px;margin-top:10px;
+}
+.verdict-view .vchoice{font-weight:650;color:var(--ok)}
+.verdict-view .vnote{color:var(--ink2);font-size:12px;white-space:pre-wrap;margin-top:2px}
+.verdict-view .vts{color:var(--ink3);font-size:11px;margin-top:3px;font-variant-numeric:tabular-nums}
+
+.actions{display:flex;gap:8px;margin-top:12px;align-items:center}
+.btn{
+  background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 16px;
+  font-size:12.5px;font-weight:650;cursor:pointer;transition:all .13s;
+}
+.btn:hover{filter:brightness(1.07)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.5;cursor:wait}
+.btn.ghost{background:transparent;color:var(--ink2);border:1px solid var(--line);font-weight:500}
+.btn.ghost:hover{color:var(--ink);border-color:var(--ink3);filter:none}
+.saved{font-size:12px;color:var(--ok);font-weight:600;display:inline-flex;align-items:center;gap:4px;animation:pop .3s}
+@keyframes pop{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}
+
+.empty{padding:60px 20px;text-align:center;color:var(--ink3);font-size:13px}
+.alldone{
+  margin:14px 4px;background:var(--ok-soft);border:1px solid var(--ok-line);color:var(--ok);
+  border-radius:var(--radius);padding:12px 16px;font-weight:650;font-size:13px;text-align:center;
+}
+@media (max-width:900px){
+  main{flex-direction:column;overflow-y:auto}
+  .viewer{flex:none;height:52vh;border-right:none;border-bottom:1px solid var(--line)}
+  .side{min-width:0;max-width:none}
+  .hint{display:none}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><i></i>试卷人工核对台</div>
+  <div class="task-pick"><select id="taskSel"><option value="">加载中…</option></select></div>
+  <div class="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <span class="progress-num" id="progress"></span>
+  </div>
+  <span class="hint"><kbd>滚轮</kbd> 缩放 · <kbd>拖拽</kbd> 平移 · <kbd>双击</kbd> 复位</span>
+</header>
+
+<main>
+  <div class="viewer">
+    <div class="viewer-bar">
+      <button class="vbtn" id="prevBtn" title="上一页"><svg viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6"/></svg></button>
+      <span class="photo-label" id="photoLabel">—</span>
+      <span class="page-of" id="pageOf"></span>
+      <button class="vbtn" id="nextBtn" title="下一页"><svg viewBox="0 0 24 24"><path d="M10 6l6 6-6 6"/></svg></button>
+      <span class="spacer"></span>
+      <button class="vbtn" id="markBtn" title="标注模式：在图上拖框，绑定到当前展开的待核项"><svg viewBox="0 0 24 24"><path d="M4 4h7M4 4v7M4 4l6 6M20 20h-7M20 20v-7M20 20l-6-6"/></svg></button>
+      <div class="zoom-pill">
+        <button class="vbtn" id="zoomOut" title="缩小"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+        <span class="val" id="zoomVal" title="点击适配">100%</span>
+        <button class="vbtn" id="zoomIn" title="放大"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="vbtn" id="zoomFit" title="适配窗口"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        <button class="vbtn" id="zoom100" title="1:1 原始尺寸"><svg viewBox="0 0 24 24"><path d="M4 12h16M4 7h10M4 17h10"/></svg></button>
+      </div>
+    </div>
+    <div class="canvas" id="canvas">
+      <img id="photo" alt="">
+      <svg id="overlay" xmlns="http://www.w3.org/2000/svg"><rect class="tmp" id="tmpRect" x="0" y="0" width="0" height="0"/></svg>
+      <div class="toast" id="toast"></div>
+      <div class="viewer-tip">滚轮缩放 · 拖拽平移 · 双击复位</div>
+    </div>
+    <div class="photo-tabs" id="photoTabs"></div>
+  </div>
+
+  <div class="side">
+    <div class="side-head"><div class="t">待核对项</div></div>
+    <div class="items" id="items"><div class="empty">选择一个核对任务</div></div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const canvas = $('#canvas'), img = $('#photo'), overlay = $('#overlay'), tmpRect = $('#tmpRect');
+let TASK = null, VERDICTS = [], DRAFTS = {}, LOCATES = {}, CUR = null;   // CUR = 当前照片 id
+let scale = 1, tx = 0, ty = 0;
+let marking = false, markStart = null;
+
+/* ---------- 位置记忆（localStorage：当前页 + 显式收起的项） ---------- */
+function uiState(){ try { return JSON.parse(localStorage.getItem('proofread:ui')||'{}') || {}; } catch(e){ return {}; } }
+function saveUiState(slug, patch){
+  const st = uiState(); st[slug] = Object.assign(st[slug]||{}, patch);
+  try { localStorage.setItem('proofread:ui', JSON.stringify(st)); } catch(e){}
+}
+
+/* ---------- 图片查看器 + 标注层 ---------- */
+function apply(){
+  const t = `translate(${tx}px,${ty}px) scale(${scale})`;
+  img.style.transform = t;
+  overlay.style.transform = t;
+  $('#zoomVal').textContent = Math.round(scale*100)+'%';
+}
+function fit(){
+  const r = canvas.getBoundingClientRect();
+  const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
+  scale = Math.min(r.width/iw, r.height/ih) * 0.96;
+  tx = (r.width - iw*scale)/2; ty = (r.height - ih*scale)/2;
+  apply();
+}
+function renderOverlayBox(){
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  if(!iw || !ih) return;
+  overlay.setAttribute('viewBox', `0 0 ${iw} ${ih}`);
+  overlay.setAttribute('width', iw); overlay.setAttribute('height', ih);
+  overlay.style.width = iw+'px'; overlay.style.height = ih+'px';
+  renderOverlays();
+}
+function showPhoto(id, focusItemId){
+  if(!id) return;
+  const ph = TASK.photos.find(p => p.id === id); if(!ph) return;
+  CUR = id;
+  saveUiState(TASK.slug, {photo: id});
+  const idx = TASK.photos.findIndex(p=>p.id===id);
+  $('#photoLabel').textContent = ph.label || id;
+  $('#pageOf').textContent = `· ${idx+1} / ${TASK.photos.length}`;
+  document.querySelectorAll('#photoTabs button').forEach(b=>b.classList.toggle('active', b.dataset.id===id));
+  img.onload = () => {
+    fit();
+    renderOverlayBox();
+    // 跳页同时带了定位目标：图加载完成后再缩放到标注框（否则会用旧图尺寸算错）
+    if(focusItemId && LOCATES[focusItemId]) zoomToRect(LOCATES[focusItemId]);
+  };
+  img.src = '/photo?task='+encodeURIComponent(TASK.slug)+'&id='+encodeURIComponent(id);
+}
+function stepPhoto(d){
+  const i = TASK.photos.findIndex(p=>p.id===CUR);
+  const n = TASK.photos[i+d]; if(n) showPhoto(n.id);
+}
+// 自动定位到标注框（动画缩放）
+function zoomToRect(loc){
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  if(!iw) return;
+  const r = canvas.getBoundingClientRect();
+  const x = loc.x*iw, y = loc.y*ih, w = Math.max(loc.w*iw, 24), h = Math.max(loc.h*ih, 24);
+  let s = Math.min(r.width*0.72/w, r.height*0.42/h);
+  s = Math.min(Math.max(s, 0.7), 3.2);
+  canvas.classList.add('animating');
+  scale = s; tx = r.width/2 - (x+w/2)*s; ty = r.height/2 - (y+h/2)*s;
+  apply();
+  setTimeout(()=>canvas.classList.remove('animating'), 320);
+}
+$('#prevBtn').onclick = ()=>stepPhoto(-1);
+$('#nextBtn').onclick = ()=>stepPhoto(1);
+$('#zoomFit').onclick = fit;
+$('#zoom100').onclick = ()=>{ const r=canvas.getBoundingClientRect(); scale=1; tx=(r.width-img.naturalWidth)/2; ty=(r.height-img.naturalHeight)/2; apply(); };
+$('#zoomIn').onclick  = ()=>{ scale=Math.min(scale*1.25,6); apply(); };
+$('#zoomOut').onclick = ()=>{ scale=Math.max(scale/1.25,.2); apply(); };
+$('#zoomVal').onclick = fit;
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX-r.left, my = e.clientY-r.top;
+  const k = e.deltaY<0 ? 1.18 : 1/1.18;
+  const ns = Math.min(Math.max(scale*k,.2),6);
+  tx = mx-(mx-tx)*(ns/scale); ty = my-(my-ty)*(ns/scale); scale = ns; apply();
+},{passive:false});
+let drag=null;
+canvas.addEventListener('pointerdown', e=>{
+  const cRect = canvas.getBoundingClientRect();
+  if(marking){
+    if(!img.naturalWidth){ toast('图片还在加载，稍候再框选'); return; }
+    markStart = {x:e.clientX-cRect.left, y:e.clientY-cRect.top};
+    try { canvas.setPointerCapture(e.pointerId); } catch(err){}
+    return;
+  }
+  drag={x:e.clientX,y:e.clientY,tx,ty}; try { canvas.setPointerCapture(e.pointerId); } catch(err){} canvas.classList.add('dragging');
+});
+canvas.addEventListener('pointermove', e=>{
+  const cRect = canvas.getBoundingClientRect();
+  if(marking && markStart){
+    const x2 = e.clientX-cRect.left, y2 = e.clientY-cRect.top;
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const px = v => ((v - tx)/scale) / iw * iw;   // 屏幕坐标 -> 图片自然坐标
+    const py = v => ((v - ty)/scale) / ih * ih;
+    const x = Math.min(px(markStart.x), px(x2)), y = Math.min(py(markStart.y), py(y2));
+    const w = Math.abs(px(x2)-px(markStart.x)), h = Math.abs(py(y2)-py(markStart.y));
+    tmpRect.setAttribute('x',x); tmpRect.setAttribute('y',y);
+    tmpRect.setAttribute('width',Math.max(w,2)); tmpRect.setAttribute('height',Math.max(h,2));
+    tmpRect.style.display = 'block';
+    return;
+  }
+  if(!drag) return;
+  tx=drag.tx+e.clientX-drag.x; ty=drag.ty+e.clientY-drag.y; apply();
+});
+canvas.addEventListener('pointerup', e=>{
+  if(marking && markStart){
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const px = v => ((v - tx)/scale);
+    const py = v => ((v - ty)/scale);
+    const cRect = canvas.getBoundingClientRect();
+    const x2 = e.clientX-cRect.left, y2 = e.clientY-cRect.top;
+    const x1 = px(markStart.x), y1 = py(markStart.y);
+    const rx2 = px(x2), ry2 = py(y2);
+    tmpRect.style.display = 'none'; markStart = null;
+    const rx = Math.min(x1,rx2)/iw, ry = Math.min(y1,ry2)/ih;
+    const rw = Math.abs(rx2-x1)/iw, rh = Math.abs(ry2-y1)/ih;
+    if(rw < 0.01 || rh < 0.005){ toast('框太小了，拖一个大一点的区域'); return; }
+    // 绑定到当前展开的未核项
+    const openEl = document.querySelector('.item.open:not(.resolved)');
+    if(!openEl){ toast('请先在右侧展开一个待核项，再框选位置'); return; }
+    const id = openEl.dataset.id;
+    fetch('/api/locate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({slug:TASK.slug,itemId:id,x:rx,y:ry,w:rw,h:rh})})
+      .then(r=>r.json()).then(j=>{
+        if(!j.ok){ toast('保存失败：'+j.error); return; }
+        LOCATES = j.locates; renderOverlays(); renderItems();
+        toast('已标注到「'+(TASK.items.find(i=>i.id===id)||{}).title+'」，下次自动定位');
+      });
+    return;
+  }
+  drag=null; canvas.classList.remove('dragging');
+});
+// 标注模式开关
+$('#markBtn').onclick = ()=>{
+  marking = !marking;
+  $('#markBtn').classList.toggle('on', marking);
+  canvas.classList.toggle('marking', marking);
+  toast(marking ? '标注模式：在图上拖一个框，绑定到右侧展开的待核项' : '标注模式已关闭');
+};
+function toast(msg){
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._tm); t._tm = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+canvas.addEventListener('dblclick', ()=>{ scale>=2 ? fit() : $('#zoom100').onclick(); });
+window.addEventListener('resize', ()=>{ if(TASK) fit(); });
+
+/* ---------- 任务与核对项 ---------- */
+function latestVerdict(itemId){
+  let v=null; for(const x of VERDICTS) if(x.itemId===itemId) v=x; return v;
+}
+async function loadTasks(){
+  const list = await (await fetch('/api/tasks')).json();
+  const sel = $('#taskSel');
+  sel.innerHTML = list.length
+    ? list.map(t=>`<option value="${t.slug}">${t.title}</option>`).join('')
+    : '<option value="">（data/proofread 下暂无任务）</option>';
+  if(list.length){
+    // 记忆上次核对的任务，刷新不丢
+    let last = null;
+    try { last = localStorage.getItem('proofread:lastTask'); } catch(e){}
+    sel.value = list.some(t=>t.slug===last) ? last : list[0].slug;
+    sel.onchange = ()=>loadTask(sel.value);
+    loadTask(sel.value);
+  }
+}
+async function loadTask(slug){
+  if(!slug) return;
+  try { localStorage.setItem('proofread:lastTask', slug); } catch(e){}
+  const data = await (await fetch('/api/task/'+encodeURIComponent(slug))).json();
+  TASK = data.task; VERDICTS = data.verdicts || []; DRAFTS = data.drafts || {}; LOCATES = data.locates || {};
+  CUR = null;
+  renderTabs(); renderItems();
+  // 位置记忆：上次看到的页码优先，否则落到第一个未核项所在页
+  const st = uiState();
+  const remembered = st[TASK.slug] && TASK.photos.some(p=>p.id===st[TASK.slug].photo) ? st[TASK.slug].photo : null;
+  const firstOpen = TASK.photos.flatMap(p => TASK.items.filter(i => i.page === p.id)).find(i => !latestVerdict(i.id)) || TASK.items[0];
+  showPhoto(remembered || (firstOpen ? firstOpen.page : null));
+}
+function renderTabs(){
+  const cnt = {};
+  for(const it of TASK.items) if(!latestVerdict(it.id)) cnt[it.page] = (cnt[it.page]||0)+1;
+  $('#photoTabs').innerHTML = TASK.photos.map(p=>
+    `<button data-id="${p.id}" class="${p.id===CUR?'active':''}">${p.label}${cnt[p.id]?`<span class="badge">${cnt[p.id]}</span>`:''}</button>`
+  ).join('');
+  document.querySelectorAll('#photoTabs button').forEach(b=>b.onclick=()=>showPhoto(b.dataset.id));
+}
+function renderProgress(){
+  const total=TASK.items.length, done=TASK.items.filter(i=>latestVerdict(i.id)).length;
+  const drafts = TASK.items.filter(i=>!latestVerdict(i.id) && DRAFTS[i.id] && (DRAFTS[i.id].choice || DRAFTS[i.id].note)).length;
+  $('#progressFill').style.width = total ? Math.round(done/total*100)+'%' : '0%';
+  $('#progress').innerHTML = done<total
+    ? `<b>${done}</b> / ${total} 已核${drafts?` · ${drafts} 项草稿中`:''}`
+    : `全部完成 <b>${done} / ${total}</b> ✓`;
+}
+function renderOverlays(){
+  const marks = overlay.querySelectorAll('rect.mark');
+  marks.forEach(m=>m.remove());
+  if(!TASK || !img.naturalWidth) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  for(const it of TASK.items){
+    if(it.page !== CUR) continue;
+    const loc = LOCATES[it.id]; if(!loc) continue;
+    const v = latestVerdict(it.id);
+    const rect = document.createElementNS(NS,'rect');
+    rect.setAttribute('class', 'mark' + (v?' resolved':''));
+    rect.dataset.id = it.id;
+    rect.setAttribute('x', loc.x*img.naturalWidth); rect.setAttribute('y', loc.y*img.naturalHeight);
+    rect.setAttribute('width', Math.max(loc.w*img.naturalWidth,6)); rect.setAttribute('height', Math.max(loc.h*img.naturalHeight,6));
+    overlay.appendChild(rect);
+  }
+  syncRectStates();
+}
+function setRectState(id, cls, on){
+  const rect = overlay.querySelector(`rect.mark[data-id="${CSS.escape(id)}"]`);
+  if(rect) rect.classList.toggle(cls, on);
+}
+function syncRectStates(){
+  overlay.querySelectorAll('rect.mark').forEach(r=>r.classList.remove('hot','active'));
+  const openEl = document.querySelector('.item.open');
+  if(openEl) setRectState(openEl.dataset.id, 'active', true);
+  document.querySelectorAll('.item:hover').forEach(el=>setRectState(el.dataset.id,'hot',true));
+}
+function renderItems(){
+  const box = $('#items');
+  const byPage = {};
+  for(const it of TASK.items){ (byPage[it.page] = byPage[it.page] || []).push(it); }
+  let html = '';
+  for(const p of TASK.photos){
+    const group = byPage[p.id]; if(!group) continue;
+    const done = group.filter(i=>latestVerdict(i.id)).length;
+    html += `<div class="page-group">${p.label}<span class="cnt">${done}/${group.length} 已核</span></div>`;
+    for(const it of group) html += itemHTML(it, p);
+  }
+  box.innerHTML = html || '<div class="empty">本任务没有待核对项</div>';
+  if(TASK.items.length && TASK.items.every(i=>latestVerdict(i.id))){
+    box.insertAdjacentHTML('beforeend','<div class="alldone">本卷核对全部完成 ✓ 后端已记录，可以喊 AI 收结果了</div>');
+  }
+  bindItems();
+  renderProgress();
+  syncRectStates();
+}
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function itemHTML(it, photo){
+  const v = latestVerdict(it.id);
+  const d = DRAFTS[it.id];
+  const hasLoc = !!LOCATES[it.id];
+  const collapsed = ((uiState()[TASK.slug]||{}).collapsed || []).includes(it.id);
+  const open = v ? '' : (collapsed ? '' : 'open');
+  const picked = v ? v.choice : (d ? d.choice : null);
+  const noteVal = v ? v.note : (d ? (d.note||'') : '');
+  const cands = (it.candidates||[]).map(c=>
+    `<label class="${picked===c?'picked':''}"><input type="radio" name="r_${esc(it.id)}" value="${esc(c)}" ${picked===c?'checked':''}>${esc(c)}</label>`
+  ).join('');
+  return `<div class="item ${open} ${v?'resolved':''}" data-id="${esc(it.id)}" data-page="${esc(it.page)}">
+    <div class="item-head">
+      <span class="qtag">${esc(it.question||it.page)}</span>
+      <span class="pg">${esc(photo ? photo.label : it.page)}</span>
+      <span class="ttl" title="${esc(it.title)}">${esc(it.title)}</span>
+      <span class="mark">${hasLoc?'<span class="pin">已标</span>':''}${v?'✓ 已核':'待核'}</span>
+    </div>
+    <div class="item-body">
+      ${it.current?`<div class="field"><div class="lab">当前录入</div><div class="cur">${esc(it.current)}</div></div>`:''}
+      ${it.issue?`<div class="field"><div class="lab">疑问</div><div class="iss">${esc(it.issue)}</div></div>`:''}
+      ${v?`<div class="verdict-view"><span class="vchoice">${esc(v.choice||'—')}</span>${v.note?`<div class="vnote">${esc(v.note)}</div>`:''}<div class="vts">${esc(v.ts)}</div></div>`:''}
+      ${(!v&&d&&(d.choice||d.note))?`<div class="draft-hint">有未提交草稿（已自动保存）</div>`:''}
+      <div class="field"><div class="lab">裁决${it.candidates&&it.candidates.length?'（点选或自填备注）':''}</div><div class="cands">${cands}</div></div>
+      <div class="field"><div class="lab">备注（可空）</div><textarea class="note" placeholder="补充说明，如：原卷印的是 X 字">${esc(noteVal)}</textarea></div>
+      <div class="actions">
+        <button class="btn submit">提交裁决</button>
+        ${v?'<button class="btn ghost revise">修改</button>':''}
+        <span class="saved" style="display:none">已记录 ✓</span>
+      </div>
+    </div>
+  </div>`;
+}
+const draftTimers = {};
+function scheduleDraft(slug, id){
+  clearTimeout(draftTimers[id]);
+  draftTimers[id] = setTimeout(()=>{
+    const el = document.querySelector(`.item[data-id="${CSS.escape(id)}"]`);
+    if(!el) return;
+    const pick = el.querySelector('.cands input:checked');
+    const note = el.querySelector('.note').value.trim();
+    fetch('/api/draft',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({slug,itemId:id,choice:pick?pick.value:null,note})}).catch(()=>{});
+  }, 600);
+}
+function bindItems(){
+  document.querySelectorAll('.item').forEach(el=>{
+    const id = el.dataset.id;
+    el.querySelector('.item-head').onclick = ()=>{
+      const wasOpen = el.classList.contains('open');
+      document.querySelectorAll('.item.open').forEach(x=>x.classList.remove('open'));
+      if(!wasOpen) el.classList.add('open');
+      // 跳图：有标注则自动缩放定位到框，无标注则整页适配
+      const it = TASK.items.find(x=>x.id===id);
+      const loc = LOCATES[id];
+      if(it && it.page!==CUR) showPhoto(it.page, loc ? id : null);
+      else if(loc) zoomToRect(loc);
+      else if(it && it.page===CUR) fit();
+      // 记忆用户显式收起的未核项；展开则移出记录
+      if(!latestVerdict(id)){
+        const st = uiState(); const s = st[TASK.slug] || {};
+        const set = new Set(s.collapsed || []);
+        if(wasOpen) set.add(id); else set.delete(id);
+        saveUiState(TASK.slug, {collapsed: [...set]});
+      }
+      syncRectStates();
+    };
+    el.addEventListener('mouseenter', ()=>setRectState(id,'hot',true));
+    el.addEventListener('mouseleave', ()=>{
+      const openEl = document.querySelector('.item.open');
+      if(!openEl || openEl.dataset.id!==id) setRectState(id,'hot',false);
+    });
+    el.querySelectorAll('.cands input').forEach(r=>r.onchange=()=>{
+      el.querySelectorAll('.cands label').forEach(l=>l.classList.toggle('picked', l.querySelector('input').checked));
+      scheduleDraft(TASK.slug, id);
+    });
+    const noteEl = el.querySelector('.note');
+    if(noteEl) noteEl.addEventListener('input', ()=>scheduleDraft(TASK.slug, id));
+    const submit = el.querySelector('.submit');
+    submit.onclick = async ()=>{
+      const pick = el.querySelector('.cands input:checked');
+      const note = el.querySelector('.note').value.trim();
+      const choice = pick ? pick.value : note;
+      if(!choice){ alert('请先选择一个裁决或填写备注'); return; }
+      submit.disabled = true;
+      const r = await (await fetch('/api/verdict',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({slug:TASK.slug,itemId:id,choice,note})})).json();
+      submit.disabled = false;
+      if(!r.ok){ alert('提交失败：'+r.error); return; }
+      VERDICTS.push(r.entry);
+      delete DRAFTS[id];   // 已提交，草稿不再需要（后端已同步清除）
+      const saved = el.querySelector('.saved'); saved.style.display='inline';
+      setTimeout(()=>{ saved.style.display='none'; renderItems(); renderOverlays(); const next=[...document.querySelectorAll('.item')].find(x=>!latestVerdict(x.dataset.id)); if(next) next.querySelector('.item-head').click(); }, 500);
+    };
+    const revise = el.querySelector('.revise');
+    if(revise) revise.onclick = ()=>{
+      el.classList.remove('resolved'); el.classList.add('open');
+      el.querySelector('.verdict-view').remove();
+    };
+  });
+}
+loadTasks();
+</script>
+</body>
+</html>

@@ -57,6 +57,8 @@ export interface SearchPlatformDef {
   id: SearchPlatformId
   /** 选择器与提示词里显示的名称 */
   label: string
+  /** 选择器副标题短文案（⋯ 菜单行副文等 UI 场景），与 label 同用「· 」连接 */
+  sub: string
   /**
    * 站点白名单。同时列裸域与常见子域：两家引擎对「裸域是否覆盖子域」的口径
    * 未获官方明示，宁可各写一遍——多写子域只会更准，不会漏。
@@ -70,60 +72,70 @@ export const SEARCH_PLATFORMS: readonly SearchPlatformDef[] = [
   {
     id: 'auto',
     label: '自动',
+    sub: '自动 · 由模型按问题判断',
     domains: [],
     tip: '由模型按问题自行判断是否需要限定平台',
   },
   {
     id: 'all',
     label: '全网',
+    sub: '全网 · 不限定站点',
     domains: [],
     tip: '不限定站点，返回全网网页摘要',
   },
   {
     id: 'bilibili',
     label: 'B站',
+    sub: 'B站 · 视频简介与专栏',
     domains: ['bilibili.com', 'www.bilibili.com', 'm.bilibili.com', 'space.bilibili.com'],
     tip: 'B 站的视频简介与专栏长文；专栏正文可用 read_url 读出全文，适合要完整攻略/步骤',
   },
   {
     id: 'miyoushe',
     label: '米游社',
+    sub: '米游社 · 官方社区攻略',
     domains: ['miyoushe.com', 'www.miyoushe.com', 'bbs.miyoushe.com'],
     tip: '米哈游官方社区：原神/崩坏/星穹铁道/绝区零的攻略长帖与版本资讯，站内摘要已成段可直接引用，但网页正文读不出（App 壳）——需要细节别声称读过全文',
   },
   {
     id: 'xiaohongshu',
     label: '小红书',
+    sub: '小红书 · 笔记与经验贴',
     domains: ['xiaohongshu.com', 'www.xiaohongshu.com', 'xhslink.com'],
     tip: '小红书笔记与经验分享贴（该站对外索引稀薄，站内常查不到，会自动回退全网）',
   },
   {
     id: 'zhihu',
     label: '知乎',
+    sub: '知乎 · 问答与专栏',
     domains: ['zhihu.com', 'www.zhihu.com', 'zhuanlan.zhihu.com'],
     tip: '知乎问答与专栏长文',
   },
   {
     id: 'douyin',
     label: '抖音',
+    sub: '抖音 · 视频与话题',
     domains: ['douyin.com', 'www.douyin.com'],
     tip: '抖音的视频页与话题页；摘要可能只有关门标题那么长，站内正文一律读不出——拿不到成段文字时如实说，不要拿标题当结论',
   },
   {
     id: 'weibo',
     label: '微博',
+    sub: '微博 · 正文与热搜',
     domains: ['weibo.com', 's.weibo.com', 'm.weibo.cn'],
     tip: '微博正文、话题与热搜',
   },
   {
     id: 'tieba',
     label: '贴吧',
+    sub: '贴吧 · 帖子讨论',
     domains: ['tieba.baidu.com'],
     tip: '百度贴吧的帖子与楼中楼讨论',
   },
   {
     id: 'douban',
     label: '豆瓣',
+    sub: '豆瓣 · 条目与影评',
     domains: ['douban.com', 'movie.douban.com', 'book.douban.com'],
     tip: '豆瓣的影视/图书条目、影评与小组',
   },

@@ -13,9 +13,39 @@
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { knowledgeVolumeLabel, type KnowledgeHit, type KnowledgeOutlineDoc } from '@/lib/ai/knowledge-tool'
 import type { PracticeItem } from '@/lib/ai/practice-tool'
-import type { PaperSearchOutput, PaperAnalyzeOutput } from '@/lib/ai/paper-tool'
+import type { PaperSearchOutput, PaperAnalyzeOutput, ComposePaperOutput } from '@/lib/ai/paper-tool'
 
 const KIND_LABEL: Record<string, string> = { textbook: '课本', material: '资料' }
+
+/** 智能拟卷:卷面入口 + 来源卷声明;整卷内容不进聊天(卷面页有完整排版与打印) */
+export function ComposeDetail({ output }: { output: ComposePaperOutput }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-content-secondary">
+        {output.composedId && (
+          <a
+            href={output.url ?? `/papers/composed/${output.composedId}`}
+            target="_blank"
+            rel="noreferrer"
+            className="whitespace-nowrap rounded bg-surface-subtle px-1.5 py-0.5 text-[10.5px] text-content-muted underline decoration-line underline-offset-2 transition-colors hover:text-accent"
+          >
+            打开卷面页（换题 / 删题 / 打印）↗
+          </a>
+        )}
+        {!!output.durationMin && <MetaChip>建议 {output.durationMin} 分钟</MetaChip>}
+      </div>
+      {!!output.sources?.length && (
+        <div className="text-[11px] leading-snug text-content-secondary">
+          <span className="font-medium text-content-primary">来源卷</span>
+          <span> · {output.sources.join('、')}</span>
+        </div>
+      )}
+      <div className="text-[11px] leading-snug text-content-muted">
+        全部题目与答案出自官方答案卷原文，零 AI 拟题；「这题有误」的题会全局退池。
+      </div>
+    </div>
+  )
+}
 
 /** 真题检索:考次统计 + 逐题出处与题干原文;官方答案只标注有无,不展示内容(防剧透) */
 export function PaperDetail({ output }: { output: PaperSearchOutput }) {

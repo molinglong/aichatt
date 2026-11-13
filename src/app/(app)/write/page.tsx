@@ -130,7 +130,7 @@ export default function WritePage() {
       {listOpen && (
         <div className="md:hidden fixed inset-0 z-40 flex">
           <div className="absolute inset-0 bg-black/40" onClick={() => setListOpen(false)} />
-          <div className="relative w-[280px] max-w-[82vw] h-full flex flex-col bg-surface border-r border-line shadow-xl">
+          <div className="slide-in-left relative w-[280px] max-w-[82vw] h-full flex flex-col bg-surface border-r border-line shadow-xl">
             {listNode}
           </div>
         </div>

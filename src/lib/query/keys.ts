@@ -101,6 +101,10 @@ export const queryKeys = {
     meta: (slug: string) => [...queryKeys.all, 'papers', 'meta', slug] as const,
     /** 单页原件 html(PaperPage 片段) */
     page: (slug: string, pageNo: number) => [...queryKeys.all, 'papers', 'page', slug, pageNo] as const,
+    /** 拟卷完整数据(槽位+原题引用,编辑/换题/移除后整包刷新) */
+    composed: (id: string) => [...queryKeys.all, 'papers', 'composed', id] as const,
+    /** 本用户拟卷列表(学习台拟卷区块 + /papers/composed 列表页共用) */
+    composedList: () => [...queryKeys.all, 'papers', 'composed-list'] as const,
   },
   yellowFish: {
     /** 商品收藏列表(实时价卡片星标 + 设置节收藏池共享同一份缓存) */

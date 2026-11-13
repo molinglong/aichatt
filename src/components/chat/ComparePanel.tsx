@@ -375,7 +375,7 @@ export function ComparePanel({
             className="absolute inset-0 bg-black/20 backdrop-blur-[12px] saturate-150 dark:bg-white/15 dark:saturate-150"
             onClick={() => !converting && setSoloModelId(null)}
           />
-          <div className="relative w-[360px] max-w-[90vw] rounded-2xl border border-line/60 bg-surface p-5 shadow-2xl">
+          <div className="confirm-card-in relative w-[360px] max-w-[90vw] rounded-2xl border border-line/60 bg-surface p-5 shadow-2xl">
             <div className="flex items-center gap-2">
               <span
                 className={cn(

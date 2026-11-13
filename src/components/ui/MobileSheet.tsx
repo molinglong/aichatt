@@ -17,7 +17,10 @@ import { useBackToClose } from '@/hooks/useBackToClose'
 
 const IN_MS = 320
 const OUT_MS = 240
-const EASE = 'cubic-bezier(.32,.72,.28,1)'
+// 入场微弹(2026-11-11 动效二波,定稿自 preview-motion-q),与 globals.css --ease-enter 同值;
+// 出场与 scrim 保持标准曲线,收场不带过冲。
+const EASE_IN = 'cubic-bezier(.34, 1.4, 0.64, 1)'
+const EASE_OUT = 'cubic-bezier(.32,.72,.28,1)'
 /** 下滑超过 96px，或轻扫速度超过 0.5px/ms，即关闭 */
 const CLOSE_DISTANCE = 96
 const CLOSE_VELOCITY = 0.5
@@ -170,7 +173,7 @@ export function MobileSheet({
         style={{
           zIndex: zIndex - 1,
           opacity: shown ? 1 : 0,
-          transition: `opacity ${shown ? IN_MS : OUT_MS}ms ${EASE}`,
+          transition: `opacity ${shown ? IN_MS : OUT_MS}ms ${EASE_OUT}`,
           pointerEvents: shown ? 'auto' : 'none',
         }}
       />
@@ -191,7 +194,7 @@ export function MobileSheet({
             '0 -1px 2px rgba(0,0,0,.05), 0 -6px 16px -8px rgba(0,0,0,.14), 0 -28px 60px -24px rgba(0,0,0,.16)',
           paddingBottom: 'max(var(--sab, 0px), 8px)',
           transform: shown ? 'translate3d(0,0,0)' : 'translate3d(0,100%,0)',
-          transition: `transform ${shown ? IN_MS : OUT_MS}ms ${EASE}`,
+          transition: `transform ${shown ? IN_MS : OUT_MS}ms ${shown ? EASE_IN : EASE_OUT}`,
         }}
       >
         {/* 把手 + 标题一起作为下滑热区；touch-none 避免和内部滚动抢手势 */}
