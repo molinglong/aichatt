@@ -1034,6 +1034,9 @@ interface QuizAnswerCtxValue {
   paper: boolean
   pickedOf: (qno: number) => string | undefined
   onPick: (qno: number, letter: string) => void
+  /** 主观题草稿(设问题作答输入框),按卷内题号存取 */
+  draftOf: (qno: number) => string
+  onDraft: (qno: number, text: string) => void
 }
 const QuizAnswerCtx = createContext<QuizAnswerCtxValue | null>(null)
 
@@ -1044,7 +1047,12 @@ function quizStoreKey(content: string): string {
   return `quiz-picks:${(h >>> 0).toString(36)}`
 }
 
-function readQuizPicks(key: string): Record<number, string> {
+/** 主观题草稿与选项点选同哈希不同前缀,读写对称;清空草稿即删键 */
+function quizDraftStoreKey(content: string): string {
+  return quizStoreKey(content).replace('quiz-picks:', 'quiz-drafts:')
+}
+
+function readQuizStore(key: string): Record<number, string> {
   if (typeof window === 'undefined') return {}
   try {
     const raw = window.localStorage.getItem(key)
@@ -1052,6 +1060,10 @@ function readQuizPicks(key: string): Record<number, string> {
   } catch {
     return {}
   }
+}
+
+function readQuizPicks(key: string): Record<number, string> {
+  return readQuizStore(key)
 }
 
 /** 单组题面: 题干 + 试卷式选项（长选项通栏，全部短选项时自动两列）；选项内高亮照常生效。
@@ -1462,10 +1474,42 @@ function ExamEssayBody({ text }: { text: string }) {
  * 编号后括号必须纯数字,避免误伤 f(x)/(1+x) 这类数学式 */
 const QUESTION_PART_SPLIT_RE = /(?=[(（]\s*\d{1,2}\s*[)）]|[①-⑫])/
 
+/** 主观题作答输入框(试卷答题线:淡虚线下边,自动增高);内容挂 QuizAnswerCtx 按题号存取,交卷时并入 */
+function ExamAnswerInput({ no }: { no: number }) {
+  const quiz = useContext(QuizAnswerCtx)
+  const value = quiz?.draftOf(no) ?? ''
+  const ref = useRef<HTMLTextAreaElement>(null)
+  // auto-grow: 多行解答随内容增高,清空回一行
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [value])
+  return (
+    <textarea
+      ref={ref}
+      className="exam-answer-input"
+      rows={1}
+      placeholder="在此作答…"
+      value={value}
+      onChange={(e) => quiz?.onDraft(no, e.target.value)}
+      aria-label={`第 ${no} 题作答`}
+    />
+  )
+}
+
 function ExamQuestionBody({ text, no }: { text: string; no?: number }) {
+  const quiz = useContext(QuizAnswerCtx)
   const parts = useMemo(() => text.split(QUESTION_PART_SPLIT_RE).map((s) => s.trim()).filter(Boolean), [text])
   // 拆行用行尾双空格硬换行:小问问距保持行内紧凑,不产生段落级大空隙
-  return <ExamStemRow no={no} stem={parts.length >= 2 ? parts.join('  \n') : text} />
+  const answerable = !!(quiz?.paper && no != null)
+  return (
+    <>
+      <ExamStemRow no={no} stem={parts.length >= 2 ? parts.join('  \n') : text} />
+      {answerable && <ExamAnswerInput no={no as number} />}
+    </>
+  )
 }
 
 /** 出题场景的作答块:默认收起防剧透,点击展开(仅当同组题块带出处徽标时启用);流式期间折叠状态不重置。
@@ -1570,7 +1614,8 @@ function QuizRefBadge({
 }
 
 /** 试卷分区: 材料(浅底纹)/设问(深角标)/作答;相邻块经 join-* 接成一张“试卷纸”;内部仍走完整 markdown 渲染。
- *  出题扩展: 题块(choice/question)首行「参考 §x.x·学科」剥出为右上徽标;带徽标的题块其紧邻答案块默认折叠; */
+ *  出题扩展: 题块(choice/question)首行「参考 §x.x·学科」剥出为右上徽标;带徽标的题块其紧邻答案块默认折叠;
+ *  题间分界: dividerTop 时块内顶部画虚线(题与题之间的装订线,材料/设问/作答同一道题的分区之间不画) */
 function ExamBlock({
   kind,
   text,
@@ -1579,6 +1624,7 @@ function ExamBlock({
   answerCollapsible,
   quizAnswerText,
   questionNo,
+  dividerTop,
 }: {
   kind: ExamKind
   text: string
@@ -1590,6 +1636,8 @@ function ExamBlock({
   quizAnswerText?: string
   /** 题块专用:卷内题号(渲染层按消息内题块顺序编号) */
   questionNo?: number
+  /** 前一 exam 块已是上一题(题干/答案/译文),本块是新材料或新题干 → 题间虚线 */
+  dividerTop?: boolean
 }) {
   const isQuizStem = kind === 'choice' || kind === 'question'
   const { sourceRef, body } = isQuizStem ? parseSourceRefLine(text) : { sourceRef: null as ExamSourceRef | null, body: text }
@@ -1607,6 +1655,7 @@ function ExamBlock({
         joinBottom && 'exam-join-bottom',
       )}
     >
+      {dividerTop && <div className="exam-divider" aria-hidden />}
       {/* 闲鱼推荐卡不显示块标签（用户点名删掉，商品卡自身已有完整视觉） */}
       {kind !== 'yellow-fish' && <span className="exam-block-tag">{EXAM_TAG[kind]}</span>}
       {sourceRef && quizAnswerText && !isBankRef && (
@@ -1824,14 +1873,19 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
     })
     return map
   }, [segments])
-  // 可答题集: 本消息内「有选项的选择题」对应的题号（单题 1 个、一块多题按组递增），供交卷汇总
+  // 可答题集: 本消息内「有选项的选择题」与「设问题(主观题,作答输入框)」对应的题号,供交卷汇总
   const answerable = useMemo<number[]>(() => {
     if (!isPaper) return []
     const list: number[] = []
     segments.forEach((s, i) => {
-      if (s.type !== 'exam' || s.kind !== 'choice') return
+      if (s.type !== 'exam') return
       const start = stemNos.get(i)
       if (start == null) return
+      if (s.kind === 'question') {
+        list.push(start)
+        return
+      }
+      if (s.kind !== 'choice') return
       const { options, groups } = parseChoice(s.text)
       if (!options.length) return
       const count = Math.max(1, groups.length)
@@ -1842,9 +1896,14 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
   // 点选草稿: 按正文哈希持久化，刷新/切走再回保留；空选清除避免脏键堆积
   const storeKey = useMemo(() => quizStoreKey(content), [content])
   const [picks, setPicks] = useState<Record<number, string>>(() => readQuizPicks(storeKey))
+  const draftStoreKey = useMemo(() => quizDraftStoreKey(content), [content])
+  const [drafts, setDrafts] = useState<Record<number, string>>(() => readQuizStore(draftStoreKey))
   useEffect(() => {
     setPicks(readQuizPicks(storeKey))
   }, [storeKey])
+  useEffect(() => {
+    setDrafts(readQuizStore(draftStoreKey))
+  }, [draftStoreKey])
   useEffect(() => {
     if (typeof window === 'undefined') return
     try {
@@ -1856,6 +1915,17 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
       /* 隐私模式/超额写入失败静默忽略，不影响本页点选 */
     }
   }, [picks, storeKey])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const clean: Record<number, string> = {}
+      for (const [k, v] of Object.entries(drafts)) if (v.trim()) clean[Number(k)] = v
+      if (Object.keys(clean).length) window.localStorage.setItem(draftStoreKey, JSON.stringify(clean))
+      else window.localStorage.removeItem(draftStoreKey)
+    } catch {
+      /* 同 picks: 写失败静默 */
+    }
+  }, [drafts, draftStoreKey])
   const onPick = useCallback((qno: number, letter: string) => {
     setPicks((prev) => {
       const next = { ...prev }
@@ -1865,16 +1935,26 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
     })
   }, [])
   const pickedOf = useCallback((qno: number) => picks[qno], [picks])
+  const onDraft = useCallback((qno: number, text: string) => {
+    setDrafts((prev) => ({ ...prev, [qno]: text }))
+  }, [])
+  const draftOf = useCallback((qno: number) => drafts[qno] ?? '', [drafts])
   const quizValue = useMemo<QuizAnswerCtxValue>(
-    () => ({ paper: isPaper && answerable.length > 0, pickedOf, onPick }),
-    [isPaper, answerable.length, pickedOf, onPick],
+    () => ({ paper: isPaper && answerable.length > 0, pickedOf, onPick, draftOf, onDraft }),
+    [isPaper, answerable.length, pickedOf, onPick, draftOf, onDraft],
   )
-  const chosen = answerable.reduce((n, q) => n + (picks[q] ? 1 : 0), 0)
+  const chosen = answerable.reduce((n, q) => n + ((picks[q] || drafts[q]?.trim()) ? 1 : 0), 0)
   const submitSheet = useCallback(() => {
     if (!answerable.length) return
-    const lines = answerable.map((n) => `${n}. ${picks[n] ?? '未作答'}`)
+    const lines = answerable.map((n) => {
+      const pick = picks[n]
+      const draft = drafts[n]?.trim()
+      if (pick) return `${n}. ${pick}`
+      if (draft) return `${n}. ${draft}`
+      return `${n}. 未作答`
+    })
     sendTextAsUser(`我的作答：\n${lines.join('\n')}`)
-  }, [answerable, picks])
+  }, [answerable, picks, drafts])
   const nodes: React.ReactNode[] = []
   let mdRun: string[] = []
   const flushMd = () => {
@@ -1942,6 +2022,16 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
     })()
     const isQuizStem = seg.kind === 'choice' || seg.kind === 'question'
     const stemRef = isQuizStem ? parseSourceRefLine(seg.text).sourceRef : null
+    // 题间分界: 前一 exam 块属于上一题(题干/答案/译文),本块开新材料或新题干 → 虚线装订线;
+    // 材料→设问→作答等同一道题的分区之间不画(前块 material 不算"上一题结束",answer/translate 不算"新题开始")
+    const dividerTop = (() => {
+      if (i === 0) return false
+      const prev = segments[i - 1]
+      if (prev.type !== 'exam') return false
+      const prevEndsStem = prev.kind === 'choice' || prev.kind === 'question' || prev.kind === 'answer' || prev.kind === 'translate'
+      const curStartsStem = seg.kind === 'choice' || seg.kind === 'question' || seg.kind === 'material'
+      return prevEndsStem && curStartsStem
+    })()
     nodes.push(
       <ExamBlock
         key={i}
@@ -1952,6 +2042,7 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
         answerCollapsible={seg.kind === 'answer' && (!!prevQuizRef || (isPaper && hasPrevStem))}
         quizAnswerText={isQuizStem && stemRef && nextAnswerText ? nextAnswerText : undefined}
         questionNo={stemNos.get(i)}
+        dividerTop={dividerTop}
       />,
     )
   })
@@ -1962,7 +2053,7 @@ function RichMarkdown({ content, inlineImages }: { content: string; inlineImages
         {nodes}
         {quizValue.paper && (
           <div className="exam-answer-sheet">
-            <span className="exam-answer-sheet-progress">已选 {chosen}/{answerable.length}</span>
+            <span className="exam-answer-sheet-progress">已答 {chosen}/{answerable.length}</span>
             <button type="button" className="exam-answer-sheet-btn" onClick={submitSheet} disabled={chosen === 0}>
               交卷并让我批改
             </button>

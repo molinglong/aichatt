@@ -10,13 +10,13 @@
  */
 import { useState, Suspense, useEffect, useMemo, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ChevronDown, X } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
-import { NoteList } from '@/components/study/NoteList'
-import { FavoriteList } from '@/components/study/FavoriteList'
-import { ReviewCard } from '@/components/study/ReviewCard'
-import { StudyHome, type StudySessionListItem, type ComposedPaperListItem } from '@/components/study/StudyHome'
+import { StudyPanelDialog } from '@/components/study/StudyPanelDialog'
+import { StudyHome, type StudySessionListItem, type ComposedPaperListItem, type StudyPlanSummary } from '@/components/study/StudyHome'
+import { ReviewStatsDialog, type StudyStats } from '@/components/study/ReviewStatsDialog'
+import { PlanDialog, type StudyPlan } from '@/components/study/PlanDialog'
 import { StudyWorkspace } from '@/components/study/StudyWorkspace'
 import { FileUpload } from '@/components/chat/FileUpload'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
@@ -25,10 +25,9 @@ import { useStudySession } from '@/hooks/useStudyStream'
 import { providersModelsQuery, isModelAvailable, providerKeysStatusQuery } from '@/lib/query/providers'
 import { fetchJson } from '@/lib/query/fetcher'
 import { queryKeys } from '@/lib/query/keys'
+import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import type { Attachment } from '@/lib/attachment-types'
-
-const CHIP = 'px-2.5 py-1 rounded-full text-xs bg-surface-subtle/60 border border-line/60 text-content-secondary'
 
 interface StudyListResp {
   items: StudySessionListItem[]
@@ -238,6 +237,12 @@ function StudyContent() {
   const queryClient = useQueryClient()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerTab, setDrawerTab] = useState<'review' | 'notes' | 'favorites'>('notes')
+  // 复习模式与考点专项(阶段一方案A 双出口 + 统计弹层「专项 ›」)
+  const [drawerMode, setDrawerMode] = useState<'flip' | 'redo'>('flip')
+  const [drawerTopic, setDrawerTopic] = useState<string | null>(null)
+  const [statsOpen, setStatsOpen] = useState(false)
+  const [planOpen, setPlanOpen] = useState(false)
+  const [creatingPlan, setCreatingPlan] = useState(false)
 
   // 视图状态:学习台 / 学新题 / 会话中(本地状态;刷新回学习台,继续上次一键回)
   const [view, setView] = useState<{ kind: 'home' } | { kind: 'setup'; draft?: string } | { kind: 'session'; id: string }>({ kind: 'home' })
@@ -264,49 +269,101 @@ function StudyContent() {
   }, [allModels, keyProviders])
   const defaultModelId = studyModels.find((m) => m.publicPool)?.id || studyModels[0]?.id || ''
 
-  // 计数(错题本/到期/收藏/课本)——复用旧页的取数口径
-  const { data: queue } = useQuery({
+  // 计数(错题本/到期/收藏/课本)——复用旧页的取数口径;sourceQuestionId 用于「可重做数」
+  const { data: queue, isPending: queuePending } = useQuery({
     queryKey: ['study', 'queue'],
-    queryFn: () => fetchJson<Array<{ id: string }>>('/api/study/queue'),
+    queryFn: () => fetchJson<Array<{ id: string; sourceQuestionId: string | null }>>('/api/study/queue'),
     staleTime: 30_000,
   })
-  const { data: notes } = useQuery({
+  const { data: notes, isPending: notesPending } = useQuery({
     queryKey: ['study', 'notes-count'],
     queryFn: () => fetchJson<Array<{ id: string; lapses: number; mastery: number }>>('/api/study/notes'),
     staleTime: 30_000,
   })
   const dueCount = queue?.length ?? meta?.dueCount ?? 0
   const noteCount = notes?.length ?? 0
+  // 薄弱考点计数(弹窗 chips 用):遗忘过或掌握度偏低
+  const weakCount = notes?.filter((n) => n.lapses >= 1 || n.mastery < 0.3).length ?? 0
   // 小组件数据:掌握度均值(0-1,无笔记为 null)与累计场次(列表接口 total)
   const masteryAvg =
     notes && notes.length > 0 ? notes.reduce((sum, n) => sum + n.mastery, 0) / notes.length : null
   const totalSessions = listQuery.data?.total ?? 0
-  const { data: favoritesCount } = useQuery({
+  const { data: favoritesCount, isPending: favoritesPending } = useQuery({
     queryKey: ['favorites', 'count'],
     queryFn: () => fetchJson<{ count: number }>('/api/favorites?count=1'),
     staleTime: 30_000,
   })
   const favoriteCount = favoritesCount?.count ?? 0
+  const dueRedoCount = queue?.filter((q) => q.sourceQuestionId).length ?? 0
+  // 复习统计(小组件「复习统计」卡 + 统计弹层共用一份数据)
+  const { data: stats, isPending: statsPending } = useQuery({
+    queryKey: ['study', 'stats'],
+    queryFn: ({ signal }) => fetchJson<StudyStats>('/api/study/stats', { signal }),
+    staleTime: 30_000,
+  })
+  // 冲刺计划(阶段四:active 计划;无计划 { plan: null })
+  const { data: planData, isPending: planPending } = useQuery({
+    queryKey: ['study', 'plan'],
+    queryFn: ({ signal }) => fetchJson<{ plan: StudyPlan | null }>('/api/study/plan', { signal }),
+    staleTime: 15_000,
+  })
+  const plan: StudyPlan | null = planData?.plan
+    ? {
+        ...planData.plan,
+        examDate: planData.plan.examDate.slice(0, 10),
+        items: planData.plan.items.map((i) => ({ ...i, date: i.date.slice(0, 10) })),
+      }
+    : null
+  const todayIso = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+  const activePlan: StudyPlanSummary | null = plan
+    ? {
+        title: plan.title,
+        examDate: plan.examDate,
+        todayTotal: plan.items.filter((i) => i.date.slice(0, 10) === todayIso).length,
+        todayDone: plan.items.filter((i) => i.date.slice(0, 10) === todayIso && i.done).length,
+        totalItems: plan.items.length,
+        totalDone: plan.items.filter((i) => i.done).length,
+      }
+    : null
   const router = useRouter()
-  const { data: kbDocs } = useQuery({
+  const { data: kbDocs, isPending: kbPending } = useQuery({
     queryKey: queryKeys.kb.docs(),
     queryFn: ({ signal }) => fetchJson<Array<{ id: string }>>('/api/kb/docs', { signal }),
     staleTime: 60_000,
   })
   const kbCount = kbDocs?.length ?? 0
   // 拟卷列表(学习台「拟卷练习」区块 + 统计行 chip;GET /api/papers/composed)
-  const { data: composedList } = useQuery({
+  const { data: composedList, isPending: composedPending } = useQuery({
     queryKey: queryKeys.papers.composedList(),
     queryFn: ({ signal }) => fetchJson<{ papers: ComposedPaperListItem[] }>('/api/papers/composed', { signal }),
     staleTime: 30_000,
   })
   const composedPapers = composedList?.papers ?? []
+  // 首屏数据未齐 → 学习台整页骨架屏(方案A):任一首取未完成就不渲染零值空态;
+  // 有缓存时 isPending 直接为 false,回访不闪骨架
+  const booting =
+    listQuery.isPending ||
+    queuePending ||
+    notesPending ||
+    favoritesPending ||
+    kbPending ||
+    composedPending
 
   const refreshAll = () => {
     void queryClient.invalidateQueries({ queryKey: ['study', 'sessions'] })
     void queryClient.invalidateQueries({ queryKey: ['study', 'queue'] })
     void queryClient.invalidateQueries({ queryKey: ['study', 'notes-count'] })
+    void queryClient.invalidateQueries({ queryKey: ['study', 'stats'] })
     void queryClient.invalidateQueries({ queryKey: ['favorites', 'count'] })
+  }
+
+  /** 冲刺计划任务勾销/生成/结束 → 计划与统计一起刷 */
+  const refreshPlan = () => {
+    void queryClient.invalidateQueries({ queryKey: ['study', 'plan'] })
+    void queryClient.invalidateQueries({ queryKey: ['study', 'stats'] })
   }
 
   // 复习到期 → 主对话 ping(服务端 24h 去重,挂载时调用是安全的)
@@ -330,6 +387,66 @@ function StudyContent() {
       setDrawerOpen(true)
     }
   }, [searchParams])
+
+  /** 统计弹层「专项 ›」:按考点过滤复习队列(开回看弹层 flip 模式) */
+  const handleSpecialize = (topic: string) => {
+    setStatsOpen(false)
+    setDrawerTopic(topic)
+    setDrawerMode('flip')
+    setDrawerTab('review')
+    setDrawerOpen(true)
+  }
+
+  /** 生成冲刺排期(PlanDialog 表单提交);成功返回 true 让弹层切到计划视图 */
+  const handleCreatePlan = async (body: { examName: string; examDate: string; subject?: string }) => {
+    setCreatingPlan(true)
+    try {
+      const res = await fetch('/api/study/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const e = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(e.error || `HTTP ${res.status}`)
+      }
+      refreshPlan()
+      toast.success('排期已生成,学习台会常驻冲刺条', { title: '冲刺计划' })
+      return true
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '生成失败', { title: '冲刺计划' })
+      return false
+    } finally {
+      setCreatingPlan(false)
+    }
+  }
+
+  const handleToggleItem = async (itemId: string, done: boolean) => {
+    try {
+      const res = await fetch('/api/study/plan/item', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId, done }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      refreshPlan()
+    } catch (err) {
+      console.error('[study] toggle plan item failed:', err)
+      toast.error('更新失败,请重试', { title: '冲刺计划' })
+    }
+  }
+
+  const handleEndPlan = async () => {
+    try {
+      const res = await fetch('/api/study/plan', { method: 'DELETE' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      refreshPlan()
+      toast.success('计划已结束,可随时重新排一份', { title: '冲刺计划' })
+    } catch (err) {
+      console.error('[study] end plan failed:', err)
+      toast.error('操作失败,请重试', { title: '冲刺计划' })
+    }
+  }
 
   if (status === 'loading') return null
 
@@ -411,19 +528,27 @@ function StudyContent() {
           <StudyHome
             sessions={sessions}
             dueCount={dueCount}
+            dueRedoCount={dueRedoCount}
             noteCount={noteCount}
             favoriteCount={favoriteCount}
             kbCount={kbCount}
             masteryAvg={masteryAvg}
+            streakDays={statsPending ? null : stats?.streakDays ?? null}
             totalSessions={totalSessions}
+            activePlan={activePlan}
             papers={composedPapers}
             loading={listQuery.isLoading}
+            booting={booting}
             onResume={openSession}
             onNew={(text) => setView({ kind: 'setup', draft: text })}
-            onOpenDrawer={(tab) => {
+            onOpenDrawer={(tab, mode) => {
               setDrawerTab(tab)
+              if (tab === 'review' && mode) setDrawerMode(mode)
+              else if (tab !== 'review') setDrawerMode('flip')
               setDrawerOpen(true)
             }}
+            onOpenStats={() => setStatsOpen(true)}
+            onOpenPlan={() => setPlanOpen(true)}
           />
         )}
 
@@ -490,68 +615,47 @@ function StudyContent() {
           </>
         )}
 
-        {/* 错题本/复习抽屉:后台沉淀的备查视图 */}
-        {drawerOpen && (
-          <div className="absolute inset-0 z-40">
-            <div className="absolute inset-0 bg-black/25" onClick={() => setDrawerOpen(false)} />
-            <aside className="absolute bottom-0 right-0 top-0 flex w-full max-w-[400px] flex-col border-l border-line bg-surface shadow-xl">
-              <div className="flex flex-none items-center gap-1 border-b border-line px-3 py-2">
-                {(
-                  [
-                    ['review', '错题回看'],
-                    ['notes', '错题本'],
-                    ['favorites', '收藏'],
-                  ] as const
-                ).map(([tab, label]) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setDrawerTab(tab)}
-                    className={cn(
-                      'rounded-lg px-3 py-1.5 text-xs transition-colors',
-                      drawerTab === tab
-                        ? 'bg-surface-subtle font-medium text-content-primary'
-                        : 'text-content-muted hover:text-content-primary'
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setDrawerOpen(false)}
-                  className="ml-auto rounded-md p-1.5 text-content-muted transition-colors hover:bg-surface-subtle hover:text-content-primary"
-                  aria-label="关闭抽屉"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <div className="flex flex-wrap gap-2 px-4 py-3">
-                  {drawerTab === 'favorites' ? (
-                    <span className={CHIP}>已收藏 <b>{favoriteCount}</b></span>
-                  ) : (
-                    <>
-                      <span className={CHIP}>待回看 <b>{dueCount}</b></span>
-                      <span className={CHIP}>薄弱考点 <b>{noteCount > 0 ? notes?.filter((n) => n.lapses >= 1 || n.mastery < 0.3).length ?? 0 : 0}</b></span>
-                    </>
-                  )}
-                </div>
-                {drawerTab === 'notes' ? (
-                  <NoteList onChanged={refreshAll} />
-                ) : drawerTab === 'review' ? (
-                  <ReviewCard
-                    onChanged={refreshAll}
-                    onRestudy={(note) => void handleRestudy(note)}
-                    onDrill={(note) => void handleDrill(note)}
-                  />
-                ) : (
-                  <FavoriteList onChanged={refreshAll} />
-                )}
-              </div>
-            </aside>
-          </div>
-        )}
+        {/* 错题本/复习/收藏浮层:原右侧抽屉改居中宽弹窗(方案 C) */}
+        <StudyPanelDialog
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          tab={drawerTab}
+          onTab={setDrawerTab}
+          dueCount={dueCount}
+          weakCount={weakCount}
+          favoriteCount={favoriteCount}
+          onChanged={refreshAll}
+          onRestudy={(note) => void handleRestudy(note)}
+          onDrill={(note) => void handleDrill(note)}
+          initialMode={drawerMode}
+          topicFilter={drawerTopic}
+          onClearTopic={() => setDrawerTopic(null)}
+        />
+
+        {/* 复习统计弹层(阶段三方案B:小组件/统计 chip 进入) */}
+        <ReviewStatsDialog
+          open={statsOpen}
+          onClose={() => setStatsOpen(false)}
+          stats={stats ?? null}
+          loading={statsPending}
+          onSpecialize={handleSpecialize}
+          onOpenPlan={() => {
+            setStatsOpen(false)
+            setPlanOpen(true)
+          }}
+        />
+
+        {/* 考前冲刺计划弹层(阶段四方案A:生成表单/按日勾销) */}
+        <PlanDialog
+          open={planOpen}
+          onClose={() => setPlanOpen(false)}
+          plan={plan}
+          loading={planPending}
+          creating={creatingPlan}
+          onToggleItem={(id, done) => void handleToggleItem(id, done)}
+          onCreate={handleCreatePlan}
+          onEndPlan={() => void handleEndPlan()}
+        />
       </div>
     </div>
   )

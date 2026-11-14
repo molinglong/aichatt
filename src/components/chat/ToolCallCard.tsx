@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useState } from 'react'
-import { BookOpen, Brain, Calculator, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Fish, Globe, Link2, ListTodo, Loader2, Plug, ScrollText, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
+import { BookOpen, BookX, Brain, Calculator, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Fish, Globe, Link2, ListTodo, Loader2, Plug, ScrollText, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UIMessage } from 'ai'
 import { ClarifyCard } from './ClarifyCard'
@@ -38,6 +38,7 @@ import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME, type PracticeToolOutput } from '@
 import { PAPER_SEARCH_TOOL_NAME, PAPER_ANALYZE_TOOL_NAME, COMPOSE_PAPER_TOOL_NAME, type PaperSearchOutput, type PaperAnalyzeOutput, type ComposePaperOutput } from '@/lib/ai/paper-tool'
 import { KnowledgeDetail, OutlineDetail, PracticeDetail, CalcDetail, PaperDetail, PaperAnalysisDetail, ComposeDetail } from './ToolDetailBlocks'
 import { TODO_TOOL_NAME, type TodoToolOutput } from '@/lib/ai/todo-tool'
+import { SAVE_WRONG_QUESTION_TOOL_NAME, type SaveWrongQuestionToolOutput } from '@/lib/ai/wrong-question-tool'
 import { URL_READER_TOOL_NAME, type UrlReaderOutput } from '@/lib/ai/url-reader'
 import { CALC_TOOL_NAME, type CalcOutput } from '@/lib/ai/calc-tool'
 import { TIME_TOOL_NAME, type TimeToolOutput } from '@/lib/ai/time-tool'
@@ -621,6 +622,21 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
       text = failed ? '待办操作未生效' : '待办操作'
     }
     return <ToolRow icon={<ListTodo className="w-3.5 h-3.5" />} text={text} streaming={view.state === 'input-streaming'} failed={failed} />
+  }
+
+  // 错题本存入:一行式卡片;服务端写库(captureStudyNote 幂等),这里只展示
+  if (view.tool === SAVE_WRONG_QUESTION_TOOL_NAME) {
+    const wOut = view.output as SaveWrongQuestionToolOutput | undefined
+    const wFailed = view.state === 'output-error' || !!wOut?.error
+    const wPending = view.state === 'input-streaming' || view.state === 'input-available'
+    const wText = wPending
+      ? '正在存入错题本…'
+      : wFailed
+        ? '存入错题本未生效'
+        : wOut?.created
+          ? `已存入错题本「${wOut.title || '题目'}」，进入今日复习队列`
+          : '该题此前已存入错题本'
+    return <ToolRow icon={<BookX className="w-3.5 h-3.5" />} text={wText} streaming={wPending} failed={wFailed} />
   }
 
   // 课本目录:一行式卡片;完成后显示“几本 / 几个框题”,展开看章-节-框题树

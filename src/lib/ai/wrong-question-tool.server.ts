@@ -5,10 +5,11 @@
  * lib/study/note-capture.ts 的 captureStudyNote（幂等键 sourceMessageId，
  * 与手动存入/学习归档/题库转卡同一套口径），后台 AI 打标兜底。
  *
- * sourceMessageId 用惰性 getter：工厂创建时草稿消息行尚未建立（convId /
- * draftMessageId 都在其后赋值），首次 execute 时已确定（与 writeCodeTool
- * 拿 convId 同款惰性单例）。同一 assistant 回合只建一张卡——用户在同一
- * 回合里重复说「存」，幂等命中不会重复建卡。
+ * sourceMessageId = 本轮用户消息 id，由 route 传惰性 getter 提供：工具工厂创建时
+ * 用户消息行可能尚未落库（同 writeCodeTool 的 convId 惰性单例），首次 execute 时已
+ * 确定。学习室会话由 getter 经 resolveStudySourceMessageId 映射到首条用户消息 id
+ * ——AI 存入、气泡右键手动存入、结课自动归档三者命中同一张卡（note-capture 幂等
+ * 口径统一）。同一回合里重复说「存」，幂等命中不会重复建卡。
  */
 import { tool } from 'ai'
 import {
@@ -19,7 +20,7 @@ import { captureStudyNote } from '@/lib/study/note-capture'
 
 export function createSaveWrongQuestionTool(
   userId: string,
-  getSourceMessageId: () => string | null
+  getSourceMessageId: () => Promise<string | null> | string | null
 ) {
   return tool({
     description:
@@ -36,7 +37,7 @@ export function createSaveWrongQuestionTool(
           [answerParts.join('\n'), input.analysis].filter(Boolean).join('\n\n') || null
         const row = await captureStudyNote({
           userId,
-          sourceMessageId: getSourceMessageId(),
+          sourceMessageId: await getSourceMessageId(),
           question: input.question,
           analysis,
           subject: input.subject ?? null,

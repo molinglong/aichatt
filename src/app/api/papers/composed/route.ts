@@ -1,7 +1,8 @@
 /**
  * 智能拟卷（真题重组卷）：
  * - GET  /api/papers/composed  本用户拟卷列表(学习台拟卷区块 + /papers/composed 列表页共用)
- * - POST /api/papers/composed  组卷（底卷模式=同位换题 / 大纲模式=slotDefs 逐桶填充；只用有官方答案且未拉黑的题）
+ * - POST /api/papers/composed  组卷（底卷模式=同位换题 / 大纲模式=slotDefs 逐桶填充；真题槽只用有官方答案且未拉黑的题；
+ *   aiFillAll=true 时真题池为空也放行,缺口按 fillInline 预算 AI 拟题补齐——四路资源 grounding,卷面逐题标注来源）
  * 鉴权:登录。写入类 API——临时模式/对比模式前端不提供入口;归属校验在引擎内按 userId 过滤。
  * 与 /api/papers/[slug]（原卷预览）互不干扰:静态段 composed 优先于动态 [slug]。
  */
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
   const userId = await getUserId(req)
   if (!userId) return Response.json({ error: "unauthorized" }, { status: 401 })
 
-  let body: { subject?: string; baseSlug?: string; onlyChoice?: boolean; allowAiAnswers?: boolean; slotDefs?: unknown; focusTopics?: unknown; perTopic?: unknown; extraRandom?: unknown; fillInline?: { textbook?: number; aiVariant?: number }; modelId?: string; title?: string }
+  let body: { subject?: string; baseSlug?: string; onlyChoice?: boolean; allowAiAnswers?: boolean; slotDefs?: unknown; focusTopics?: unknown; perTopic?: unknown; extraRandom?: unknown; fillInline?: { textbook?: number; aiVariant?: number }; modelId?: string; title?: string; note?: string; aiFillAll?: boolean }
   try {
     body = await req.json()
   } catch {
@@ -87,6 +88,8 @@ export async function POST(req: NextRequest) {
         }
       : undefined
   const modelId = typeof body.modelId === "string" && body.modelId.trim() ? body.modelId.trim() : undefined
+  // 表单「给 AI 的备注」:仅 AI 补题时进 prompt,不落库(≤200 字)
+  const note = typeof body.note === "string" && body.note.trim() ? body.note.trim().slice(0, 200) : undefined
 
   const result = await composePaper(userId, {
     subject,
@@ -97,13 +100,20 @@ export async function POST(req: NextRequest) {
     focusTopics,
     fillInline,
     modelId,
+    aiFillAll: !!body.aiFillAll,
     perTopic,
     extraRandom,
+    note,
     title: typeof body.title === "string" ? body.title.slice(0, 60) : undefined,
   })
   if (!result.ok) {
-    // no_pool=该科没有带官方答案的题(422,业务现实);no_base=底卷定位失败;bad_outline=大纲槽位无效
+    // no_pool=该科没有带官方答案的题且未走 AI 兜底(422,业务现实);no_base=底卷定位失败;bad_outline=大纲槽位无效
     return Response.json({ error: result.reason ?? "compose_failed" }, { status: 422 })
   }
-  return Response.json({ id: result.composedId, title: result.title, shortages: result.shortages ?? [] })
+  return Response.json({
+    id: result.composedId,
+    title: result.title,
+    shortages: result.shortages ?? [],
+    filledInline: result.filledInline ?? { textbook: 0, aiVariant: 0 },
+  })
 }

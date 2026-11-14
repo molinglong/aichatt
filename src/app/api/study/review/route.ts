@@ -5,7 +5,8 @@ import { scheduleReview, type ReviewRating } from '@/lib/study/fsrs'
 
 /**
  * POST /api/study/review - 复习自评
- * body: { noteId, rating: 'again' | 'good' }
+ * body: { noteId, rating: 'again' | 'good', source?: 'redo' | 'variant' }
+ * source 缺省=翻卡手动自评;redo=重做题库原题判分,variant=同考点变式判分(写入 ReviewLog.source 供统计)。
  * → FSRS 排期 + 掌握度更新 + ReviewLog 落库
  * → lapses 首次达到 2 时写入 learning_gap 长期记忆(source='manual' → 始终注入对话)
  */
@@ -16,13 +17,14 @@ export async function POST(req: NextRequest) {
   }
   const userId = session.user.id
 
-  let body: { noteId?: string; rating?: string }
+  let body: { noteId?: string; rating?: string; source?: string }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: '请求体不是合法的 JSON' }, { status: 400 })
   }
   const rating: ReviewRating = body.rating === 'good' ? 'good' : 'again'
+  const source = body.source === 'redo' || body.source === 'variant' ? body.source : null
   if (!body.noteId) {
     return NextResponse.json({ error: '缺少 noteId' }, { status: 400 })
   }
@@ -59,6 +61,7 @@ export async function POST(req: NextRequest) {
           rating: next.ratingValue,
           masteryBefore: before,
           masteryAfter: next.mastery,
+          source,
         },
       }),
     ])
@@ -91,6 +94,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       id: updated.id,
       mastery: updated.mastery,
+      masteryBefore: before,
       reps: updated.reps,
       lapses: updated.lapses,
       dueAt: updated.dueAt,

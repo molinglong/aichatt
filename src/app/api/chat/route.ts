@@ -49,10 +49,12 @@ import { createPracticeTool, createRecordPracticeTool } from "@/lib/ai/practice-
 import { hasQuestions } from "@/lib/study/question-bank"
 import {
   SAVE_WRONG_QUESTION_TOOL_NAME,
+  SAVE_WRONG_QUESTION_TOOL_PROMPT,
+  SAVE_WRONG_QUESTION_DISABLED_PROMPT,
 } from "@/lib/ai/wrong-question-tool"
 import { createSaveWrongQuestionTool } from "@/lib/ai/wrong-question-tool.server"
 import { STUDY_COMPLETE_MARKER, getStudyAction, isStudyComplete, stripStudyMarker } from "@/lib/study/lesson-flow"
-import { archiveStudyLesson } from "@/lib/study/archive-lesson"
+import { archiveStudyLesson, resolveStudySourceMessageId } from "@/lib/study/archive-lesson"
 import { CLARIFY_TOOL_NAME, CLARIFY_TOOL_PROMPT, createClarifyTool } from "@/lib/ai/clarify"
 import {
   LOCAL_FILE_TOOL_NAME,
@@ -1243,6 +1245,15 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     systemParts.push(TODO_DISABLED_PROMPT)
   }
 
+  // 错题本存入:非临时非对比模式注入 save_wrong_question 工具+规则。
+  // 学习模式会话同样可用(幂等键映射到首条用户消息,与结课归档共卡);
+  // 临时模式不注入(错题属长期数据),注入降级提示防虚构;游戏回合同样不注入。
+  if (!isEphemeral && !groupId && !isGameMask) {
+    systemParts.push(SAVE_WRONG_QUESTION_TOOL_PROMPT)
+  } else if (!groupId && !isGameMask) {
+    systemParts.push(SAVE_WRONG_QUESTION_DISABLED_PROMPT)
+  }
+
   // Style prompt - 按 preset 渲染(新版)
   systemParts.push(getStylePromptFromPreset(effectiveStylePreset))
 
@@ -1432,6 +1443,20 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     !isEphemeral && !groupId && !isGameMask ? createMaskGeneratorTool() : null
   const todoTool =
     !isEphemeral && !groupId && !isGameMask ? createTodoTool(userId) : null
+  // 错题本存入:非临时非对比模式注入。幂等键=本轮用户消息 id(学习室由 getter 映射到
+  // 首条用户消息,与气泡右键手动存入、结课自动归档共卡);savedUserMessageId 在下方
+  // 用户消息落库处赋值,首execute前必已确定;续跑轮无新用户消息时 getter 返回 null。
+  const saveWrongQuestionTool =
+    !isEphemeral && !groupId && !isGameMask
+      ? createSaveWrongQuestionTool(userId, async () => {
+          if (!savedUserMessageId) return null
+          try {
+            return await resolveStudySourceMessageId(userId, savedUserMessageId)
+          } catch {
+            return savedUserMessageId
+          }
+        })
+      : null
   const writeDocTool =
     !isEphemeral && !groupId && !isGameMask ? createWriteDocTool(userId) : null
   // 代码文档落库需要 conversationId,但新对话的 convId 在下方才解析:
@@ -2000,6 +2025,9 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // 「只重答这条」: 被编辑 user 行的原 createdAt/库 id,用于草稿行时间插槽(见下)
   let editedUserCreatedAt: Date | null = null
   let editedUserId: string | null = null
+  // 本轮用户消息 id(落库处赋值):save_wrong_question 工具的幂等键来源;
+  // 与气泡右键手动存入同键,同一条用户消息 AI 存过、用户再手动存不会重复建卡。
+  let savedUserMessageId: string | null = null
 
   // Persist the last user message before streaming
   // 续跑轮跳过:此时消息数组里最后一条 user 消息是本轮原始问题(不是新消息),
@@ -2080,7 +2108,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
         }
       }
       if (!editedUserCreatedAt) {
-        await prisma.message.create({
+        const savedUserMsg = await prisma.message.create({
           data: {
             conversationId: convId,
             role: "user",
@@ -2093,6 +2121,10 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
               : {}),
           },
         })
+        savedUserMessageId = savedUserMsg.id
+      } else if (editedUserId) {
+        // 只重答:用户行就地改写未换行,幂等键保持原行 id(与原回合存卡同键)
+        savedUserMessageId = editedUserId
       }
     }
   }
@@ -2339,6 +2371,9 @@ const result = streamText({
             ...(memoryTool ? { [MEMORY_TOOL_NAME]: memoryTool } : {}),
             ...(maskGeneratorTool ? { [MASK_TOOL_NAME]: maskGeneratorTool } : {}),
             ...(todoTool ? { [TODO_TOOL_NAME]: todoTool } : {}),
+            ...(saveWrongQuestionTool
+              ? { [SAVE_WRONG_QUESTION_TOOL_NAME]: saveWrongQuestionTool }
+              : {}),
             ...(writeDocTool ? { [WRITE_DOC_TOOL_NAME]: writeDocTool } : {}),
             ...(writeCodeTool ? { [WRITE_CODE_TOOL_NAME]: writeCodeTool() } : {}),
             ...(tripTool ? { [TRIP_TOOL_NAME]: tripTool } : {}),

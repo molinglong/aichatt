@@ -5,15 +5,18 @@
  * 数据全部由父组件 props 下发,不自取数;无数据时优雅空态。
  */
 
-/** 掌握度环:StudyNote.mastery 均值(0-1);无笔记时灰环空态 */
+/** 复习统计卡(阶段三方案B:「知识掌握」环升级):均掌握度环 + 连击天数,点击开统计弹层 */
 export function MasteryWidget({
   masteryAvg,
   noteCount,
-  onOpenNotes,
+  streakDays,
+  onOpenStats,
 }: {
   masteryAvg: number | null
   noteCount: number
-  onOpenNotes: () => void
+  /** 连续复习天数(stats 接口;加载中/无数据为 null) */
+  streakDays: number | null
+  onOpenStats: () => void
 }) {
   const has = masteryAvg !== null
   const pct = has ? Math.round(masteryAvg * 100) : 0
@@ -21,8 +24,8 @@ export function MasteryWidget({
   return (
     <button
       type="button"
-      onClick={onOpenNotes}
-      title={has ? `平均掌握度 ${pct}%,点开错题本` : '学完第一题,掌握度就会出现在这里'}
+      onClick={onOpenStats}
+      title={has ? `平均掌握度 ${pct}%,点开复习统计` : '学完第一题,掌握度就会出现在这里'}
       className="glass-blur flex flex-1 items-center gap-3 rounded-[14px] border border-line/60 bg-surface-glass px-4 py-3 text-left transition-colors hover:border-line-strong"
     >
       <svg viewBox="0 0 52 52" className="h-[52px] w-[52px] shrink-0" aria-hidden>
@@ -52,9 +55,13 @@ export function MasteryWidget({
         </text>
       </svg>
       <div className="min-w-0">
-        <div className="text-[13px] font-semibold leading-tight text-content-primary">知识掌握</div>
-        <div className="mt-0.5 text-[11.5px] text-content-muted">
-          {has ? `${noteCount} 个知识点` : '还没有数据'}
+        <div className="text-[13px] font-semibold leading-tight text-content-primary">复习统计</div>
+        <div className="mt-0.5 truncate text-[11.5px] text-content-muted">
+          {has
+            ? streakDays != null && streakDays > 0
+              ? `${pct}% 均掌握 · 连续 ${streakDays} 天`
+              : `${pct}% 均掌握 · ${noteCount} 个考点`
+            : '还没有数据'}
         </div>
       </div>
     </button>

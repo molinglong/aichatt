@@ -1,6 +1,9 @@
-/* 拟卷卷面 —— 字体改版「霞鹜文楷全卷」定案(design/preview-paper-fonts.html 用户已挑,替换原方案A 三体仿真):
-   全卷唯一字体 = 霞鹜文楷屏幕版(本地打包 woff2,层级靠字重/字号),材料块左细线锚定。
-   纪律:黑白打印禁灰阶(纸面元素只用纯黑)、正文 ≥10.5pt(现 11.5pt);纸面恒白,页面底色随主题。 */
+/* 拟卷卷面 —— 字体改版「四体仿真 · 方案B」定案(2026-11-14,design/preview-paper-fonts-v2.html 用户授权按推荐落):
+   宋体正文 / 黑体标题·题号·徽标 / 楷体位材料(文楷顶位,桌面手机渲染一致) / 仿宋卷头信息。
+   四体走 Windows 系统字体零打包(SimSun/SimHei/FangSong 不可嵌 woff2);手机端回退文楷体系(wenkai-screen.css 保留)。
+   黑体一律 font-weight:400 不加粗(单字重字体 faux bold 发糊,真卷惯例);数字随正文字体(宋体自带半角数字)。
+   上一版「霞鹜文楷全卷」(preview-paper-fonts.html 方案三)作废。
+   纪律:黑白打印禁灰阶(纸面元素只用纯黑)、正文 ≥10.5pt(现 12pt);纸面恒白,页面底色随主题。 */
 
 .scroller {
   scrollbar-width: thin;
@@ -41,9 +44,9 @@
   padding: 14mm 15mm;
   border-radius: 12px;
   box-shadow: 0 2px 14px rgb(0 0 0 / 0.1);
-  font-family: 'LXGW WenKai Screen', 'KaiTi', '楷体', serif;
-  font-size: 11.5pt;
-  line-height: 1.7;
+  font-family: 'SimSun', '宋体', 'Noto Serif SC', 'LXGW WenKai Screen', 'KaiTi', '楷体', serif;
+  font-size: 12pt;
+  line-height: 1.8;
   overflow-wrap: break-word;
 }
 @media (max-width: 760px) {
@@ -71,40 +74,45 @@
   padding-bottom: 10px;
 }
 .examTag {
-  font-size: 10.5pt;
+  font-size: 11pt;
   letter-spacing: 0.5px;
+  font-family: 'FangSong', '仿宋', 'FangSong_GB2312', 'STFangsong', 'LXGW WenKai Screen', serif;
 }
 .paperTitle {
-  font-size: 17pt;
-  font-weight: 700;
+  font-family: 'SimHei', '黑体', 'Noto Sans SC', sans-serif;
+  font-size: 16pt;
+  font-weight: 400;
   line-height: 1.4;
   margin: 4px 0 6px;
 }
 .paperMeta {
-  font-size: 10.5pt;
+  font-size: 11pt;
+  font-family: 'FangSong', '仿宋', 'FangSong_GB2312', 'STFangsong', 'LXGW WenKai Screen', serif;
 }
 .paperMeta span {
   margin: 0 10px;
 }
 
-/* 大题头(全卷文楷,层级靠字重字号) */
+/* 大题头:黑体(真卷惯例),不加粗 */
 .sectionHead {
+  font-family: 'SimHei', '黑体', 'Noto Sans SC', sans-serif;
   font-size: 12.5pt;
-  font-weight: 700;
+  font-weight: 400;
   margin: 14px 0 8px;
   line-height: 1.5;
 }
 .sectionNote {
-  font-size: 10.5pt;
+  font-size: 11pt;
   font-weight: 400;
 }
 
-/* 材料(文楷同族+左细线锚定,材料只排一次) */
+/* 材料:楷体位 = 文楷顶位(屏幕调优,桌面/手机一致)+左细线锚定,材料只排一次 */
 .material {
   margin: 10px 0;
   padding: 2px 0 2px 14px;
   border-left: 2.5px solid #c9c9cf;
-  line-height: 1.8;
+  font-family: 'LXGW WenKai Screen', 'KaiTi', '楷体', serif;
+  line-height: 1.9;
   text-align: justify;
   break-inside: avoid;
 }
@@ -112,10 +120,13 @@
 .srcBadge {
   font-size: 9pt;
   letter-spacing: 0.5px;
+  font-family: 'SimHei', '黑体', 'Noto Sans SC', sans-serif;
+  font-weight: 400;
 }
 
 .materialTag {
-  font-weight: 700;
+  font-family: 'SimHei', '黑体', 'Noto Sans SC', sans-serif;
+  font-weight: 400;
 }
 
 /* 拖拽落点指示线(仅拖动中存在;accent 屏显示能,非纸面内容) */
@@ -172,22 +183,21 @@
   break-inside: avoid;
 }
 .qText {
-  font-size: 11.5pt;
   line-height: 1.75;
   text-align: justify;
   white-space: pre-wrap;
 }
 .qNo {
-  font-weight: 700;
+  font-family: 'SimHei', '黑体', 'Noto Sans SC', sans-serif;
+  font-weight: 400;
   margin-right: 4px;
 }
 .opts {
   margin: 2px 0 0 1.6em;
-  font-size: 11.5pt;
   line-height: 1.85;
 }
 .scoreTag {
-  font-size: 9.5pt;
+  font-size: 10pt;
   vertical-align: super;
 }
 
@@ -250,8 +260,9 @@
 /* ── 答案页 ────────────────────────────────────────── */
 .ansHead {
   text-align: center;
+  font-family: 'SimHei', '黑体', 'Noto Sans SC', sans-serif;
   font-size: 15pt;
-  font-weight: 700;
+  font-weight: 400;
   margin-bottom: 4px;
 }
 .ansSrc {
@@ -273,7 +284,8 @@
   overflow-wrap: anywhere;
 }
 .ansCellK {
-  font-weight: 700;
+  font-family: 'SimHei', '黑体', 'Noto Sans SC', sans-serif;
+  font-weight: 400;
 }
 .ansDetail {
   margin-top: 14px;
@@ -283,7 +295,8 @@
   break-inside: avoid;
 }
 .ansDt {
-  font-weight: 700;
+  font-family: 'SimHei', '黑体', 'Noto Sans SC', sans-serif;
+  font-weight: 400;
   margin-bottom: 2px;
 }
 .ansDd {

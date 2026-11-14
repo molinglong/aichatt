@@ -11,14 +11,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, FileText, Loader2, Plus, X } from 'lucide-react'
+import { ChevronLeft, FileText, Plus, Sparkles, X } from 'lucide-react'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
 import { ClientOnly } from '@/components/ClientOnly'
+import { confirmDialog } from '@/components/ui/ConfirmDialog'
 import { fetchJson } from '@/lib/query/fetcher'
 import { providersModelsQuery, isModelAvailable, providerKeysStatusQuery } from '@/lib/query/providers'
 import { queryKeys } from '@/lib/query/keys'
 import { toast } from '@/lib/toast'
 import { SUBJECT_LABELS } from '@/lib/study/subject-labels'
+import ComposeGenerating from '@/components/papers/ComposeGenerating'
 import { dateRel, type ComposedPaperListItem } from '@/components/study/StudyHome'
 
 const TOPBAR_H = 52
@@ -27,67 +29,107 @@ type SlotRow = { section: string; kind: 'choice' | 'answer'; score: number; coun
 
 const KIND_LABEL: Record<SlotRow['kind'], string> = { choice: '选择题', answer: '解答/填空' }
 
-/** 槽位行编辑器:大题名/题型/分值/题数,可增删;分值题数越界自动钳回 */
-function SlotRows({ rows, onChange }: { rows: SlotRow[]; onChange: (rows: SlotRow[]) => void }) {
+const rowsTotal = (rows: ReadonlyArray<{ score: number; count: number }>) => rows.reduce((s, r) => s + r.score * r.count, 0)
+const rowsCount = (rows: ReadonlyArray<{ count: number }>) => rows.reduce((s, r) => s + r.count, 0)
+
+/** 按现有分值比例把整卷配平到目标总分:比例缩放取整后,差额在大分值行逐次找平(够不到就停在最近值) */
+function balanceRows(rows: SlotRow[], target: number): SlotRow[] {
+  const cur = rowsTotal(rows)
+  if (!target || cur <= 0 || cur === target) return rows
+  const ratio = target / cur
+  let next = rows.map((r) => ({ ...r, score: Math.min(60, Math.max(1, Math.round(r.score * ratio))) }))
+  let diff = rowsTotal(next) - target
+  let guard = 60
+  while (diff !== 0 && guard-- > 0) {
+    let ai = 0
+    for (let k = 1; k < next.length; k++) if (next[k].score > next[ai].score) ai = k
+    if (diff > 0) {
+      if (next[ai].score <= 1) break
+      next = next.map((r, k) => (k === ai ? { ...r, score: r.score - 1 } : r))
+      diff -= next[ai].count
+    } else {
+      next = next.map((r, k) => (k === ai ? { ...r, score: r.score + 1 } : r))
+      diff += next[ai].count
+    }
+  }
+  return next
+}
+
+/**
+ * 大纲表:大题名/题型/每题分/题数/小计 + 删行;表头桌面显示,移动端两行布局(名一行,控制一行)。
+ * 分值越界自动钳回(1-60,写作满分需要);小计与合计实时算,目标总分在表外的合计行操作。
+ */
+function OutlineTable({ rows, onChange }: { rows: SlotRow[]; onChange: (rows: SlotRow[]) => void }) {
   const patch = (i: number, p: Partial<SlotRow>) => onChange(rows.map((r, k) => (k === i ? { ...r, ...p } : r)))
+  const gridCls = 'grid grid-cols-[minmax(0,1fr)_64px_56px_48px_52px_26px] items-center gap-1.5 max-md:grid-cols-[64px_50px_44px_48px_26px]'
   return (
     <div>
-      <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="text-[10px] text-content-muted">大纲（每行一个大题；某档真题不够有多少放多少，缺口提交后提示）</span>
-      </div>
-      <div className="space-y-1.5">
-        {rows.map((r, i) => (
-          <div key={i} className="grid grid-cols-[minmax(0,1fr)_72px_46px_46px_26px] items-center gap-1.5 max-md:grid-cols-[64px_46px_46px_26px]">
-            <input
-              value={r.section}
-              onChange={(e) => patch(i, { section: e.target.value.slice(0, 30) })}
-              placeholder={`大题名（${KIND_LABEL[r.kind]}）`}
-              className="h-8 min-w-0 rounded-lg border border-line bg-surface px-2 text-[12px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent max-md:col-span-4"
-              aria-label="大题名"
-            />
-            <select
-              value={r.kind}
-              onChange={(e) => patch(i, { kind: e.target.value as SlotRow['kind'] })}
-              className="h-8 rounded-lg border border-line bg-surface px-1 text-[11.5px] text-content-primary outline-none focus:border-accent"
-              aria-label="题型"
-            >
-              <option value="choice">选择</option>
-              <option value="answer">解答</option>
-            </select>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={r.score}
-              onChange={(e) => patch(i, { score: Math.min(30, Math.max(1, Math.round(Number(e.target.value) || 1))) })}
-              className="h-8 rounded-lg border border-line bg-surface px-1.5 text-center text-[12px] text-content-primary outline-none focus:border-accent"
-              aria-label="每题分值"
-            />
-            <input
-              type="number"
-              min={1}
-              max={20}
-              value={r.count}
-              onChange={(e) => patch(i, { count: Math.min(20, Math.max(1, Math.round(Number(e.target.value) || 1))) })}
-              className="h-8 rounded-lg border border-line bg-surface px-1.5 text-center text-[12px] text-content-primary outline-none focus:border-accent"
-              aria-label="题数"
-            />
-            <button
-              type="button"
-              onClick={() => onChange(rows.length > 1 ? rows.filter((_, k) => k !== i) : rows)}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-content-muted transition-colors hover:bg-surface-subtle hover:text-content-primary disabled:opacity-40"
-              disabled={rows.length <= 1}
-              aria-label="删除该大题"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ))}
+      <div className="rounded-[10px] border border-line bg-surface px-1.5 py-1">
+        <div className={`${gridCls} border-b border-line px-1 pb-1.5 max-md:hidden`}>
+          <span className="text-[11px] font-semibold text-content-muted">大题名</span>
+          <span className="text-[11px] font-semibold text-content-muted">题型</span>
+          <span className="text-center text-[11px] font-semibold text-content-muted">每题分</span>
+          <span className="text-center text-[11px] font-semibold text-content-muted">题数</span>
+          <span className="text-center text-[11px] font-semibold text-content-muted">小计</span>
+          <span />
+        </div>
+        <div>
+          {rows.map((r, i) => (
+            <div key={i} className={`${gridCls} border-b border-line/60 px-1 py-1.5 last:border-b-0`}>
+              <input
+                value={r.section}
+                onChange={(e) => patch(i, { section: e.target.value.slice(0, 30) })}
+                placeholder={`大题名（${KIND_LABEL[r.kind]}）`}
+                className="h-8 min-w-0 rounded-lg border border-line bg-surface px-2 text-[12.5px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent max-md:col-span-5"
+                aria-label="大题名"
+              />
+              <select
+                value={r.kind}
+                onChange={(e) => patch(i, { kind: e.target.value as SlotRow['kind'] })}
+                className="h-8 rounded-lg border border-line bg-surface px-1 text-[12px] text-content-primary outline-none focus:border-accent"
+                aria-label="题型"
+              >
+                <option value="choice">选择</option>
+                <option value="answer">解答</option>
+              </select>
+              <input
+                type="number"
+                min={1}
+                max={60}
+                value={r.score}
+                onChange={(e) => patch(i, { score: Math.min(60, Math.max(1, Math.round(Number(e.target.value) || 1))) })}
+                className="h-8 rounded-lg border border-line bg-surface px-1.5 text-center text-[12.5px] text-content-primary outline-none focus:border-accent"
+                aria-label="每题分值"
+              />
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={r.count}
+                onChange={(e) => patch(i, { count: Math.min(20, Math.max(1, Math.round(Number(e.target.value) || 1))) })}
+                className="h-8 rounded-lg border border-line bg-surface px-1.5 text-center text-[12.5px] text-content-primary outline-none focus:border-accent"
+                aria-label="题数"
+              />
+              <span className="whitespace-nowrap text-center text-[12px] tabular-nums text-content-secondary">
+                <b className="font-semibold text-content-primary">{r.score * r.count}</b> 分
+              </span>
+              <button
+                type="button"
+                onClick={() => onChange(rows.length > 1 ? rows.filter((_, k) => k !== i) : rows)}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-content-muted transition-colors hover:bg-surface-subtle hover:text-content-primary disabled:opacity-40"
+                disabled={rows.length <= 1}
+                aria-label="删除该大题"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
       <button
         type="button"
         onClick={() => onChange([...rows, { section: '', kind: rows[rows.length - 1]?.kind ?? 'choice', score: 3, count: 5 }])}
-        className="mt-1.5 w-full rounded-lg border border-dashed border-line-strong py-1.5 text-[11.5px] text-content-secondary transition-colors hover:text-content-primary"
+        className="mt-1.5 w-full rounded-lg border border-dashed border-line-strong py-1.5 text-[12px] text-content-secondary transition-colors hover:text-content-primary"
       >
         ＋ 加一个大题
       </button>
@@ -121,8 +163,13 @@ function ComposedListContent() {
     { section: '', kind: 'answer', score: 8, count: 2 },
   ])
   const [title, setTitle] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  // 给 AI 的备注:真题不够走 AI 补题时进生成 prompt(组卷时瞬时生效,不落库)
+  const [note, setNote] = useState('')
+  // 目标总分:设置后可一键按分值比例配平;null = 不设限,合计行只显示当前总分
+  const [targetScore, setTargetScore] = useState<number | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  // no_pool 死路 → AI 出题兜底:命中过 no_pool 才显示「改用 AI 出题」;警告一次后会话内不再重复弹
+  const [noPoolHit, setNoPoolHit] = useState(false)
   // 模板:套用库内真题卷的结构快照(examType 分卷种 → 选卷 → 填充槽位行,可再手改);支持多选,结构取并集
   const [tplExamType, setTplExamType] = useState<string | null>(null)
   const [appliedSlugs, setAppliedSlugs] = useState<string[]>([])
@@ -137,6 +184,9 @@ function ComposedListContent() {
   const [fillTb, setFillTb] = useState(true)
   const [fillAi, setFillAi] = useState(true)
   const weakInitedRef = useRef(false)
+  // 组卷进行中:mode=纯真题(pool,快)/AI 补题(ai,慢),total=提交时刻的题数(动画示意用,固化不怕表单中途变化)
+  const [submitting, setSubmitting] = useState<null | { mode: 'ai' | 'pool'; total: number }>(null)
+  const formCardRef = useRef<HTMLDivElement>(null)
   const tplQuery = useQuery({
     queryKey: ['papers', 'base-structures', subject],
     queryFn: ({ signal }) =>
@@ -160,7 +210,7 @@ function ComposedListContent() {
     selected.forEach((t, ti) => {
       t.groups.forEach((g, gi) => {
         const key = `${g.section ?? ''}|${g.kind}|${g.score}`
-        const row = { section: g.section ?? '', kind: (g.kind === 'answer' ? 'answer' : 'choice') as 'choice' | 'answer', score: Math.min(30, Math.max(1, g.score)), count: Math.min(20, Math.max(1, g.count)), order: ti * 100 + gi }
+        const row = { section: g.section ?? '', kind: (g.kind === 'answer' ? 'answer' : 'choice') as 'choice' | 'answer', score: Math.min(60, Math.max(1, g.score)), count: Math.min(20, Math.max(1, g.count)), order: ti * 100 + gi }
         const cur = map.get(key)
         if (cur) cur.count = Math.max(cur.count, row.count)
         else map.set(key, row)
@@ -229,8 +279,43 @@ function ComposedListContent() {
     setManualTopic('')
   }
 
-  const submitCompose = useCallback(async () => {
+  // 学习台「去组一张卷」深链:带 ?compose=1 进来时自动展开组卷表单(与「＋ 组一张卷」同效)
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('compose') === '1') setFormOpen(true)
+  }, [])
+
+  // 从独立生成页「回去改改」/「离开等待」回来:恢复组卷表单状态(可能带错误提示),然后清键防重复恢复
+  useEffect(() => {
+    const raw = window.sessionStorage.getItem('composed-form-state')
+    if (!raw) return
+    window.sessionStorage.removeItem('composed-form-state')
+    try {
+      const { form, error } = JSON.parse(raw) as {
+        form: Partial<{ subject: string; rows: SlotRow[]; title: string; note: string; sourceMode: 'random' | 'focus'; picks: string[]; extraTopics: string[]; perTopic: number; extraRandom: number; fillTb: boolean; fillAi: boolean; targetScore: number | null; appliedSlugs: string[]; tplExamType: string | null }>
+        error: string | null
+      }
+      if (form.subject) setSubject(form.subject)
+      if (form.rows) setRows(form.rows)
+      if (form.title != null) setTitle(form.title)
+      if (form.note != null) setNote(form.note)
+      if (form.sourceMode) setSourceMode(form.sourceMode)
+      if (form.picks) { setPicks(form.picks); weakInitedRef.current = true }
+      if (form.extraTopics) setExtraTopics(form.extraTopics)
+      if (form.perTopic != null) setPerTopic(form.perTopic)
+      if (form.extraRandom != null) setExtraRandom(form.extraRandom)
+      if (form.fillTb != null) setFillTb(form.fillTb)
+      if (form.fillAi != null) setFillAi(form.fillAi)
+      if (form.targetScore !== undefined && form.targetScore !== null) setTargetScore(form.targetScore)
+      if (form.appliedSlugs) setAppliedSlugs(form.appliedSlugs)
+      if (form.tplExamType !== undefined) setTplExamType(form.tplExamType)
+      setFormOpen(true)
+      if (error) setFormError(error)
+    } catch { /* 损坏的暂存直接丢弃 */ }
+  }, [])
+
+  const submitCompose = useCallback(async (opts?: { aiFillAll?: boolean }) => {
     if (submitting) return
+    const aiFillAll = !!opts?.aiFillAll && !!defaultModelId
     const focusOn = sourceMode === 'focus'
     const sel = picks.filter(Boolean)
     // 针对我 + 无模板:按考点分组组卷(不用槽位行);其余场景走槽位行
@@ -249,24 +334,62 @@ function ComposedListContent() {
       setFormError('勾选至少一个薄弱考点（或手动输入考点）')
       return
     }
-    setSubmitting(true)
     setFormError(null)
+    setNoPoolHit(false)
+    formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     const payload: Record<string, unknown> = { subject, title: title.trim() || undefined }
+    if (note.trim()) payload.note = note.trim().slice(0, 200)
     if (useSlots) payload.slotDefs = defs
     if (focusOn) {
       payload.focusTopics = sel
       if (appliedSlugs.length === 0) {
         payload.perTopic = perTopic
         payload.extraRandom = extraRandom
-        payload.fillInline = { textbook: fillTb ? 9 : 0, aiVariant: fillAi ? 9 : 0 }
-        payload.modelId = defaultModelId
       }
     }
-    try {
-      const res = await fetchJson<{ id: string; shortages: Array<{ kind: string; score: number; requested: number; filled: number }> }>(
-        '/api/papers/composed',
-        { method: 'POST', json: payload, timeoutMs: 30_000 }
+    if (aiFillAll) {
+      // AI 兜底重试:整卷缺口都按 AI 拟题补,预算放宽到 30(远大于整卷题量);两种模式都带
+      payload.aiFillAll = true
+      payload.fillInline = { textbook: fillTb ? 30 : 0, aiVariant: fillAi || !fillTb ? 30 : 0 }
+      payload.modelId = defaultModelId
+    } else if (focusOn && appliedSlugs.length === 0) {
+      payload.fillInline = { textbook: fillTb ? 9 : 0, aiVariant: fillAi ? 9 : 0 }
+      payload.modelId = defaultModelId
+    }
+    if (aiFillAll) {
+      // AI 补题(约 1-3 分钟)跳独立生成页(design/preview-paper-compose-generating.html 方案 E,折中落定:
+      // 纯真题快模式留在卡内,慢模式才跳页);payload+meta 暂存 sessionStorage,由生成页发起请求,
+      // 表单状态一并暂存,失败「回去改改」/等待中离开都能回列表恢复
+      sessionStorage.setItem(
+        'composed-pending',
+        JSON.stringify({
+          payload,
+          meta: {
+            subjectLabel: SUBJECT_LABELS[subject as keyof typeof SUBJECT_LABELS] ?? subject,
+            total: Math.max(1, useSlots ? rowsCount(defs) : sel.length * perTopic + extraRandom),
+            score: useSlots ? rowsTotal(defs) : null,
+            sourceLabel: focusOn ? '围绕我的薄弱点' : '随机抽真题',
+          },
+        })
       )
+      sessionStorage.setItem(
+        'composed-form-state',
+        JSON.stringify({
+          form: { subject, rows, title, note, sourceMode, picks, extraTopics, perTopic, extraRandom, fillTb, fillAi, targetScore, appliedSlugs, tplExamType },
+          error: null,
+        })
+      )
+      setSubmitting(null)
+      router.push('/papers/composed/generating')
+      return
+    }
+    setSubmitting({ mode: 'pool', total: Math.max(1, useSlots ? rowsCount(defs) : sel.length * perTopic + extraRandom) })
+    try {
+      const res = await fetchJson<{
+        id: string
+        shortages: Array<{ kind: string; score: number; requested: number; filled: number }>
+        filledInline?: { textbook: number; aiVariant: number }
+      }>('/api/papers/composed', { method: 'POST', json: payload, timeoutMs: aiFillAll ? 300_000 : 30_000 })
       void qc.invalidateQueries({ queryKey: queryKeys.papers.composedList() })
       const shortageNote = (res.shortages ?? [])
         .map((s) =>
@@ -275,14 +398,39 @@ function ComposedListContent() {
             : `${KIND_LABEL[s.kind as SlotRow['kind']] ?? s.kind}${s.score}分 缺 ${s.requested - s.filled} 道`
         )
         .join('；')
-      if (shortageNote) toast.success(`组好了（${shortageNote}）`, { title: '拟卷' })
+      const inlineCount = (res.filledInline?.textbook ?? 0) + (res.filledInline?.aiVariant ?? 0)
+      const inlineNote = inlineCount > 0 ? `${shortageNote ? '；' : ''}AI 拟题补齐 ${inlineCount} 道（卷面已标注来源）` : ''
+      if (shortageNote || inlineNote) toast.success(`组好了（${shortageNote}${inlineNote}）`, { title: '拟卷' })
       router.push(`/papers/composed/${res.id}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : '组卷失败'
-      setFormError(msg === 'no_pool' ? '该科真题池还没有带官方答案的题，换个学科或先回聊天录入试卷' : msg)
-      setSubmitting(false)
+      if (msg === 'no_pool') {
+        setFormError(defaultModelId ? '该科真题池还没有带官方答案的题——可改用 AI 出题，或换个学科 / 先回聊天录入试卷' : '该科真题池还没有带官方答案的题，换个学科或先回聊天录入试卷')
+        setNoPoolHit(true)
+      } else {
+        setFormError(msg)
+      }
+      setSubmitting(null)
     }
-  }, [rows, subject, title, submitting, qc, router, sourceMode, picks, appliedSlugs, perTopic, extraRandom, fillTb, fillAi, defaultModelId])
+  }, [rows, subject, title, note, submitting, qc, router, sourceMode, picks, appliedSlugs, perTopic, extraRandom, fillTb, fillAi, defaultModelId])
+
+  /** no_pool 兜底入口:警告一次(整卷 AI 拟题非官方、四路资源依据、耗时较长)后带 aiFillAll 重试;
+   *  警示记号走 sessionStorage——同一浏览器会话确认过就不再弹第二次,进新会话才会再提醒 */
+  const retryWithAi = useCallback(async () => {
+    if (window.sessionStorage.getItem('composed-ai-warned') !== '1') {
+      const ok = await confirmDialog({
+        title: '改用 AI 出题组卷',
+        message:
+          '该科真题池暂无带官方答案的题，整卷题目与答案将由 AI 生成（非官方）。' +
+          '出题会依据你的课本库、错题本薄弱点、真题库风格与联网检索，卷面每道 AI 题都会标注来源；' +
+          '整卷生成约需 1-3 分钟。',
+        okText: 'AI 出题组卷',
+      })
+      if (!ok) return
+      window.sessionStorage.setItem('composed-ai-warned', '1')
+    }
+    void submitCompose({ aiFillAll: true })
+  }, [submitCompose])
 
   const handleBack = useCallback(() => {
     if (window.history.length > 1) router.back()
@@ -325,58 +473,54 @@ function ComposedListContent() {
             </button>
           </div>
 
-          {/* 组卷表单(展开时插在列表上方,列表下沉) */}
+          {/* 组卷表单(重做版·方案B 双栏工作台:左=卷子结构,右=白底设置栏;目标总分+AI备注;行话清零) */}
           {formOpen && (
-            <div className="glass-blur mb-4 rounded-[14px] border border-line/60 bg-surface-glass p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="text-[13px] font-bold text-content-primary">组一张卷</span>
-                <span className="text-[10.5px] text-content-muted">真题池填充 · 零拟题</span>
+            <div ref={formCardRef} className="glass-blur mb-4 scroll-mt-[60px] overflow-hidden rounded-[14px] border border-line/60 bg-surface-glass">
+              <div className="flex items-center gap-2 border-b border-line/60 px-4 py-3">
+                <span className="text-[14px] font-bold text-content-primary">组一张卷</span>
+                <span className="text-[10.5px] text-content-muted">真题重组</span>
+                <span className="ml-auto flex items-center gap-1.5 whitespace-nowrap rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] font-semibold text-accent">
+                  {submitting ? (
+                    <>
+                      <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                      {submitting.mode === 'ai' ? '正在组卷 · 约需 1-3 分钟' : '正在组卷 · 约几十秒'}
+                    </>
+                  ) : (
+                    <>
+                      {SUBJECT_LABELS[subject as keyof typeof SUBJECT_LABELS] ?? subject} · {rowsCount(rows)} 题 · {rowsTotal(rows)} 分
+                    </>
+                  )}
+                </span>
                 <button
                   type="button"
                   onClick={() => setFormOpen(false)}
-                  className="ml-auto rounded-md p-1 text-content-muted transition-colors hover:bg-surface-subtle hover:text-content-primary"
+                  disabled={!!submitting}
+                  className="rounded-md p-1 text-content-muted transition-colors hover:bg-surface-subtle hover:text-content-primary disabled:pointer-events-none disabled:opacity-40"
                   aria-label="收起表单"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="flex flex-col gap-3.5">
-                <div>
-                  <div className="mb-1.5 text-[10px] text-content-muted">学科</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {Object.entries(SUBJECT_LABELS).map(([key, label]) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => {
-                          setSubject(key)
-                          setTplExamType(null)
-                          setAppliedSlugs([])
-                        }}
-                        className={`rounded-full border px-3 py-1 text-[11.5px] transition-colors ${
-                          subject === key
-                            ? 'border-accent bg-accent-soft font-semibold text-accent'
-                            : 'border-line bg-surface text-content-secondary hover:text-content-primary'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
+              {submitting ? (
+                <ComposeGenerating mode={submitting.mode} total={submitting.total} />
+              ) : (
+              <div className="flex flex-col md:flex-row md:items-stretch">
+                {/* 左栏:卷子结构 */}
+                <div className="flex min-w-0 flex-col gap-2 p-4 md:flex-[1.45_1_0%]">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-[12.5px] font-bold text-content-primary">卷子结构</span>
+                    <span className="text-[10.5px] text-content-muted">每行一个大题；真题不够有多少放多少</span>
                   </div>
-                </div>
-                {/* 考试标准:点卷种 = 立即套用该标准下最完整真题的结构;也可再指定具体卷 */}
-                <div>
-                  <div className="mb-1.5 text-[10px] text-content-muted">
-                    考试标准（点卷种即套用该标准下最完整真题的结构，行可再手改；也可指定具体卷）
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-content-muted">套用真题结构</span>
                     <button
                       type="button"
                       onClick={() => {
                         setTplExamType(null)
+                        setAppliedSlugs([])
                         resetToCustom()
                       }}
-                      className={`rounded-full border px-3 py-1 text-[11.5px] transition-colors ${
+                      className={`rounded-full border px-2.5 py-0.5 text-[12px] transition-colors ${
                         !tplExamType
                           ? 'border-accent bg-accent-soft font-semibold text-accent'
                           : 'border-line bg-surface text-content-secondary hover:text-content-primary'
@@ -400,7 +544,7 @@ function ComposedListContent() {
                               applyTemplateSet([rep])
                             }
                           }}
-                          className={`rounded-full border px-3 py-1 text-[11.5px] transition-colors ${
+                          className={`rounded-full border px-2.5 py-0.5 text-[12px] transition-colors ${
                             tplExamType === et
                               ? 'border-accent bg-accent-soft font-semibold text-accent'
                               : 'border-line bg-surface text-content-secondary hover:text-content-primary'
@@ -413,14 +557,14 @@ function ComposedListContent() {
                     })}
                   </div>
                   {tplExamType && (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1.5">
                       {tplOfType.length === 0 && <span className="text-[11px] text-content-muted">该卷种下没有可套用的卷</span>}
                       {tplOfType.map((t) => (
                         <button
                           key={t.slug}
                           type="button"
                           onClick={() => toggleTemplate(t)}
-                          className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                          className={`rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors ${
                             appliedSlugs.includes(t.slug)
                               ? 'border-accent bg-accent-soft text-accent'
                               : 'border-line bg-surface text-content-secondary hover:text-content-primary'
@@ -434,171 +578,277 @@ function ComposedListContent() {
                     </div>
                   )}
                   {appliedSlugs.length > 0 && (
-                    <div className="mt-1.5 text-[10.5px] text-accent">
-                      已套用 {appliedSlugs.length} 张卷的结构{appliedSlugs.length > 1 ? '（并集：同大题取题数多的一档）' : ''}（行可手改）
+                    <div className="text-[11px] text-accent">
+                      已套用 {appliedSlugs.length} 张真题卷的结构（行可手改{sourceMode === 'focus' ? '；真题会优先匹配你勾的考点' : ''}）
                     </div>
                   )}
+                  {sourceMode === 'focus' && appliedSlugs.length === 0 ? (
+                    <div className="rounded-[10px] border border-accent/30 bg-accent-soft px-3 py-2 text-[11.5px] leading-relaxed text-content-secondary">
+                      这卷不套固定结构：<b className="text-accent">按你勾的考点自动分组</b>（大题名 = 考点名，每考点 {perTopic} 道
+                      {extraRandom > 0 ? `，卷尾加 ${extraRandom} 道巩固题` : ''}）。想固定结构就先点上面的「套用真题结构」。
+                    </div>
+                  ) : (
+                    <>
+                      <OutlineTable rows={rows} onChange={setRows} />
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                        <span className="text-[12.5px] text-content-secondary">
+                          合计 <b className="tabular-nums text-content-primary">{rowsCount(rows)}</b> 题 ·{' '}
+                          <b className="tabular-nums text-content-primary">{rowsTotal(rows)}</b> 分
+                        </span>
+                        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] text-content-muted">目标总分</span>
+                          <input
+                            type="number"
+                            min={10}
+                            max={720}
+                            value={targetScore ?? ''}
+                            onChange={(e) => setTargetScore(Number(e.target.value) || null)}
+                            placeholder="如 100"
+                            className="h-7 w-14 rounded-lg border border-line bg-surface px-1.5 text-center text-[12px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent"
+                            aria-label="目标总分"
+                          />
+                          {[100, 120, 150].map((p) => (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => {
+                                setTargetScore(p)
+                                setRows((prev) => balanceRows(prev, p))
+                              }}
+                              className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+                                targetScore === p
+                                  ? 'border-accent bg-accent-soft font-semibold text-accent'
+                                  : 'border-line bg-surface text-content-secondary hover:text-accent'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          ))}
+                          {targetScore != null && rowsTotal(rows) - targetScore !== 0 && (
+                            <>
+                              <span className="text-[11px] text-red-500">差 {Math.abs(rowsTotal(rows) - targetScore)} 分</span>
+                              <button
+                                type="button"
+                                onClick={() => setRows((prev) => balanceRows(prev, targetScore))}
+                                className="rounded-full border border-accent bg-accent-soft px-2.5 py-0.5 text-[11px] font-semibold text-accent transition-opacity hover:opacity-90"
+                              >
+                                按分值配平
+                              </button>
+                            </>
+                          )}
+                          {targetScore != null && rowsTotal(rows) - targetScore === 0 && (
+                            <span className="text-[11px] font-semibold text-accent">已配平 {targetScore} 分</span>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
-                {/* 题目来源:随机 / 针对我复习 */}
-                <div>
-                  <div className="mb-1.5 text-[10px] text-content-muted">题目来源</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setSourceMode('random')}
-                      className={`rounded-full border px-3 py-1 text-[11.5px] transition-colors ${
-                        sourceMode === 'random'
-                          ? 'border-accent bg-accent-soft font-semibold text-accent'
-                          : 'border-line bg-surface text-content-secondary hover:text-content-primary'
-                      }`}
-                    >
-                      随机抽题
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSourceMode('focus')}
-                      className={`rounded-full border px-3 py-1 text-[11.5px] transition-colors ${
-                        sourceMode === 'focus'
-                          ? 'border-accent bg-accent-soft font-semibold text-accent'
-                          : 'border-line bg-surface text-content-secondary hover:text-content-primary'
-                      }`}
-                    >
-                      针对我复习
-                    </button>
-                  </div>
-                </div>
-                {sourceMode === 'focus' && (
+
+                {/* 右栏:白底设置栏(学科/来源/备注/卷名/提交) */}
+                <div className="flex min-w-0 flex-col gap-3 border-t border-line/60 bg-surface p-4 md:flex-1 md:border-l md:border-t-0">
                   <div>
-                    <div className="mb-1.5 text-[10px] text-content-muted">
-                      你的薄弱考点（来自错题本与学习记录，按掌握度排；勾选要复习的）
+                    <div className="mb-1.5 text-[11.5px] font-semibold text-content-secondary">学科</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Object.entries(SUBJECT_LABELS).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => {
+                            setSubject(key)
+                            setTplExamType(null)
+                            setAppliedSlugs([])
+                          }}
+                          className={`rounded-full border px-3 py-1 text-[12px] transition-colors ${
+                            subject === key
+                              ? 'border-accent bg-accent-soft font-semibold text-accent'
+                              : 'border-line bg-surface text-content-secondary hover:text-content-primary'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
                     </div>
-                    {weakQuery.isLoading && <div className="text-[11px] text-content-muted">读取学习记录中…</div>}
-                    {!weakQuery.isLoading && allPoints.length === 0 && (
-                      <div className="text-[11px] leading-relaxed text-content-muted">
-                        错题本里还没有带考点的错题——先在学习台学几道题，或在下面手动输入考点
-                      </div>
-                    )}
-                    {allPoints.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {allPoints.map((w) => (
+                  </div>
+                  <div>
+                    <div className="mb-1.5 text-[11.5px] font-semibold text-content-secondary">题目来源</div>
+                    <div className="inline-flex w-fit rounded-[10px] border border-line bg-surface-subtle p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setSourceMode('random')}
+                        className={`rounded-lg px-3 py-1 text-[12px] transition-colors ${
+                          sourceMode === 'random'
+                            ? 'bg-surface font-semibold text-content-primary'
+                            : 'text-content-secondary hover:text-content-primary'
+                        }`}
+                      >
+                        随机抽真题
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSourceMode('focus')}
+                        className={`rounded-lg px-3 py-1 text-[12px] transition-colors ${
+                          sourceMode === 'focus'
+                            ? 'bg-surface font-semibold text-content-primary'
+                            : 'text-content-secondary hover:text-content-primary'
+                        }`}
+                      >
+                        围绕我的薄弱点
+                      </button>
+                    </div>
+                    {sourceMode === 'focus' && (
+                      <div className="mt-2 rounded-[10px] border border-line bg-surface-subtle p-2.5">
+                        <div className="text-[11px] text-content-muted">
+                          你的薄弱考点（来自错题本与学习记录，按掌握度排；勾选要复习的）
+                        </div>
+                        {weakQuery.isLoading && <div className="mt-1.5 text-[11px] text-content-muted">读取学习记录中…</div>}
+                        {!weakQuery.isLoading && allPoints.length === 0 && (
+                          <div className="mt-1.5 text-[11px] leading-relaxed text-content-muted">
+                            错题本里还没有带考点的错题——先在学习台学几道题，或在下面手动输入考点
+                          </div>
+                        )}
+                        {allPoints.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {allPoints.map((w) => (
+                              <button
+                                key={w.label}
+                                type="button"
+                                onClick={() => togglePick(w.label)}
+                                className={`rounded-full border px-3 py-1 text-[12px] transition-colors ${
+                                  picks.includes(w.label)
+                                    ? 'border-accent bg-accent-soft font-semibold text-accent'
+                                    : 'border-line bg-surface text-content-secondary hover:text-content-primary'
+                                }`}
+                              >
+                                {w.label}
+                                {w.mastery != null && <span className="ml-1 text-[10px] opacity-70">{w.mastery}%</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-2 flex gap-1.5">
+                          <input
+                            value={manualTopic}
+                            onChange={(e) => setManualTopic(e.target.value.slice(0, 30))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                addManualTopic()
+                              }
+                            }}
+                            placeholder="手动加考点（如：文言断句）"
+                            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 text-[12.5px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent"
+                            aria-label="手动加考点"
+                          />
                           <button
-                            key={w.label}
                             type="button"
-                            onClick={() => togglePick(w.label)}
-                            className={`rounded-full border px-3 py-1 text-[11.5px] transition-colors ${
-                              picks.includes(w.label)
-                                ? 'border-accent bg-accent-soft font-semibold text-accent'
-                                : 'border-line bg-surface text-content-secondary hover:text-content-primary'
-                            }`}
+                            onClick={addManualTopic}
+                            className="h-8 shrink-0 rounded-lg border border-line px-3 text-[12px] text-content-secondary transition-colors hover:text-content-primary"
                           >
-                            {w.label}
-                            {w.mastery != null && <span className="ml-1 text-[10px] opacity-70">{w.mastery}%</span>}
+                            加
                           </button>
-                        ))}
-                      </div>
-                    )}
-                    <div className="mt-1.5 flex gap-1.5">
-                      <input
-                        value={manualTopic}
-                        onChange={(e) => setManualTopic(e.target.value.slice(0, 30))}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            addManualTopic()
-                          }
-                        }}
-                        placeholder="手动加考点（如：文言断句）"
-                        className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 text-[12px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent"
-                        aria-label="手动加考点"
-                      />
-                      <button
-                        type="button"
-                        onClick={addManualTopic}
-                        className="h-8 shrink-0 rounded-lg border border-line px-3 text-[11.5px] text-content-secondary transition-colors hover:text-content-primary"
-                      >
-                        加
-                      </button>
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                      <span className="flex items-center gap-2">
-                        <span className="text-[10px] text-content-muted">每个考点取</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={10}
-                          value={perTopic}
-                          onChange={(e) => setPerTopic(Math.min(10, Math.max(1, Math.round(Number(e.target.value) || 2))))}
-                          className="h-7 w-12 rounded-lg border border-line bg-surface px-1.5 text-center text-[12px] text-content-primary outline-none focus:border-accent"
-                          aria-label="每个考点题数"
-                        />
-                        <span className="text-[10px] text-content-muted">道</span>
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <span className="text-[10px] text-content-muted">另加随机巩固题</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={20}
-                          value={extraRandom}
-                          onChange={(e) => setExtraRandom(Math.min(20, Math.max(0, Math.round(Number(e.target.value) || 0))))}
-                          className="h-7 w-12 rounded-lg border border-line bg-surface px-1.5 text-center text-[12px] text-content-primary outline-none focus:border-accent"
-                          aria-label="随机巩固题数"
-                        />
-                        <span className="text-[10px] text-content-muted">道（放卷尾「巩固练习」）</span>
-                      </span>
-                    </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                      <span className="text-[10px] text-content-muted">真题不够时自动补齐：</span>
-                      <button
-                        type="button"
-                        onClick={() => setFillTb((v) => !v)}
-                        className={`rounded-full border px-3 py-1 text-[11.5px] transition-colors ${fillTb ? 'border-accent bg-accent-soft font-semibold text-accent' : 'border-line bg-surface text-content-secondary hover:text-content-primary'}`}
-                      >
-                        课本拟题
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFillAi((v) => !v)}
-                        className={`rounded-full border px-3 py-1 text-[11.5px] transition-colors ${fillAi ? 'border-accent bg-accent-soft font-semibold text-accent' : 'border-line bg-surface text-content-secondary hover:text-content-primary'}`}
-                      >
-                        AI 举一反三
-                      </button>
-                      <span className="text-[10px] text-content-muted">（补齐的题在卷面标注来源；AI 题答案为 AI 拟答）</span>
-                    </div>
-                    {appliedSlugs.length === 0 && (
-                      <div className="mt-1 text-[10.5px] leading-relaxed text-content-muted">
-                        卷子按考点分组（大题名 = 考点）；想套考试结构就选上面的模板，题目会优先匹配这些考点。
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                          <span className="flex items-center gap-1.5 text-[11px] text-content-muted">
+                            每个考点取
+                            <input
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={perTopic}
+                              onChange={(e) => setPerTopic(Math.min(10, Math.max(1, Math.round(Number(e.target.value) || 2))))}
+                              className="h-7 w-11 rounded-lg border border-line bg-surface px-1.5 text-center text-[12px] text-content-primary outline-none focus:border-accent"
+                              aria-label="每个考点题数"
+                            />
+                            道
+                          </span>
+                          <span className="flex items-center gap-1.5 text-[11px] text-content-muted">
+                            另加随机巩固
+                            <input
+                              type="number"
+                              min={0}
+                              max={20}
+                              value={extraRandom}
+                              onChange={(e) => setExtraRandom(Math.min(20, Math.max(0, Math.round(Number(e.target.value) || 0))))}
+                              className="h-7 w-11 rounded-lg border border-line bg-surface px-1.5 text-center text-[12px] text-content-primary outline-none focus:border-accent"
+                              aria-label="随机巩固题数"
+                            />
+                            道（放卷尾）
+                          </span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                          <span className="text-[11px] text-content-muted">真题不够时补：</span>
+                          <button
+                            type="button"
+                            onClick={() => setFillTb((v) => !v)}
+                            className={`rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors ${fillTb ? 'border-accent bg-accent-soft font-semibold text-accent' : 'border-line bg-surface text-content-secondary hover:text-content-primary'}`}
+                          >
+                            课本拟题
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFillAi((v) => !v)}
+                            className={`rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors ${fillAi ? 'border-accent bg-accent-soft font-semibold text-accent' : 'border-line bg-surface text-content-secondary hover:text-content-primary'}`}
+                          >
+                            AI 举一反三
+                          </button>
+                          <span className="text-[10.5px] text-content-muted">补的题在卷面标注来源</span>
+                        </div>
                       </div>
                     )}
                   </div>
-                )}
-                {!(sourceMode === 'focus' && appliedSlugs.length === 0) && <SlotRows rows={rows} onChange={setRows} />}
-                <div>
-                  <div className="mb-1.5 text-[10px] text-content-muted">卷名（不填自动命名）</div>
-                  <input
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value.slice(0, 60))}
-                    placeholder="如：语言运用专项 · 周五"
-                    className="h-9 w-full rounded-lg border border-line bg-surface px-3 text-[12.5px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent"
-                    aria-label="卷名"
-                  />
+                  <div>
+                    <div className="mb-1 text-[11.5px] font-semibold text-content-secondary">
+                      给 AI 的备注<span className="ml-1 font-normal text-content-muted">可选 · 真题不够 AI 补题时照办</span>
+                    </div>
+                    <textarea
+                      value={note}
+                      onChange={(e) => setNote(e.target.value.slice(0, 200))}
+                      rows={2}
+                      placeholder="例：挑考试里出现最多的题型；文言文部分多来两道"
+                      className="w-full resize-none rounded-[10px] border border-line bg-surface px-3 py-2 text-[12.5px] leading-relaxed text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent"
+                      aria-label="给AI的备注"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[11.5px] font-semibold text-content-secondary">
+                      卷名<span className="ml-1 font-normal text-content-muted">不填自动起</span>
+                    </div>
+                    <input
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value.slice(0, 60))}
+                      placeholder="如：语言运用专项 · 周五"
+                      className="h-9 w-full rounded-[10px] border border-line bg-surface px-3 text-[12.5px] text-content-primary outline-none transition-colors placeholder:text-content-muted focus:border-accent"
+                      aria-label="卷名"
+                    />
+                  </div>
+                  {formError && (
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11.5px] text-red-500">{formError}</div>
+                  )}
+                  {noPoolHit && !submitting && defaultModelId && (
+                    <button
+                      type="button"
+                      onClick={() => void retryWithAi()}
+                      className="flex h-9 w-full items-center justify-center gap-1.5 rounded-full border border-accent/60 bg-accent-soft text-[12px] font-semibold text-accent transition-opacity hover:opacity-90"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      改用 AI 出题组这张卷（依据课本 / 错题本 / 真题 / 联网）
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void submitCompose()}
+                    disabled={!!submitting}
+                    className="mt-auto flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-accent text-[12.5px] font-semibold text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    {sourceMode === 'focus' ? '组复习卷' : '组卷'}
+                  </button>
+                  <p className="text-[10.5px] leading-relaxed text-content-muted">
+                    题目与答案全部出自真题库；某档真题不够有多少放多少，缺口组好后如实提示。组好直接进卷面页（可打印 / 换题 / 标记「这题有误」）。
+                  </p>
                 </div>
-                {formError && (
-                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11.5px] text-red-500">{formError}</div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void submitCompose()}
-                  disabled={submitting}
-                  className="flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-accent text-[12.5px] font-semibold text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {sourceMode === 'focus' ? '组复习卷（真题池匹配薄弱点 · 零拟题）' : '组卷（真题池填充 · 零拟题）'}
-                </button>
-                <p className="text-[10px] leading-relaxed text-content-muted">
-                  全部题目与答案出自原卷真题；组好直接进卷面页（可打印/换题/「这题有误」）。模板 = 库内真题卷的结构快照（只管格式）；「针对我复习」按你的薄弱考点选内容。底卷同位换题模式可回聊天让 AI 组。
-                </p>
               </div>
+              )}
             </div>
           )}
 

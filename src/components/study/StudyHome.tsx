@@ -4,11 +4,25 @@
  * 学习台(E+ 三宫格方案):打开 /study 的第一屏。
  * v4 任务队列式首页(用户定稿):进行中的题(可多道)条卡列表在上(带上次讲到摘要+相对时间),
  * 今日复习区(复习卡+小组件列)居中,学新题虚线沉底;小组件列是 StudyWidgets 儿子组件。
+ * 2026-11-14 方案A:复习卡/小组件全页只渲染一份(删掉无进行中会话时的重复三分栏),
+ * 「学新题」通栏虚线按钮常驻;首屏数据未齐时整页骨架屏,不再闪零值空态。
+ * 原型:design/preview-study-home-loading.html
  */
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { SUBJECT_LABELS } from '@/lib/study/subject-labels'
 import { MasteryWidget, SessionCountWidget } from './StudyWidgets'
+
+/** 冲刺计划摘要(阶段四方案A:学习台常驻条卡;详情在 PlanDialog) */
+export interface StudyPlanSummary {
+  title: string
+  examDate: string
+  /** 今天应做的项数与已完成数(父组件从 plan items 聚合) */
+  todayTotal: number
+  todayDone: number
+  totalItems: number
+  totalDone: number
+}
 
 export interface StudySessionListItem {
   id: string
@@ -35,20 +49,31 @@ export interface ComposedPaperListItem {
 interface Props {
   sessions: StudySessionListItem[]
   dueCount: number
+  /** 到期卡里可重做题库原题的张数(入口卡副行「其中 M 道可重做」) */
+  dueRedoCount: number
   noteCount: number
   favoriteCount: number
   kbCount: number
   /** StudyNote.mastery 均值(0-1);无笔记为 null */
   masteryAvg: number | null
+  /** 连续复习天数(stats 接口;加载中为 null) */
+  streakDays: number | null
   /** 累计学习场次(列表接口 total) */
   totalSessions: number
+  /** 当前生效冲刺计划摘要;null = 无计划不渲染冲刺条 */
+  activePlan: StudyPlanSummary | null
   /** 拟卷列表(createdAt 倒序全量,组件内取最近 3 张);空 = 区块与 chip 都不渲染 */
   papers: ComposedPaperListItem[]
+  /** 会话列表单独刷新中(整页骨架屏由 booting 承担,这里只管会话区块的重取态) */
   loading: boolean
+  /** 首屏数据未齐(list/queue/notes/favorites/kb/papers 任一仍在首取):整页骨架屏,不渲染零值 */
+  booting: boolean
   onResume: (id: string) => void
   /** text = 输入框里已敲的题目,带进 setup 预填 */
   onNew: (text?: string) => void
-  onOpenDrawer: (tab: 'review' | 'notes' | 'favorites') => void
+  onOpenDrawer: (tab: 'review' | 'notes' | 'favorites', mode?: 'flip' | 'redo') => void
+  onOpenStats: () => void
+  onOpenPlan: () => void
 }
 
 function shortTitle(q: string): string {
@@ -98,10 +123,21 @@ function RepeatIcon() {
   )
 }
 
-function PencilIcon() {
+function TargetIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="5" />
+      <circle cx="12" cy="12" r="1" />
+    </svg>
+  )
+}
+
+function PlusIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
     </svg>
   )
 }
@@ -139,21 +175,57 @@ function SecLabel({ children, count, unit = '道进行中' }: { children: React.
 export function StudyHome({
   sessions,
   dueCount,
+  dueRedoCount,
   noteCount,
   favoriteCount,
   kbCount,
   masteryAvg,
+  streakDays,
   totalSessions,
+  activePlan,
   papers,
   loading,
+  booting,
   onResume,
   onNew,
   onOpenDrawer,
+  onOpenStats,
+  onOpenPlan,
 }: Props) {
   const router = useRouter()
   // sessions 已按 updatedAt 倒序;进行中的题全部露出(v4:不再只取最近一道)
   const inProgress = sessions.filter((s) => s.status === 'explaining')
-  const continueTarget = inProgress[0]
+
+  // 首屏骨架屏(方案A):形状对齐数据到达后的布局,加载中不再闪「0 场 / 还没有数据」
+  if (booting) {
+    return (
+      <div className="h-full min-h-0 overflow-y-auto">
+        <div className="mx-auto max-w-[860px] px-7 py-7">
+          <div className="study-sk h-[22px] w-32 rounded-md" />
+          <div className="study-sk mt-2.5 h-3 w-56 rounded-md" />
+          <div className="mb-5 mt-6">
+            <div className="study-sk mb-2 h-[11px] w-16 rounded-sm" />
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_216px]">
+              <div className="study-sk h-[150px] rounded-[14px]" />
+              <div className="flex flex-col gap-3">
+                <div className="study-sk h-[72px] rounded-[14px]" />
+                <div className="study-sk h-[72px] rounded-[14px]" />
+              </div>
+            </div>
+          </div>
+          <div className="study-sk mb-5 h-12 rounded-[14px]" />
+          <div className="study-sk mb-2 h-[46px] rounded-[14px]" />
+          <div className="study-sk mb-2 h-[46px] w-[78%] rounded-[14px]" />
+          <div className="mt-4 flex gap-2">
+            <div className="study-sk h-[29px] w-16 rounded-full" />
+            <div className="study-sk h-[29px] w-16 rounded-full" />
+            <div className="study-sk h-[29px] w-16 rounded-full" />
+            <div className="study-sk h-[29px] w-16 rounded-full" />
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="h-full min-h-0 overflow-y-auto">
@@ -202,13 +274,46 @@ export function StudyHome({
           </div>
         )}
 
-        {/* ── 今日复习区:复习卡 + 小组件列 ── */}
+        {/* ── 冲刺计划条(阶段四方案A:active 计划常驻;点开按日勾销弹层) ── */}
+        {activePlan && (
+          <div className="mb-5">
+            <SecLabel>考前冲刺</SecLabel>
+            <button
+              type="button"
+              onClick={onOpenPlan}
+              className="group glass-blur flex w-full items-center gap-3.5 rounded-[14px] border border-accent/50 bg-surface-glass px-4 py-3 text-left transition-all duration-150 hover:-translate-y-px hover:border-accent"
+            >
+              <IconBadge>
+                <TargetIcon />
+              </IconBadge>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[14px] font-semibold text-content-primary">{activePlan.title}</span>
+                <span className="mt-0.5 block truncate text-xs text-content-muted">
+                  距考试 {Math.max(0, Math.round((new Date(`${activePlan.examDate}T00:00:00`).getTime() - new Date(new Date().setHours(0, 0, 0, 0)).getTime()) / 86_400_000))} 天
+                  {activePlan.todayTotal > 0
+                    ? ` · 今日已完成 ${activePlan.todayDone}/${activePlan.todayTotal}`
+                    : ' · 今天还没有任务'}
+                </span>
+              </span>
+              <span className="h-1.5 w-16 flex-none overflow-hidden rounded-full bg-surface-subtle">
+                <span
+                  className="block h-full rounded-full bg-accent"
+                  style={{ width: `${activePlan.totalItems > 0 ? (activePlan.totalDone / activePlan.totalItems) * 100 : 0}%` }}
+                />
+              </span>
+              <span className="inline-flex flex-none items-center gap-1.5 rounded-full bg-accent px-3.5 py-[7px] text-[12.5px] font-semibold text-accent-foreground transition-transform duration-150 group-hover:translate-x-0.5">
+                打开
+                <ArrowRightIcon size={12} />
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* ── 今日复习区:复习卡(单卡双出口,阶段一方案A)+ 小组件列 ── */}
         <div className="mb-5">
           <SecLabel>今日复习</SecLabel>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_216px]">
-            <button
-              type="button"
-              onClick={() => onOpenDrawer('review')}
+            <div
               className="group glass-blur flex flex-col items-start gap-1 rounded-[14px] border border-line/60 bg-surface-glass p-4 text-left transition-all duration-150 hover:-translate-y-px hover:border-line-strong"
             >
               <IconBadge>
@@ -218,17 +323,34 @@ export function StudyHome({
                 {dueCount > 0 ? `今日复习 ${dueCount} 张` : '暂无到期卡片'}
               </b>
               <span className="text-xs text-content-muted">
-                {dueCount > 0 ? '按记忆曲线自动排期' : '学新题会自动排期'}
+                {dueCount > 0
+                  ? dueRedoCount > 0
+                    ? `到期 ${dueCount} · 其中 ${dueRedoCount} 道可重做题库原题`
+                    : '按记忆曲线自动排期 · 核对式自评'
+                  : '学新题会自动排期'}
               </span>
-              <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-[7px] text-[13px] font-semibold text-accent-foreground transition-transform duration-150 group-hover:translate-x-0.5">
-                {dueCount > 0 ? '开始复习' : '看看队列'}
-                <ArrowRightIcon />
+              <span className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenDrawer('review', 'flip')}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-accent px-3.5 py-[6px] text-[12.5px] font-semibold text-accent transition-colors hover:bg-accent-soft"
+                >
+                  翻卡速览
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenDrawer('review', 'redo')}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-[7px] text-[12.5px] font-semibold text-accent-foreground transition-transform duration-150 hover:opacity-90"
+                >
+                  重做练习
+                  <ArrowRightIcon size={12} />
+                </button>
               </span>
-            </button>
+            </div>
 
             {/* 小组件列(儿子组件,props 下发) */}
             <div className="flex flex-col gap-3">
-              <MasteryWidget masteryAvg={masteryAvg} noteCount={noteCount} onOpenNotes={() => onOpenDrawer('notes')} />
+              <MasteryWidget masteryAvg={masteryAvg} noteCount={noteCount} streakDays={streakDays} onOpenStats={onOpenStats} />
               <SessionCountWidget totalSessions={totalSessions} />
             </div>
           </div>
@@ -239,6 +361,23 @@ export function StudyHome({
           <div className="mb-5">
             <SecLabel count={papers.length} unit="张">拟卷练习</SecLabel>
             <div className="space-y-2.5">
+              {/* 首行 CTA(方案A 虚线行动条,design/preview-study-compose-cta.html):与「＋ 学新题」同语言,跳列表页并自动展开组卷表单 */}
+              <button
+                type="button"
+                onClick={() => router.push('/papers/composed?compose=1')}
+                className="group flex w-full items-center gap-3.5 rounded-[14px] border-[1.5px] border-dashed border-line-strong px-4 py-3 text-left transition-all duration-150 hover:-translate-y-px hover:border-solid hover:border-accent hover:bg-accent-soft"
+              >
+                <span
+                  className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[12px] border-[1.5px] border-dashed border-line-strong text-accent transition-colors duration-150 group-hover:border-accent group-hover:bg-accent group-hover:text-accent-foreground"
+                  aria-hidden="true"
+                >
+                  <PlusIcon />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] font-semibold text-accent">去组一张卷</span>
+                  <span className="mt-0.5 block truncate text-xs text-content-muted">真题重组 · 也可让 AI 补题</span>
+                </span>
+              </button>
               {papers.slice(0, 3).map((p) => (
                 <button
                   key={p.id}
@@ -276,54 +415,10 @@ export function StudyHome({
           </div>
         )}
 
-        {/* ── 学新题:有进行中时通栏虚线;没有时用入口卡承担 ── */}
-        {continueTarget && (
-          <button type="button" onClick={() => onNew()} className="study-newq-btn glass-blur mb-5 w-full">
-            ＋ 学新题
-          </button>
-        )}
-        {!continueTarget && (
-          <div className="mb-3.5 grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_216px]">
-            <button
-              type="button"
-              onClick={() => onNew()}
-              className="group glass-blur flex flex-col items-start gap-1 rounded-[14px] border border-line/60 bg-surface-glass p-4 text-left transition-all duration-150 hover:-translate-y-px hover:border-line-strong"
-            >
-              <IconBadge>
-                <PencilIcon />
-              </IconBadge>
-              <b className="w-full truncate text-[15px] font-semibold leading-snug text-content-primary">学新题</b>
-              <span className="text-xs text-content-muted">贴题或传图，选个起点开讲</span>
-              <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-[7px] text-[13px] font-semibold text-accent-foreground transition-transform duration-150 group-hover:translate-x-0.5">
-                开始
-                <ArrowRightIcon />
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenDrawer('review')}
-              className="group glass-blur flex flex-col items-start gap-1 rounded-[14px] border border-line/60 bg-surface-glass p-4 text-left transition-all duration-150 hover:-translate-y-px hover:border-line-strong"
-            >
-              <IconBadge>
-                <RepeatIcon />
-              </IconBadge>
-              <b className="w-full truncate text-[15px] font-semibold leading-snug text-content-primary">
-                {dueCount > 0 ? `今日复习 ${dueCount} 张` : '暂无到期卡片'}
-              </b>
-              <span className="text-xs text-content-muted">
-                {dueCount > 0 ? '按记忆曲线自动排期' : '学新题会自动排期'}
-              </span>
-              <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-[7px] text-[13px] font-semibold text-accent-foreground transition-transform duration-150 group-hover:translate-x-0.5">
-                {dueCount > 0 ? '开始复习' : '看看队列'}
-                <ArrowRightIcon />
-              </span>
-            </button>
-            <div className="flex flex-col gap-3">
-              <MasteryWidget masteryAvg={masteryAvg} noteCount={noteCount} onOpenNotes={() => onOpenDrawer('notes')} />
-              <SessionCountWidget totalSessions={totalSessions} />
-            </div>
-          </div>
-        )}
+        {/* ── 学新题:通栏虚线按钮常驻(方案A:空态/有进行中同一形态,重复三分栏已删) ── */}
+        <button type="button" onClick={() => onNew()} className="study-newq-btn glass-blur mb-5 w-full">
+          ＋ 学新题
+        </button>
 
         {/* ── 学习会话历史:全量列表(进行中的带蓝徽章,与上方区呼应) ── */}
         <div className="mt-5">
@@ -367,6 +462,9 @@ export function StudyHome({
           </button>
           <button type="button" className="flex items-baseline gap-1.5 rounded-full border border-line bg-surface-subtle/60 px-3.5 py-1.5 text-xs text-content-muted transition-colors hover:border-line-strong hover:text-content-primary" onClick={() => onOpenDrawer('favorites')}>
             <b className="text-[13px] font-semibold tabular-nums text-content-primary">{favoriteCount}</b>收藏
+          </button>
+          <button type="button" className="flex items-baseline gap-1.5 rounded-full border border-line bg-surface-subtle/60 px-3.5 py-1.5 text-xs text-content-muted transition-colors hover:border-line-strong hover:text-content-primary" onClick={onOpenStats}>
+            复习统计 ›
           </button>
           <button type="button" className="flex items-baseline gap-1.5 rounded-full border border-line bg-surface-subtle/60 px-3.5 py-1.5 text-xs text-content-muted transition-colors hover:border-line-strong hover:text-content-primary" onClick={() => router.push('/kb')}>
             <b className="text-[13px] font-semibold tabular-nums text-content-primary">{kbCount}</b>课本

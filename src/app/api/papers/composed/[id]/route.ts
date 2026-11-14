@@ -14,6 +14,7 @@ import {
   replaceSlot,
   removeSlot,
   insertSlot,
+  insertInlineSlot,
   flagSlot,
   reshufflePaper,
   retitlePaper,
@@ -39,7 +40,11 @@ const statusFor = (reason: string) =>
           reason === "bad_score" ||
           reason === "bad_duration" ||
           reason === "bad_section" ||
-          reason === "bad_order"
+          reason === "bad_order" ||
+          reason === "bad_kind" ||
+          reason === "bad_stem" ||
+          reason === "bad_answer" ||
+          reason === "bad_options"
         ? 400
         : 500
 
@@ -70,6 +75,13 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     durationMin?: number
     allow?: boolean
     orderedSlotIds?: unknown
+    // insert_inline(举一反三变式入卷):内联 AI 拟题内容
+    stem?: string
+    options?: unknown
+    answer?: string
+    kind?: string
+    sourceRef?: string
+    section?: string
   }
   try {
     body = await req.json()
@@ -91,6 +103,30 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       if (!body.paperQuestionId) return Response.json({ error: "need_paperQuestionId" }, { status: 400 })
       // afterSlotId = 中途加题(插到该槽正后方);不传 = 大题组末尾(原有语义)
       result = await insertSlot(userId, id, body.paperQuestionId, typeof body.afterSlotId === "string" ? body.afterSlotId : undefined)
+      break
+    case "insert_inline":
+      // 举一反三变式入卷:内联 AI 拟题槽(引擎内轻校验题型/长度/选项数)
+      if (
+        typeof body.stem !== "string" ||
+        typeof body.answer !== "string" ||
+        typeof body.kind !== "string" ||
+        typeof body.score !== "number"
+      )
+        return Response.json({ error: "need_inline_fields" }, { status: 400 })
+      result = await insertInlineSlot(
+        userId,
+        id,
+        {
+          stem: body.stem,
+          options: Array.isArray(body.options) ? (body.options as unknown[]).filter((x): x is string => typeof x === "string") : [],
+          answer: body.answer,
+          kind: body.kind,
+          score: body.score,
+          sourceRef: typeof body.sourceRef === "string" ? body.sourceRef : undefined,
+          section: typeof body.section === "string" ? body.section : undefined,
+        },
+        typeof body.afterSlotId === "string" ? body.afterSlotId : undefined
+      )
       break
     case "flag":
       result = await flagSlot(userId, id, slotId)

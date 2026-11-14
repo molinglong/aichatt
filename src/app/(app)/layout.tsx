@@ -36,14 +36,15 @@ export default async function AppLayout({
   // 安全区让位从 app-frame 下移到 <main>(2026-10-07 灰条修复):让位带此前由 frame 的
   // pt-[var(--sat)] 呈现,露出的是 frame 自己的 bg-surface-muted 灰(#F5F5F7/#262628)——
   // 状态栏灰条即它。移到 main 后,让位带由 app-shell-column(bg-surface 白)呈现,
-  // 顶部与页面同色。仅 ≤md 让位:md:p-1.5 本就盖过 sat,桌面端零变化。
+  // 顶部与页面同色。仅 ≤md 让位,桌面端无状态栏零变化。
   // 内容列 relative:承接桌面端浮动工具簇(TopBar ≥md 分支)
   return (
-    <div className="app-frame h-screen bg-surface-muted p-0 md:p-1.5 overflow-hidden">
+    <div className="app-frame h-screen bg-surface-muted overflow-hidden">
       {/* app-shell 加 relative isolate: 收拢层叠上下文。
-          底色用 muted 不用 surface: shell 只在浮动侧栏的四周缝隙露出来,取灰不取白,
-          否则侧栏外圈是一圈白板 */}
-      <div className="app-shell relative isolate h-full flex overflow-hidden rounded-none md:rounded-xl shadow-2xl border border-line bg-surface-muted">
+          2026-11-14 全贴边(用户定案):删掉桌面 6px 外框 + 1px 描边 + 圆角 + 浮卡大阴影,
+          应用内容直接贴住窗口四边 —— 与 google 样式的外框口径统一,「环/影只给浮层」
+          的总原则下壳体自身不再是浮层。桌面壳 [data-tauri] 的同款强制在 globals.css 一并归零 */}
+      <div className="app-shell relative isolate h-full flex overflow-hidden bg-surface-muted">
         {/* 壁纸层(主题 = 壁纸时可见): 无状态,显隐全由 html[data-wallpaper="on"] 驱动。
             照片一层 + 中间柔光一层。柔光默认 display:none —— 只在对话页出现
             (欢迎页曾经也有,会在屏幕正中印出一个白圆,已按用户要求去掉)。

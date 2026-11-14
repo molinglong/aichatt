@@ -23,7 +23,7 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ChevronLeft, GripVertical, Loader2, Printer, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { ChevronLeft, GripVertical, Loader2, Printer, RefreshCw, Search, Sparkles, Trash2, X } from 'lucide-react'
 import katex from 'katex'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
 import { ClientOnly } from '@/components/ClientOnly'
@@ -31,6 +31,7 @@ import { ComposedAssistant } from '@/components/papers/ComposedAssistant'
 import { confirmDialog } from '@/components/ui/ConfirmDialog'
 import { fetchJson } from '@/lib/query/fetcher'
 import { queryKeys } from '@/lib/query/keys'
+import { providersModelsQuery, isModelAvailable, providerKeysStatusQuery } from '@/lib/query/providers'
 import { toast } from '@/lib/toast'
 import styles from './ComposedPaper.module.css'
 // 卷面专用字体(霞鹜文楷屏幕版),仅本页引入;文件在 public/fonts/lxgw-wenkai-screen/
@@ -459,27 +460,164 @@ function SortableQuestionBlock({
 
 // ===================== 加题候选面板 =====================
 
+/** 举一反三变式预览(生成接口返回 + 前端动作状态) */
+interface VariantPreview {
+  stem: string
+  options: string[]
+  answer: string
+  kind: 'choice' | 'answer'
+  score: number
+  /** basic/medium/hard */
+  difficulty: string
+  sourceRef: string
+  /** 已收进题库(Question 练习题库) */
+  saved: boolean
+  /** 已加入本卷(内联 AI 拟题槽) */
+  added: boolean
+}
+
 function CandidatePanel({
   id,
+  subject,
   target,
   busyKey,
   onAdd,
+  onPatch,
   onClose,
 }: {
   id: string
+  /** 本卷学科(收进题库落 Question.subject 用) */
+  subject: string
   target: { section: string | null; kind: string; score: number; afterSlotId?: string; label?: string }
   busyKey: string | null
-  onAdd: (paperQuestionId: string) => void
+  /** 加入成功返回 true(失败 doPatch 已 toast,候选行原地保留) */
+  onAdd: (paperQuestionId: string) => boolean | Promise<boolean>
+  /** 卷面 PATCH 通道(= doPatch,举一反三「加入本卷」复用同一执行链) */
+  onPatch: (body: Record<string, unknown>, key: string) => Promise<boolean>
   onClose: () => void
 }) {
+  const qc = useQueryClient()
   const [q, setQ] = useState('')
   const [dq, setDq] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // 加入成功的过渡:灰显(held)→淡出(fading)→摘除。快照在手独立渲染,不受 refetch 摘题影响
+  const [ghosts, setGhosts] = useState<Array<{ item: CandidateItem; index: number; fading: boolean }>>([])
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
   useEffect(() => {
     const t = setTimeout(() => setDq(q.trim()), 250)
     return () => clearTimeout(t)
   }, [q])
   const searchMode = dq.length > 0
+
+  const handleAdd = async (c: CandidateItem, index: number) => {
+    const ok = await onAdd(c.id)
+    if (!ok) return
+    setGhosts((g) => [...g, { item: c, index, fading: false }])
+    setTimeout(() => {
+      setGhosts((g) => g.map((x) => (x.item.id === c.id ? { ...x, fading: true } : x)))
+      setTimeout(() => {
+        setGhosts((g) => g.filter((x) => x.item.id !== c.id))
+        setDismissed((s) => new Set(s).add(c.id))
+        // 灰卡退场后才失效候选缓存,让列表与卷面真实状态对齐(refetch 摘走该题)
+        qc.invalidateQueries({ queryKey: [...queryKeys.all, 'papers', 'composed', id, 'candidates'] })
+      }, 260)
+    }, 1400)
+  }
+
+  // ── 举一反三:按候选原题出 AI 变式(预览 → 收进题库 / 加入本卷) ──
+  // 模型口径与卷面助手一致:公共池优先,有 Key 的优先
+  const { data: allModels } = useQuery({ ...providersModelsQuery })
+  const { data: keyProviders } = useQuery<Set<string>>({ ...providerKeysStatusQuery })
+  const modelId = useMemo(() => {
+    if (!allModels) return null
+    const avail = keyProviders ? allModels.filter((m) => isModelAvailable(m, keyProviders)) : allModels
+    return avail.find((m) => m.publicPool)?.id || avail[0]?.id || null
+  }, [allModels, keyProviders])
+  // 生成状态按候选 id 存(面板重开即重置);同一时刻只允许一路生成,防连点烧额度
+  const [variantMap, setVariantMap] = useState<Record<string, { status: 'loading' | 'done' | 'error'; items: VariantPreview[] }>>({})
+  const genBusy = Object.values(variantMap).some((v) => v.status === 'loading')
+  const [savingVariant, setSavingVariant] = useState<string | null>(null)
+
+  const onVariants = async (c: CandidateItem) => {
+    if (genBusy || !modelId) return
+    setExpandedId(c.id)
+    setVariantMap((m) => ({ ...m, [c.id]: { status: 'loading', items: [] } }))
+    try {
+      const r = await fetchJson<{ variants: Array<Omit<VariantPreview, 'saved' | 'added'>> }>(
+        `/api/papers/composed/${id}/variants`,
+        { method: 'POST', json: { paperQuestionId: c.id, modelId }, timeoutMs: 120_000 }
+      )
+      setVariantMap((m) => ({
+        ...m,
+        [c.id]: { status: 'done', items: (r.variants ?? []).map((v) => ({ ...v, saved: false, added: false })) },
+      }))
+    } catch (err) {
+      console.error('[variants] generate failed:', err)
+      setVariantMap((m) => ({ ...m, [c.id]: { status: 'error', items: [] } }))
+    }
+  }
+
+  /** 收进题库:进 Question 练习题库(选择题题干按库规约合并选项行);部分成功语义由 save 端点兜底 */
+  const onSaveVariant = async (candId: string, vi: number) => {
+    const v = variantMap[candId]?.items[vi]
+    if (!v || v.saved || savingVariant) return
+    setSavingVariant(`${candId}:${vi}`)
+    try {
+      await fetchJson('/api/study/quiz/save', {
+        method: 'POST',
+        json: {
+          items: [
+            {
+              subject,
+              kind: v.kind,
+              stem: v.kind === 'choice' ? [v.stem, ...v.options].join('\n') : v.stem,
+              answer: v.answer,
+              difficulty: v.difficulty,
+              source: 'ai_generated',
+              sourceRef: v.sourceRef,
+            },
+          ],
+        },
+        timeoutMs: 30_000,
+      })
+      setVariantMap((m) => {
+        const st = m[candId]
+        if (!st) return m
+        return { ...m, [candId]: { ...st, items: st.items.map((x, i) => (i === vi ? { ...x, saved: true } : x)) } }
+      })
+      toast.success('已收进题库，练习抽题可以抽到它', { title: '举一反三' })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '入库失败，请重试', { title: '举一反三' })
+    } finally {
+      setSavingVariant(null)
+    }
+  }
+
+  /** 加入本卷:内联 AI 拟题槽(insert_inline),卷面带〔AI 拟题〕标注、答案页进 AI 参考答案标注体系 */
+  const onAddVariant = async (candId: string, vi: number) => {
+    const v = variantMap[candId]?.items[vi]
+    if (!v || v.added) return
+    const ok = await onPatch(
+      {
+        op: 'insert_inline',
+        stem: v.stem,
+        options: v.options,
+        answer: v.answer,
+        kind: v.kind,
+        score: v.score,
+        sourceRef: v.sourceRef,
+        section: target.section,
+        afterSlotId: target.afterSlotId,
+      },
+      `insert_inline:${candId}:${vi}`
+    )
+    if (!ok) return
+    setVariantMap((m) => {
+      const st = m[candId]
+      if (!st) return m
+      return { ...m, [candId]: { ...st, items: st.items.map((x, i) => (i === vi ? { ...x, added: true } : x)) } }
+    })
+  }
 
   // Esc 关闭(与 ConfirmDialog 同通道;遮罩点击/右上的 ✕ 也可关)
   useEffect(() => {
@@ -513,6 +651,16 @@ function CandidatePanel({
     const i = t.lastIndexOf('考试')
     return i >= 0 ? t.slice(i + 2) : t
   }
+
+  // 渲染序列:正常候选行 + 灰显过渡行(ghost),ghost 按加入时的位置钉回序列
+  const ghostIds = new Set(ghosts.map((g) => g.item.id))
+  const rows: Array<{ key: string; cand?: CandidateItem; ghost?: (typeof ghosts)[number]; index: number }> = [
+    ...(cands ?? [])
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => !ghostIds.has(c.id) && !dismissed.has(c.id))
+      .map(({ c, i }) => ({ key: c.id, cand: c, index: i })),
+    ...ghosts.map((g) => ({ key: `ghost:${g.item.id}`, ghost: g, index: g.index })),
+  ].sort((a, b) => a.index - b.index)
 
   return (
     <div
@@ -559,63 +707,176 @@ function CandidatePanel({
           </div>
         </div>
         <div className="mt-2 flex-1 overflow-y-auto px-2 pb-4">
-          {(cands ?? []).length === 0 && !isFetching ? (
+          {rows.length === 0 && !isFetching ? (
             <p className="px-3 py-8 text-center text-xs text-content-muted">
               题库里没有可加的题{searchMode ? '，换个关键词试试' : '，试试输入关键词搜索全库'}
             </p>
           ) : (
-            (cands ?? []).map((c, i) => {
+            rows.map((r, ri) => {
+              if (r.ghost) {
+                const g = r.ghost
+                return (
+                  <div
+                    key={r.key}
+                    className={`pointer-events-none flex items-center gap-2.5 rounded-xl px-3 py-2.5 transition-opacity duration-base ${ri > 0 ? 'border-t border-line/60' : ''} ${g.fading ? 'opacity-0' : 'opacity-45'}`}
+                  >
+                    <span
+                      className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-accent-soft text-[10.5px] font-bold tabular-nums text-accent"
+                      aria-hidden
+                    >
+                      {ri + 1}
+                    </span>
+                    <p className="min-w-0 flex-1 truncate text-[13px] text-content-muted">{g.item.stem}</p>
+                    <span className="mt-0.5 shrink-0 text-[11px] font-medium text-content-muted">✓ 已加入</span>
+                  </div>
+                )
+              }
+              const c = r.cand!
               const expanded = expandedId === c.id
+              const vs = variantMap[c.id]
               return (
                 <div
-                  key={c.id}
-                  className={`flex items-start gap-2.5 rounded-xl px-3 py-2.5 transition-colors hover:bg-surface-subtle/70 ${i > 0 ? 'border-t border-line/60' : ''}`}
+                  key={r.key}
+                  className={`group rounded-xl transition-colors hover:bg-surface-subtle/70 ${ri > 0 ? 'border-t border-line/60' : ''}`}
                 >
-                  <span
-                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10.5px] font-bold tabular-nums ${expanded ? 'bg-accent text-accent-foreground' : 'bg-accent-soft text-accent'}`}
-                    aria-hidden
-                  >
-                    {i + 1}
-                  </span>
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => setExpandedId((v) => (v === c.id ? null : c.id))}
-                    title={expanded ? '收起' : '查看完整题目'}
-                  >
-                    {expanded ? (
-                      <>
-                        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-content-primary">{c.fullStem}</p>
-                        {c.options.length > 0 && (
-                          <div className="mt-1.5 space-y-0.5 rounded-lg bg-surface-subtle/70 px-3 py-2">
-                            {c.options.map((o, oi) => (
-                              <div key={oi} className="text-[12.5px] leading-relaxed text-content-secondary">{o}</div>
-                            ))}
-                          </div>
-                        )}
-                        <span className="mt-1 inline-block text-[11px] font-medium text-accent">▲ 收起</span>
-                      </>
-                    ) : (
-                      <>
-                        <p className="truncate text-[13px] leading-relaxed text-content-primary">{c.stem}</p>
-                        <p className="mt-0.5 truncate text-[11px] text-content-muted">
-                          {shortSrc(c.paperTitle)} · 原卷第 {c.number} 题 · {c.score} 分
-                          {c.answerSource === 'ai' && <span className="ml-1.5 text-[10px] text-amber-600">AI 答案</span>}
-                        </p>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!!busyKey}
-                    onClick={() => onAdd(c.id)}
-                    className="mt-0.5 h-7 shrink-0 rounded-lg border border-accent bg-surface px-3 text-xs font-medium text-accent opacity-0 transition-all hover:bg-accent hover:text-white focus:opacity-100 disabled:opacity-50 group-hover:opacity-100"
-                    style={{ opacity: undefined }}
-                    onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.opacity = '' }}
-                  >
-                    {busyKey === `insert:${c.id}` ? '加入中…' : '加入'}
-                  </button>
+                  <div className="flex items-start gap-2.5 px-3 py-2.5">
+                    <span
+                      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10.5px] font-bold tabular-nums ${expanded ? 'bg-accent text-accent-foreground' : 'bg-accent-soft text-accent'}`}
+                      aria-hidden
+                    >
+                      {ri + 1}
+                    </span>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => setExpandedId((v) => (v === c.id ? null : c.id))}
+                      title={expanded ? '收起' : '查看完整题目'}
+                    >
+                      {expanded ? (
+                        <>
+                          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-content-primary">{c.fullStem}</p>
+                          {c.options.length > 0 && (
+                            <div className="mt-1.5 space-y-0.5 rounded-lg bg-surface-subtle/70 px-3 py-2">
+                              {c.options.map((o, oi) => (
+                                <div key={oi} className="text-[12.5px] leading-relaxed text-content-secondary">{o}</div>
+                              ))}
+                            </div>
+                          )}
+                          <span className="mt-1 inline-block text-[11px] font-medium text-accent">▲ 收起</span>
+                        </>
+                      ) : (
+                        <>
+                          <p className="truncate text-[13px] leading-relaxed text-content-primary">{c.stem}</p>
+                          <p className="mt-0.5 truncate text-[11px] text-content-muted">
+                            {shortSrc(c.paperTitle)} · 原卷第 {c.number} 题 · {c.score} 分
+                            {c.answerSource === 'ai' && <span className="ml-1.5 text-[10px] text-amber-600">AI 答案</span>}
+                          </p>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={genBusy || !modelId}
+                      onClick={() => void onVariants(c)}
+                      title={!modelId ? '没有可用的 AI 模型' : '举一反三 · 按这道题出 2 道变式'}
+                      aria-label="举一反三"
+                      className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-accent/70 bg-surface text-accent opacity-0 show-on-touch transition-all hover:bg-accent hover:text-white focus:opacity-100 disabled:opacity-50 group-hover:opacity-100"
+                    >
+                      {vs?.status === 'loading' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!!busyKey}
+                      onClick={() => handleAdd(c, r.index)}
+                      className="mt-0.5 h-7 shrink-0 rounded-lg border border-accent bg-surface px-3 text-xs font-medium text-accent opacity-0 show-on-touch transition-all hover:bg-accent hover:text-white focus:opacity-100 disabled:opacity-50 group-hover:opacity-100"
+                    >
+                      {busyKey === `insert:${c.id}` ? '加入中…' : '加入'}
+                    </button>
+                  </div>
+                  {vs && (
+                    <div className="pb-3 pl-[42px] pr-3">
+                      {vs.status === 'loading' && (
+                        <div className="flex items-center gap-2 rounded-lg bg-surface-subtle/70 px-3 py-2.5 text-xs text-content-muted">
+                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                          正在按这道题的考点出 2 道变式，约十几秒…
+                        </div>
+                      )}
+                      {vs.status === 'error' && (
+                        <div className="flex items-center gap-2 rounded-lg bg-surface-subtle/70 px-3 py-2.5 text-xs text-content-muted">
+                          变式生成失败
+                          <button
+                            type="button"
+                            disabled={genBusy || !modelId}
+                            onClick={() => void onVariants(c)}
+                            className="font-medium text-accent hover:underline disabled:opacity-50"
+                          >
+                            重试
+                          </button>
+                        </div>
+                      )}
+                      {vs.status === 'done' && vs.items.length === 0 && (
+                        <div className="rounded-lg bg-surface-subtle/70 px-3 py-2.5 text-xs text-content-muted">
+                          这次没生成出合格的变式，点「举一反三」再试一次
+                        </div>
+                      )}
+                      {vs.status === 'done' && vs.items.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10.5px] text-content-muted">
+                            AI 变式 · 收进题库进练习抽题池；加入本卷会带〔AI 拟题〕标注
+                          </p>
+                          {vs.items.map((v, vi) => (
+                            <div key={vi} className="rounded-xl border border-line/70 bg-surface px-3 py-2.5">
+                              <div className="flex items-center gap-2 text-[10.5px]">
+                                <span className="rounded-md bg-accent-soft px-1.5 py-0.5 font-semibold text-accent">变式 {vi + 1}</span>
+                                <span className="text-content-muted">
+                                  {v.difficulty === 'basic' ? '基础' : v.difficulty === 'hard' ? '提高' : '中等'} · {v.score} 分
+                                </span>
+                                <span className="ml-auto text-content-muted">AI 拟题</span>
+                              </div>
+                              <p className="mt-1.5 whitespace-pre-wrap text-[12.5px] leading-relaxed text-content-primary">{v.stem}</p>
+                              {v.options.length > 0 && (
+                                <div className="mt-1 space-y-0.5 text-[12.5px] leading-relaxed text-content-secondary">
+                                  {v.options.map((o, oi) => (
+                                    <div key={oi}>{o}</div>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="mt-1.5 rounded-lg bg-surface-subtle/70 px-2.5 py-1.5 text-[12px] leading-relaxed text-content-secondary">
+                                <span className="font-medium text-content-muted">AI 参考答案：</span>
+                                {v.answer}
+                              </div>
+                              <div className="mt-2 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={v.saved || !!savingVariant}
+                                  onClick={() => void onSaveVariant(c.id, vi)}
+                                  className={`h-7 rounded-lg border px-2.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+                                    v.saved
+                                      ? 'border-line/60 text-content-muted'
+                                      : 'border-accent bg-surface text-accent hover:bg-accent hover:text-white'
+                                  }`}
+                                >
+                                  {v.saved ? '✓ 已入题库' : savingVariant === `${c.id}:${vi}` ? '入库中…' : '收进题库'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={v.added || !!busyKey}
+                                  onClick={() => void onAddVariant(c.id, vi)}
+                                  className={`h-7 rounded-lg border px-2.5 text-xs transition-colors disabled:opacity-60 ${
+                                    v.added
+                                      ? 'border-line/60 text-content-muted'
+                                      : 'border-line bg-surface text-content-secondary hover:bg-surface-subtle'
+                                  }`}
+                                >
+                                  {v.added ? '✓ 已加入本卷' : busyKey === `insert_inline:${c.id}:${vi}` ? '加入中…' : '加入本卷'}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })
@@ -841,8 +1102,9 @@ function ComposedContent() {
       <style dangerouslySetInnerHTML={{ __html: PRINT_GLOBAL_CSS }} />
       {/* 卷面列:AI 助手停靠列(≥md)推挤本列;助手组件挂在本 flex 根上 */}
       <div className="relative min-w-0 flex-1">
-      {/* 顶栏(仅屏幕):悬浮玻璃条 —— 脱离边缘+四周圆角+毛玻璃;安全区并进悬浮定位 */}
-      <div className={`absolute inset-x-2 top-[calc(var(--sat)+8px)] z-10 flex min-h-[52px] items-center gap-1 rounded-2xl border border-line/60 bg-surface/60 px-2 shadow-[0_8px_24px_rgb(0_0_0/0.1)] backdrop-blur-xl md:inset-x-3 md:top-3 md:gap-2 md:px-4 ${styles.printHide}`}>
+      {/* 顶栏(仅屏幕):悬浮玻璃条 —— 脱离边缘+四周圆角+毛玻璃;
+          移动端要让出全局浮钮行(☰/↻/⚙,--m-chrome-top 起、高 40):+48 = 浮钮行下留 8;桌面 md:top-3 不变 */}
+      <div className={`absolute inset-x-2 top-[calc(var(--m-chrome-top)+48px)] z-10 flex min-h-[52px] items-center gap-1 rounded-2xl border border-line/60 bg-surface/60 px-2 shadow-[0_8px_24px_rgb(0_0_0/0.1)] backdrop-blur-xl md:inset-x-3 md:top-3 md:gap-2 md:px-4 ${styles.printHide}`}>
         <button
           type="button"
           onClick={handleBack}
@@ -912,9 +1174,10 @@ function ComposedContent() {
         </button>
       </div>
 
+      {/* max-md 顶距让出两行 chrome:浮钮行(m-chrome-top+40)+玻璃顶栏(52)+间距 20;桌面 68px 不变 */}
       <div
         ref={containerRef}
-        className={`h-full overflow-y-auto pt-[calc(68px+var(--sat))] ${styles.scroller} ${styles.flow}`}
+        className={`h-full overflow-y-auto pt-[calc(68px+var(--sat))] max-md:pt-[calc(var(--m-chrome-top)+112px)] ${styles.scroller} ${styles.flow}`}
       >
         <div className={`mx-auto flex w-full max-w-[880px] flex-col gap-5 px-2 pt-3 pb-[max(64px,var(--sab))] md:px-4 md:pb-16 ${styles.sheetColumn}`}>
           {isLoading || !paper ? (
@@ -1058,12 +1321,13 @@ function ComposedContent() {
       </div>
       </div>
 
-      <ComposedAssistant composedId={id} slots={paper?.slots ?? []} paperTitle={paper?.title ?? '拟卷'} onExecute={doPatch} />
+      <ComposedAssistant composedId={id} slots={paper?.slots ?? []} paperTitle={paper?.title ?? '拟卷'} durationMin={paper?.durationMin ?? 0} />
 
       {panelTarget && paper && (
         <div className={styles.printHide}>
           <CandidatePanel
             id={id}
+            subject={paper.subject}
             target={panelTarget}
             busyKey={busyKey}
             onAdd={(qid) =>
@@ -1072,6 +1336,7 @@ function ComposedContent() {
                 `insert:${qid}`
               )
             }
+            onPatch={doPatch}
             onClose={() => setPanelTarget(null)}
           />
         </div>

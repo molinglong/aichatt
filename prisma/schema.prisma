@@ -60,6 +60,7 @@ model User {
   installedMasks InstalledMask[]
   uploadFiles   UploadFile[]
   studyNotes    StudyNote[]
+  studyPlans    StudyPlan[]
   favorites     Favorite[]
   favoriteItems FavoriteItem[]
   knowledgeDocs KnowledgeDoc[]
@@ -580,11 +581,55 @@ model StudyNoteReviewLog {
   rating        Int      // 1=Again(卡住了) 3=Good(想起来了),即 FSRS Rating 枚举值
   masteryBefore Float
   masteryAfter  Float
+  /// 评级来源:null=手动自评(翻卡核对式) redo=重做判分 variant=变式练习判分
+  source        String?
   ratedAt       DateTime @default(now())
 
   note StudyNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([noteId, ratedAt])
+}
+
+// ===================== 考前冲刺计划 =====================
+// 一段时间内只保留一张 active 计划;创建新计划时旧计划整体置 active=false(历史可溯)。
+// 每日任务项按天分组勾销,完成后联动 StudyNote 提前到期(重做/翻卡项)由调用方决定。
+model StudyPlan {
+  id        String   @id @default(cuid())
+  userId    String
+  /// 计划名,如「期末冲刺 · 数学」
+  title     String
+  /// 考试名称(如「期末考试」)与考试日期(排期终点,倒计时锚点)
+  examName  String?
+  examDate  DateTime
+  subject   String?
+  /// true=当前生效计划(学习台冲刺条只认 active);新计划创建时旧计划置 false
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items StudyPlanItem[]
+
+  @@index([userId, active])
+}
+
+// 冲刺计划每日任务:topic 维度,kind 决定复习形态(cards=翻卡 redo=重做题库原题 variant=同考点变式)
+model StudyPlanItem {
+  id     String   @id @default(cuid())
+  planId String
+  userId String
+  /// 归属日(本地当天 0 点),按日分组展示
+  date   DateTime
+  topic  String
+  kind   String   // cards | redo | variant
+  /// 目标量(翻卡张数/重做题数/变式题数)
+  target Int      @default(3)
+  done   Boolean  @default(false)
+  doneAt DateTime?
+
+  plan StudyPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, date])
+  @@index([userId, date])
 }
 
 // ===================== 学习模式 v2: 独立学习会话(与聊天会话彻底分家) =====================
@@ -903,6 +948,22 @@ model ComposedSlot {
 
   @@index([composedPaperId, position])
   @@index([paperQuestionId])
+}
+
+/// 变更计划快照：助手计划应用前自动落一份整卷状态，撤销=按快照还原后删行。
+/// 只留最近一份（应用新计划时覆盖旧的），不堆积历史。
+model ComposedSnapshot {
+  id         String   @id @default(cuid())
+  composedId String
+  userId     String   // 冗余存储免 join（与 PaperQuestion 同思路）
+  title      String
+  durationMin Int
+  totalScore Int
+  /// 槽位全量快照（position/section/kind/score/paperQuestionId/historyIds/内联字段），JSON 数组
+  slots      Json
+  createdAt  DateTime @default(now())
+
+  @@index([composedId, createdAt])
 }
 
 // ===================== 待办(Todo) =====================

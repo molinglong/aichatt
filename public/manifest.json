@@ -1,5 +1,5 @@
 {
-  "name": "aichatt - AI 多模型对话助手",
+  "name": "aichatt",
   "short_name": "aichatt",
   "description": "支持 OpenAI、Anthropic、DeepSeek、通义千问、文心一言的多模型 AI 对话平台",
   "start_url": "/chat",

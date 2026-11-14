@@ -1391,17 +1391,12 @@ html:not([data-tauri]) .tauri-only {
   }
 }
 
-/* 桌面端：调整主壳圆角大小和阴影匹配全屏感。
-   只作用于 .app-shell 主卡片——不要用 .shadow-2xl.border-line 这种宽选择器:
+/* 桌面壳浮卡形态已删(2026-11-14 全贴边定案):壳体随基础布局贴住窗口四边,
+   Tauri 端不再强制圆角/阴影 —— 不透明无边框窗口下圆角裁剪会在四角露出 html 底色缺口。
+   保留的历史教训:别用 .shadow-2xl.border-line 这类宽选择器管阴影 ——
    右侧滑出面板(HTML 预览/文件编辑器/写作画布)关闭时 translate-x-full 停在
    视口右缘外,fixed 定位不受外层 overflow:hidden 裁剪,32px 模糊阴影会渗入
    视口,在窗口右缘形成一条灰色阴影带(多个面板还会叠加变深)。 */
-@media (min-width: 1024px) {
-  [data-tauri] .app-shell {
-    border-radius: 12px !important;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25) !important;
-  }
-}
 
 /* 右侧滑出面板关闭态(translate-x-full 停在屏外)去掉投影,避免阴影模糊渗入
    视口形成右缘灰带;box-shadow 纳入与 transform 相同时长的过渡,滑入渐显、
@@ -1874,6 +1869,37 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
 .rich-md .exam-question p {
   font-weight: 500;
 }
+/* 主观题作答输入框: 圆角浅底框(与全站输入语言一致,不再是"文字+下划线"的歧义态);
+   auto-grow 由渲染层控制 height;触屏(pointer:coarse)锁 16px 防 iOS 聚焦自动缩放页面 */
+.rich-md .exam-answer-input {
+  display: block;
+  width: 100%;
+  min-height: 2.75rem;
+  margin-top: 0.55rem;
+  padding: 0.5rem 0.7rem;
+  font: inherit;
+  line-height: 1.6;
+  color: rgb(var(--content-primary));
+  background: rgb(var(--surface-subtle) / 0.7);
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  transition: border-color var(--motion-micro) ease, background-color var(--motion-micro) ease;
+}
+.rich-md .exam-answer-input::placeholder {
+  color: rgb(var(--content-muted));
+}
+.rich-md .exam-answer-input:focus {
+  background: rgb(var(--surface-subtle));
+  border-color: rgb(var(--accent) / 0.45);
+}
+@media (pointer: coarse) {
+  .rich-md .exam-answer-input {
+    font-size: 16px;
+  }
+}
 .rich-md .exam-option p {
   font-weight: 400;
   margin: 0;
@@ -1950,6 +1976,13 @@ aside.fixed.inset-y-0.right-0.shadow-2xl.translate-x-full {
   margin-top: 0.9rem;
   padding-top: 0.9rem;
   border-top: 1px dashed rgb(var(--exam-paper-line));
+}
+/* 块间题与题的装订线: 居中短虚线——分隔感靠留白+短线,不用通栏硬线(深色卡上通栏线生硬) */
+.rich-md .exam-divider {
+  height: 0;
+  width: 38%;
+  margin: 0.7rem auto 0.8rem;
+  border-top: 1px dashed rgb(var(--exam-paper-line) / 0.75);
 }
 .rich-md .exam-option {
   display: flex;
@@ -4193,4 +4226,29 @@ html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .mobile-flo
 @keyframes study-newq-ripple {
   0% { transform: scale(1); opacity: 0.4; }
   100% { transform: scale(1.12); opacity: 0; }
+}
+
+/* ── 学习台首屏骨架屏(2026-11-14 方案A):浅灰块 + 横向扫光,形状对齐数据到达后的布局,
+   加载中不再闪「0 场 / 还没有数据」零值空态。深色扫光换低透明白,避免浅色高光刺眼。 ── */
+.study-sk {
+  position: relative;
+  overflow: hidden;
+  background: rgb(var(--surface-subtle));
+}
+.study-sk::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.6), transparent);
+  animation: study-sk-sweep 1.5s infinite;
+}
+html.dark .study-sk::after {
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.08), transparent);
+}
+@keyframes study-sk-sweep {
+  100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .study-sk::after { animation: none; }
 }

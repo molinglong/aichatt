@@ -59,3 +59,21 @@ export interface SaveWrongQuestionToolOutput {
   note: string
   error?: string
 }
+
+/** 注入 system prompt 的使用规则段 */
+export const SAVE_WRONG_QUESTION_TOOL_PROMPT: string = [
+  '## 错题本存入（save_wrong_question 工具）',
+  '- 用户明确要求把题目加入/收进/存入错题本（"这题我错了帮我加入""记到错题本""这道题存一下"）时调用本工具立即落库，不要只口头答应',
+  '- 题干 question 从对话上文逐字提取（选择题含每个选项行、保留公式记法）；上下文里找不到题目时先请用户把题目发来（文字或截图），不要编造或省略题干',
+  '- 用户已说出自己的答案就传 userAnswer；对话里已得出正确答案就传 correctAnswer；解析 analysis 只写一句关键错因/解法，没有把握不要编',
+  '- subject/topic 能明确判断再传，不确定就不传（后台会自动打标）',
+  '- 返回 created=true 后一句话确认（从考点/错因角度），不要重复贴出完整题目与解析；created=false 告知用户这道题此前已存过',
+  '- 用户没有要求存错题时不要主动替用户存；学习模式讲题结束的自动归档由系统处理，与本工具无关',
+].join('\n')
+
+/** 临时模式降级提示（工具不注入，避免模型虚构已存入） */
+export const SAVE_WRONG_QUESTION_DISABLED_PROMPT: string = [
+  '## 错题本（临时模式不可用）',
+  '当前处于临时聊天模式，错题本等长期数据不可写入。用户要求存错题时，',
+  '请如实告知临时模式下无法操作，可退出临时模式后再试；不要虚构已存入。',
+].join('\n')

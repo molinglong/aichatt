@@ -24,7 +24,7 @@ interface NoteRow {
   sourceQuestionId: string | null
 }
 
-export function NoteList({ onChanged }: { onChanged?: () => void }) {
+export function NoteList({ onChanged, wide = false }: { onChanged?: () => void; wide?: boolean }) {
   const [notes, setNotes] = useState<NoteRow[]>([])
   const [loading, setLoading] = useState(true)
   const [subject, setSubject] = useState('') // '' = 全部
@@ -91,8 +91,8 @@ export function NoteList({ onChanged }: { onChanged?: () => void }) {
   return (
     <div className="flex flex-col h-full">
       {/* 筛选栏 */}
-      <div className="shrink-0 p-3 border-b border-line space-y-2">
-        <div className="flex items-center gap-2">
+      <div className={cn('shrink-0 p-3 border-b border-line space-y-2', wide && 'md:flex md:items-center md:gap-2 md:space-y-0')}>
+        <div className={cn('flex items-center gap-2', wide && 'md:flex-1 md:min-w-0')}>
           <form
             className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-subtle/60 border border-line/60"
             onSubmit={(e) => {
@@ -119,7 +119,7 @@ export function NoteList({ onChanged }: { onChanged?: () => void }) {
         <select
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
-          className="w-full px-2 py-1.5 rounded-lg bg-surface-subtle/60 border border-line/60 text-xs text-content-secondary outline-none cursor-pointer"
+          className={cn('w-full px-2 py-1.5 rounded-lg bg-surface-subtle/60 border border-line/60 text-xs text-content-secondary outline-none cursor-pointer', wide && 'md:w-[150px] md:shrink-0')}
         >
           <option value="">全部学科</option>
           {Object.entries(SUBJECT_LABELS).map(([k, v]) => (
@@ -149,7 +149,7 @@ export function NoteList({ onChanged }: { onChanged?: () => void }) {
             <div key={n.id} className="rounded-lg border border-line/60 hover:border-line transition-colors">
               <button
                 onClick={() => setExpandedId(expanded ? null : n.id)}
-                className="w-full text-left px-2.5 py-2 space-y-1"
+                className={cn('w-full text-left px-2.5 py-2 space-y-1', wide && 'md:px-3 md:py-2.5')}
               >
                 <div className="flex items-center gap-1.5">
                   <span className="px-1.5 py-0.5 rounded bg-surface-subtle text-[10px] text-content-secondary shrink-0">
