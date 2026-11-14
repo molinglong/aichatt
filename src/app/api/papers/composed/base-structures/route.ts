@@ -7,6 +7,7 @@
 import { NextRequest } from "next/server"
 import { Prisma } from "@/generated/prisma/client"
 import { getUserId } from "@/lib/api-auth"
+import { libraryScopes } from "@/lib/library-scope"
 import { prisma } from "@/lib/db"
 
 export const dynamic = "force-dynamic"
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
            count(*)::int AS n, min(pq.number)::int AS first_no
     FROM "PaperQuestion" pq
     JOIN "Paper" p ON p.id = pq."paperId"
-    WHERE p."userId" = ${userId} AND p.subject = ${subject}
+    WHERE p."userId" IN (${Prisma.join(await libraryScopes(userId))}) AND p.subject = ${subject}
     GROUP BY p.id, p.slug, p.title, p."examType", p.year, pq.section, pq.kind, pq.score
     ORDER BY p.slug, first_no
   `)

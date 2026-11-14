@@ -1,9 +1,10 @@
 /**
  * GET /api/kb/docs/[docId] —— 单本课本详情(阅读器数据源)。
- * 校验归属:只能翻自己名下的书。目录(章节导航)后续可从 chunks 聚合,v1 只给页数。
+ * 校验归属:自己名下或公共库主人名下均可翻。目录(章节导航)后续可从 chunks 聚合,v1 只给页数。
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { libraryScopes } from '@/lib/library-scope'
 import { prisma } from '@/lib/db'
 
 export async function GET(
@@ -22,7 +23,7 @@ export async function GET(
 
   try {
     const doc = await prisma.knowledgeDoc.findFirst({
-      where: { id: docId, userId: session.user.id, bookKey: { not: null } },
+      where: { id: docId, userId: { in: await libraryScopes(session.user.id) }, bookKey: { not: null } },
       select: {
         id: true,
         title: true,

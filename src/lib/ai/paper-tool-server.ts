@@ -10,6 +10,7 @@
  * 禁止被客户端组件引用；isomorphic 的工具 schema/类型在 paper-tool.ts（wave 2）。
  */
 import { prisma } from '@/lib/db'
+import { libraryScopes } from '@/lib/library-scope'
 import { Prisma } from '@/generated/prisma/client'
 import {
   paperSearchInputSchema,
@@ -84,7 +85,7 @@ export async function searchPaperQuestions(
            p.title AS "paperTitle", p.slug AS "paperSlug", p.year, p.region, p."examType"
     FROM "PaperQuestion" pq
     JOIN "Paper" p ON p.id = pq."paperId"
-    WHERE pq."userId" = ${userId}
+    WHERE pq."userId" IN (${Prisma.join(await libraryScopes(userId))})
       ${subject ? Prisma.sql`AND p.subject = ${subject}` : Prisma.empty}
       AND (${Prisma.join(
         terms.map((t) => Prisma.sql`(pq.stem ILIKE ${like(t)} OR ${topicsText} ILIKE ${like(t)} OR ${optionsText} ILIKE ${like(t)})`),
@@ -112,7 +113,7 @@ export async function getPaperTopicStats(userId: string, subject?: string): Prom
            max(p.subject)::text AS subject
     FROM "PaperQuestion" pq
     JOIN "Paper" p ON p.id = pq."paperId"
-    WHERE pq."userId" = ${userId}
+    WHERE pq."userId" IN (${Prisma.join(await libraryScopes(userId))})
       ${subject ? Prisma.sql`AND p.subject = ${subject}` : Prisma.empty}
     GROUP BY topic
     ORDER BY count DESC, topic ASC
@@ -152,7 +153,7 @@ export async function getPaperOverview(userId: string, subject?: string): Promis
            count(pq.id) FILTER (WHERE array_length(pq.topics, 1) > 0)::int AS tagged
     FROM "Paper" p
     LEFT JOIN "PaperQuestion" pq ON pq."paperId" = p.id
-    WHERE p."userId" = ${userId}
+    WHERE p."userId" IN (${Prisma.join(await libraryScopes(userId))})
       ${subject ? Prisma.sql`AND p.subject = ${subject}` : Prisma.empty}
     GROUP BY p.id
     ORDER BY p."createdAt" DESC
@@ -160,9 +161,9 @@ export async function getPaperOverview(userId: string, subject?: string): Promis
   return rows
 }
 
-/** 用户名下是否存在逐题索引（物理级注入闸门：一张卷都没录则 search_papers 不挂载） */
+/** 归属(自己+公共库)下是否存在逐题索引（物理级注入闸门：一张卷都没录则 search_papers 不挂载） */
 export async function hasPaperQuestions(userId: string): Promise<boolean> {
-  const row = await prisma.paperQuestion.findFirst({ where: { userId }, select: { id: true } })
+  const row = await prisma.paperQuestion.findFirst({ where: { userId: { in: await libraryScopes(userId) } }, select: { id: true } })
   return !!row
 }
 
@@ -302,7 +303,7 @@ export function createPaperAnalyzeTool(userId: string) {
         const topicStats = stats.slice(0, 15)
         const weakTopics = await getWeakTopics(userId, stats, subject)
         const flaggedCount = await prisma.paperQuestion.count({
-          where: { userId, flagged: true, ...(subject ? { paper: { subject } } : {}) },
+          where: { userId: { in: await libraryScopes(userId) }, flagged: true, ...(subject ? { paper: { subject } } : {}) },
         })
         const note =
           overview.length || topicStats.length
@@ -326,10 +327,10 @@ export function createPaperAnalyzeTool(userId: string) {
 
 // ===================== compose_paper 智能拟卷（真题重组卷） =====================
 
-/** 拟卷挂载闸门：存在「有官方答案」的题才挂载（重组卷只用有答案池，没答案=不可用） */
+/** 拟卷挂载闸门：归属(自己+公共库)下存在「有官方答案」的题才挂载（重组卷只用有答案池，没答案=不可用） */
 export async function hasAnsweredPaperQuestions(userId: string): Promise<boolean> {
   const row = await prisma.paperQuestion.findFirst({
-    where: { userId, answer: { not: null }, flagged: false },
+    where: { userId: { in: await libraryScopes(userId) }, answer: { not: null }, flagged: false },
     select: { id: true },
   })
   return !!row

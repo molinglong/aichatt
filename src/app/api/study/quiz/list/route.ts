@@ -6,6 +6,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { libraryScopes } from '@/lib/library-scope'
 import { prisma } from '@/lib/db'
 
 export async function GET(req: NextRequest) {
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
   const take = Math.min(Math.max(Math.trunc(Number(sp.get('take'))) || 50, 1), 100)
   const cursor = sp.get('cursor')?.trim() || undefined
 
-  const where: Record<string, unknown> = { userId: session.user.id }
+  const where: Record<string, unknown> = { userId: { in: await libraryScopes(session.user.id) } }
   if (subject) where.subject = subject
   if (kind) where.kind = kind
   if (difficulty) where.difficulty = difficulty

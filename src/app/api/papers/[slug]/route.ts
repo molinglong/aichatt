@@ -2,10 +2,11 @@
  * 试卷预览元数据路由:
  * - GET /api/papers/[slug]  整卷元数据 + 逐页题号索引(pages[].numbers)与题号→页码映射(questionPages)
  * 原卷页面预览(PaperPage)此前只在库中无 UI;本路由为 /papers/[slug] 预览页供数据。
- * 鉴权:登录 + paper.userId 归属校验(试卷是用户私有录入)。
+ * 鉴权:登录 + 归属(自己名下或公共库主人名下均可读;写路径另按 owner 校验)。
  */
 import { NextRequest } from "next/server"
 import { getUserId } from "@/lib/api-auth"
+import { libraryScopes } from "@/lib/library-scope"
 import { prisma } from "@/lib/db"
 
 export const dynamic = "force-dynamic"
@@ -29,7 +30,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ slu
   if (!userId) return Response.json({ error: "unauthorized" }, { status: 401 })
 
   const { slug } = await params
-  const paper = await prisma.paper.findFirst({ where: { slug, userId } })
+  const paper = await prisma.paper.findFirst({ where: { slug, userId: { in: await libraryScopes(userId) } } })
   if (!paper) return Response.json({ error: "not_found" }, { status: 404 })
 
   const pages = await prisma.paperPage.findMany({

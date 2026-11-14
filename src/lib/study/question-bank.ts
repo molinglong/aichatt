@@ -5,6 +5,7 @@
  * 共用本文件，保证对话练题与页面练习两条路径的落库口径一致。
  */
 import { prisma } from '@/lib/db'
+import { libraryScopes } from '@/lib/library-scope'
 import { newCardFields } from '@/lib/study/fsrs'
 import { NOTE_SUBJECTS } from '@/lib/study/tagging'
 import { monitor } from '@/lib/monitor'
@@ -28,7 +29,7 @@ export async function drawQuestions(userId: string, opts: DrawOptions = {}): Pro
   const count = Math.min(Math.max(opts.count ?? DEFAULT_COUNT, 1), MAX_COUNT)
   const rows = await prisma.question.findMany({
     where: {
-      userId,
+      userId: { in: await libraryScopes(userId) },
       ...(opts.subject ? { subject: opts.subject } : {}),
       ...(opts.topic ? { topic: { contains: opts.topic, mode: 'insensitive' as const } } : {}),
       ...(opts.year ? { sourceRef: { contains: opts.year, mode: 'insensitive' as const } } : {}),
@@ -88,7 +89,7 @@ export async function recordPracticeAttempt(
   userAnswer?: string
 ): Promise<PracticeAttemptResult> {
   const question = await prisma.question.findFirst({
-    where: { id: questionId, userId },
+    where: { id: questionId, userId: { in: await libraryScopes(userId) } },
   })
   if (!question) return { outcome: 'notfound' }
   if (result !== 'wrong') return { outcome: 'ok' }
@@ -130,10 +131,10 @@ export async function recordPracticeAttempt(
   return { outcome: 'card-created', noteId: row.id }
 }
 
-/** 用户名下是否存在题目（物理级注入闸门：没题库则练题工具完全不挂载） */
+/** 归属(自己+公共库)下是否存在题目（物理级注入闸门：没题库则练题工具完全不挂载） */
 export async function hasQuestions(userId: string): Promise<boolean> {
   const row = await prisma.question.findFirst({
-    where: { userId },
+    where: { userId: { in: await libraryScopes(userId) } },
     select: { id: true },
   })
   return !!row

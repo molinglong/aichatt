@@ -1,5 +1,5 @@
 /**
- * GET /api/kb/docs —— 当前用户的「可翻原文」课本列表(书架数据源)。
+ * GET /api/kb/docs —— 「可翻原文」课本列表(书架数据源):自己名下 + 公共库主人名下。
  *
  * 只返回 bookKey 非空的 KnowledgeDoc(按页导入的课本);HTML/文本导入的
  * 资料没有页图,不进书架。封面/页图 URL 客户端按 bookKey 拼:
@@ -7,6 +7,7 @@
  */
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { libraryScopes } from '@/lib/library-scope'
 import { prisma } from '@/lib/db'
 
 export async function GET() {
@@ -17,7 +18,7 @@ export async function GET() {
 
   try {
     const docs = await prisma.knowledgeDoc.findMany({
-      where: { userId: session.user.id, bookKey: { not: null } },
+      where: { userId: { in: await libraryScopes(session.user.id) }, bookKey: { not: null } },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,

@@ -8,6 +8,7 @@
  */
 import { tool } from 'ai'
 import { prisma } from '@/lib/db'
+import { libraryScopes } from '@/lib/library-scope'
 import { Prisma } from '@/generated/prisma/client'
 import {
   knowledgeInputSchema,
@@ -113,13 +114,13 @@ export function createKnowledgeOutlineTool(userId: string) {
         const kindFilter = kind ?? 'textbook'
         const titleKey = title ? normalizeOutlineTitle(title) : ''
         const like = titleKey ? `%${titleKey.replace(/[\\%_]/g, (m) => `\\${m}`)}%` : ''
-        const query = (withTitle: boolean) => prisma.$queryRaw<RawOutlineRow[]>(Prisma.sql`
+        const query = async (withTitle: boolean) => prisma.$queryRaw<RawOutlineRow[]>(Prisma.sql`
           SELECT d.title AS "docTitle", d.grade, d.subject, d.kind,
                  c.chapter, c.section, c.heading, c."sortOrder",
                  left(regexp_replace(c.content, '\\s+', ' ', 'g'), 160) AS preview
           FROM "KnowledgeDoc" d
           JOIN "KnowledgeChunk" c ON c."docId" = d.id
-          WHERE d."userId" = ${userId}
+          WHERE d."userId" IN (${Prisma.join(await libraryScopes(userId))})
             AND d.kind = ${kindFilter}
             ${subject ? Prisma.sql`AND d.subject = ${subject}` : Prisma.empty}
             ${withTitle && like ? Prisma.sql`AND (d.title ILIKE ${like} OR d.grade ILIKE ${like})` : Prisma.empty}
@@ -136,7 +137,7 @@ export function createKnowledgeOutlineTool(userId: string) {
                    left(regexp_replace(c.content, '\\s+', ' ', 'g'), 160) AS preview
             FROM "KnowledgeDoc" d
             JOIN "KnowledgeChunk" c ON c."docId" = d.id
-            WHERE d."userId" = ${userId} AND d.kind = ${kindFilter}
+            WHERE d."userId" IN (${Prisma.join(await libraryScopes(userId))}) AND d.kind = ${kindFilter}
             ORDER BY d."createdAt" DESC, c."sortOrder" ASC
             LIMIT 700
           `)
@@ -241,7 +242,7 @@ export async function searchKnowledgeChunks(
            d.id AS "docId", d.title AS "docTitle", d.kind, d.grade
     FROM "KnowledgeChunk" c
     JOIN "KnowledgeDoc" d ON d.id = c."docId"
-    WHERE c."userId" = ${userId}
+    WHERE c."userId" IN (${Prisma.join(await libraryScopes(userId))})
     ${subject ? Prisma.sql`AND d.subject = ${subject}` : Prisma.empty}
     ${kind ? Prisma.sql`AND d.kind = ${kind}` : Prisma.empty}
     AND (${Prisma.join(terms.map((t) => Prisma.sql`(c.content ILIKE ${like(t)} OR c.heading ILIKE ${like(t)} OR c.section ILIKE ${like(t)})`), ' OR ')})
@@ -281,10 +282,10 @@ export async function searchKnowledgeChunks(
   }))
 }
 
-/** 用户名下是否存在知识切块(物理级注入闸门:没有课本则工具完全不挂载) */
+/** 归属(自己+公共库)下是否存在知识切块(物理级注入闸门:没有课本则工具完全不挂载) */
 export async function hasKnowledgeChunks(userId: string): Promise<boolean> {
   const row = await prisma.knowledgeChunk.findFirst({
-    where: { userId },
+    where: { userId: { in: await libraryScopes(userId) } },
     select: { id: true },
   })
   return !!row
