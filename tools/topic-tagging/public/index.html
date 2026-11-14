@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>考点打标台 · 全库试卷 topics 预览</title>
+<link rel="stylesheet" href="/katex/katex.min.css">
+<style>
+:root{
+  --bg:#f2f2ef; --panel:#ffffff; --panel2:#f7f7f5;
+  --ink:#1a1d23; --ink2:#69707a; --ink3:#9ba1ab;
+  --line:#e5e6e2; --line2:#ececea;
+  --accent:#2563eb; --accent-ink:#1d4fd8; --accent-soft:#eaf1fe; --accent-line:#bcd2fa;
+  --ok:#16a34a; --ok-soft:#e9f7ee; --ok-line:#bfe6cd;
+  --warn:#b45309; --warn-soft:#fdf3e7; --warn-line:#f0d9b8;
+  --bad:#dc2626; --bad-soft:#fdecec; --bad-line:#f5c6c6;
+  --db:#7c3aed; --db-soft:#f3eefe; --db-line:#ddd0f7;
+  --shadow:0 1px 2px rgba(20,24,32,.05),0 4px 16px rgba(20,24,32,.07);
+  --radius:12px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#131417; --panel:#1c1e22; --panel2:#22252a;
+    --ink:#e7e9ec; --ink2:#9aa0a8; --ink3:#62676f;
+    --line:#2b2e34; --line2:#24262b;
+    --accent:#7aa5f8; --accent-ink:#9dbcfa; --accent-soft:#232e44; --accent-line:#33507e;
+    --ok:#5edb8d; --ok-soft:#1c2f24; --ok-line:#2e5240;
+    --warn:#e2a860; --warn-soft:#2d2418; --warn-line:#4b3a1c;
+    --bad:#f08a8a; --bad-soft:#331c1c; --bad-line:#573030;
+    --db:#b79df5; --db-soft:#292038; --db-line:#413460;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font:14px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer}
+input,select{font:inherit;color:inherit}
+.hidden{display:none!important}
+
+/* ---------- 顶栏 ---------- */
+header{display:flex;align-items:center;gap:12px;min-height:50px;padding:6px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:650;white-space:nowrap}
+.brand i{width:9px;height:9px;border-radius:3px;background:var(--accent);flex:none;transform:rotate(45deg)}
+.mode-badge{font-size:11.5px;color:var(--warn);background:var(--warn-soft);border:1px solid var(--warn-line);border-radius:99px;padding:2px 9px;white-space:nowrap}
+.model-badge{font-size:11.5px;color:var(--ink2);background:var(--panel2);border:1px solid var(--line);border-radius:99px;padding:2px 9px;white-space:nowrap}
+.gprog{display:flex;align-items:center;gap:9px;margin-left:auto}
+.gprog .bar{width:130px;height:5px;border-radius:99px;background:var(--line2);overflow:hidden}
+.gprog .fill{height:100%;border-radius:99px;background:var(--ok);transition:width .4s cubic-bezier(.2,.7,.3,1)}
+.gprog .num{font-size:12.5px;color:var(--ink2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.gprog .num b{color:var(--ink);font-weight:650}
+.hbtn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:5px 12px;font-size:12.5px;color:var(--ink2);transition:all .12s;white-space:nowrap}
+.hbtn:hover{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
+.hbtn.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+.hbtn.on:hover{color:#fff}
+
+/* ---------- 新手引导条 ---------- */
+.guide{display:flex;align-items:flex-start;gap:10px;padding:10px 16px;background:var(--accent-soft);border-bottom:1px solid var(--accent-line);flex:none}
+.guide .gt{font-size:13px;line-height:1.7;color:var(--ink)}
+.guide .gt b{color:var(--accent-ink)}
+.guide .gbtn{flex:none;border:1px solid var(--accent-line);background:var(--panel);border-radius:8px;padding:5px 13px;font-size:12.5px;color:var(--accent-ink);margin-top:2px}
+.guide .gbtn:hover{background:var(--panel2)}
+
+/* ---------- 词表面板 ---------- */
+.vocab-panel{border-bottom:1px solid var(--line);background:var(--panel);padding:10px 16px 14px;flex:none;max-height:38vh;overflow:auto}
+.vocab-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.vocab-head .ttl{font-size:13px;font-weight:650}
+.vocab-head .cnt{font-size:12px;color:var(--ink2)}
+.vocab-head .note{font-size:12px;color:var(--ink3)}
+.vtab{border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:4px 12px;font-size:12.5px;color:var(--ink2);transition:all .12s}
+.vtab:hover{border-color:var(--accent-line)}
+.vtab.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--panel2);border-radius:99px;padding:3px 6px 3px 11px;font-size:12.5px;color:var(--ink);transition:all .12s}
+.chip .x{width:16px;height:16px;border:none;background:none;border-radius:99px;color:var(--ink3);font-size:13px;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+.chip .x:hover{color:var(--bad);background:var(--bad-soft)}
+.chip.add{padding:3px 11px;color:var(--ink2);cursor:pointer;border-style:dashed}
+.chip.add:hover{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
+.chip input{border:none;background:none;outline:none;font-size:12.5px;width:110px}
+.chip .rename{border:none;background:none;color:inherit;font:inherit;padding:0;outline:none}
+
+/* ---------- 简易模式条 ---------- */
+.simple-bar{display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+.simple-bar select{
+  background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13.5px;color:var(--ink);
+  max-width:min(460px,60vw);transition:border-color .15s;
+}
+.simple-bar select:hover{border-color:var(--accent-line)}
+.simple-bar select:focus{outline:none;border-color:var(--accent)}
+.simple-prog{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2);white-space:nowrap}
+.simple-prog b{color:var(--ink)}
+.simple-prog .bar{width:90px;height:5px;border-radius:99px;background:var(--line2);overflow:hidden}
+.simple-prog .fill{height:100%;border-radius:99px;background:var(--ok);transition:width .35s}
+.sbtn{border:1px solid var(--accent-line);background:var(--accent-soft);border-radius:9px;padding:7px 15px;font-size:13.5px;color:var(--accent-ink);transition:all .12s;white-space:nowrap}
+.sbtn:hover:not(:disabled){background:var(--accent);border-color:var(--accent);color:#fff}
+.sbtn:disabled{opacity:.45;cursor:not-allowed}
+.sbtn.plain{border-color:var(--line);background:var(--panel);color:var(--ink2)}
+.sbtn.plain:hover:not(:disabled){border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent-ink)}
+
+/* ---------- 高级:过滤/操作条 ---------- */
+.toolbar,.actionbar{display:flex;align-items:center;gap:8px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+.toolbar select,.toolbar input[type=search]{
+  background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:13px;color:var(--ink);
+  transition:border-color .15s;
+}
+.toolbar select:hover,.toolbar input:hover{border-color:var(--accent-line)}
+.toolbar select:focus,.toolbar input:focus{outline:none;border-color:var(--accent)}
+.toolbar select.paper-pick{max-width:min(430px,58vw)}
+.toolbar input[type=search]{width:170px}
+.stat-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto}
+.schip{font-size:11.5px;border-radius:99px;padding:2px 9px;border:1px solid var(--line);background:var(--panel2);color:var(--ink2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.schip b{font-weight:650;color:var(--ink)}
+.schip.ok{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.schip.warn{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.schip.bad{background:var(--bad-soft);border-color:var(--bad-line);color:var(--bad)}
+.schip.acc{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.schip.acc b,.schip.ok b{color:inherit}
+.abtn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:6px 13px;font-size:13px;color:var(--ink);transition:all .12s;white-space:nowrap}
+.abtn:hover:not(:disabled){border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent-ink)}
+.abtn:disabled{opacity:.45;cursor:not-allowed}
+.abtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.abtn.primary:hover:not(:disabled){background:var(--accent-ink);border-color:var(--accent-ink);color:#fff}
+.abtn.stop{color:var(--bad);border-color:var(--bad-line)}
+.abtn.stop:hover:not(:disabled){background:var(--bad-soft);color:var(--bad)}
+.runinfo{font-size:12px;color:var(--ink2);white-space:nowrap}
+.runinfo b{color:var(--ink)}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--accent-line);border-top-color:var(--accent);border-radius:99px;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ---------- 题目列表/卡片 ---------- */
+main{flex:1;overflow:auto;padding:12px 16px 60px}
+.list-meta{font-size:12px;color:var(--ink3);margin:2px 2px 10px}
+.qrow{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:8px;overflow:hidden;transition:border-color .12s}
+.qrow:hover{border-color:var(--accent-line)}
+.qrow.open{border-color:var(--accent-line)}
+.qrow.verdict-accepted{border-left:3px solid var(--ok)}
+.qrow.verdict-edited{border-left:3px solid var(--accent)}
+.qrow.verdict-rejected{border-left:3px solid var(--bad)}
+.qhead{display:flex;align-items:center;gap:9px;padding:9px 12px;cursor:pointer;user-select:none}
+.qnum{flex:none;min-width:30px;height:22px;border-radius:7px;background:var(--panel2);border:1px solid var(--line);display:inline-flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:650;color:var(--ink2)}
+.qmeta{flex:none;font-size:11.5px;color:var(--ink3);white-space:nowrap}
+.qstem-prev{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--ink2)}
+.qstate{flex:none;font-size:11px;border-radius:99px;padding:1.5px 8px;white-space:nowrap;border:1px solid transparent}
+.qstate.none{color:var(--ink3);border-color:var(--line)}
+.qstate.sugg{color:var(--accent-ink);background:var(--accent-soft);border-color:var(--accent-line)}
+.qstate.ok{color:var(--ok);background:var(--ok-soft);border-color:var(--ok-line)}
+.qstate.edit{color:var(--accent-ink);background:var(--accent-soft);border-color:var(--accent-line)}
+.qstate.rej{color:var(--bad);background:var(--bad-soft);border-color:var(--bad-line)}
+.qstate.db{color:var(--db);background:var(--db-soft);border-color:var(--db-line)}
+.qstate.warn{color:var(--warn);background:var(--warn-soft);border-color:var(--warn-line)}
+.qbody{padding:2px 14px 13px;border-top:1px dashed var(--line2)}
+.qrow.simple-card{max-width:860px;margin:14px auto 0;border-color:var(--accent-line);box-shadow:var(--shadow)}
+.qrow.simple-card .qbody{border-top:none;padding-top:12px}
+.simple-sec{font-size:13px;color:var(--ink2);margin:0 0 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.simple-sec .qnum{min-width:34px;height:24px}
+.qsec{font-size:11.5px;color:var(--ink3);margin:9px 0 0}
+.qsec b{color:var(--ink2);font-weight:650}
+.stembox{font-size:13.5px;line-height:1.75;color:var(--ink);margin-top:4px;word-break:break-word}
+.optsbox{margin-top:6px;display:flex;flex-direction:column;gap:3px}
+.optsbox .opt{font-size:13.5px;line-height:1.7;color:var(--ink)}
+.ansbox{margin-top:8px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);padding:8px 11px}
+.ansbox .ah{font-size:11.5px;color:var(--ink3);font-weight:650;margin-bottom:2px}
+.ansbox .ab{font-size:13px;line-height:1.7;color:var(--ink2);word-break:break-word}
+.tagzone{margin-top:11px;display:flex;flex-direction:column;gap:7px}
+.tagrow{display:flex;align-items:flex-start;gap:7px;flex-wrap:wrap}
+.taglab{flex:none;font-size:11.5px;color:var(--ink3);padding-top:4px;min-width:42px}
+.tchip{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:3px 11px;font-size:12.5px;border:1px solid var(--line);background:var(--panel2);transition:all .12s}
+.tchip.sugg{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent-ink)}
+.tchip.dbt{border-color:var(--db-line);background:var(--db-soft);color:var(--db)}
+.tchip.out{border-color:var(--warn-line);background:var(--warn-soft);color:var(--warn)}
+.tchip.clickable{cursor:pointer}
+.tchip.clickable:hover{border-color:var(--accent)}
+.tagrow.pickzone .tchip{cursor:pointer}
+.tagrow.pickzone .tchip.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+.qfoot{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.qbtn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:4.5px 13px;font-size:12.5px;color:var(--ink2);transition:all .12s}
+.qbtn:hover:not(:disabled){border-color:var(--accent-line);color:var(--accent-ink);background:var(--accent-soft)}
+.qbtn:disabled{opacity:.4;cursor:not-allowed}
+.qbtn.acc{color:var(--ok);border-color:var(--ok-line)}
+.qbtn.acc:hover:not(:disabled){background:var(--ok-soft);color:var(--ok)}
+.qbtn.rej{color:var(--bad);border-color:var(--bad-line)}
+.qbtn.rej:hover:not(:disabled){background:var(--bad-soft);color:var(--bad)}
+.qbtn.big{font-size:14.5px;padding:9px 26px;border-radius:10px;font-weight:600}
+.qfoot .who{font-size:11.5px;color:var(--ink3);margin-left:auto}
+.simple-hint{max-width:860px;margin:14px auto 0;font-size:12.5px;color:var(--ink3);line-height:1.8}
+.simple-hint b{color:var(--ink2)}
+.empty{padding:60px 0;text-align:center;color:var(--ink3);font-size:13px}
+.simple-done{max-width:860px;margin:40px auto 0;text-align:center;padding:28px 20px;background:var(--panel);border:1px solid var(--ok-line);border-radius:14px}
+.simple-done .dt{font-size:16px;font-weight:650;color:var(--ok);margin-bottom:6px}
+.simple-done .dd{font-size:13px;color:var(--ink2);margin-bottom:14px}
+
+/* ---------- 弹层/提示 ---------- */
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:10px;padding:9px 16px;font-size:13px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s;max-width:80vw;z-index:50}
+.toast.show{opacity:.95}
+.toast.err{background:var(--bad)}
+.confirm-mask{position:fixed;inset:0;background:rgba(10,12,16,.42);display:flex;align-items:center;justify-content:center;z-index:60}
+.confirm-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;max-width:420px;width:calc(100vw - 48px)}
+.confirm-box .ct{font-size:14px;font-weight:650;margin-bottom:8px}
+.confirm-box .cb{font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:14px;word-break:break-all}
+.confirm-box .cf{display:flex;gap:8px;justify-content:flex-end}
+
+@media (max-width:767px){
+  header{padding:6px 10px;gap:8px}
+  .gprog{margin-left:0;width:100%}
+  .gprog .bar{flex:1;width:auto}
+  .simple-bar,.toolbar,.actionbar{padding:8px 10px}
+  .simple-bar select{max-width:100%}
+  .toolbar select.paper-pick{max-width:100%;width:100%}
+  .toolbar input[type=search]{flex:1;width:auto}
+  .stat-chips{margin-left:0}
+  main{padding:10px 10px 60px}
+  .qstem-prev{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .taglab{min-width:36px}
+  .qbtn.big{flex:1;padding:10px 8px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><i></i>考点打标台</div>
+  <span class="mode-badge" title="本工具对 DB 只读;AI 建议与裁决只落 JSON 文件,验收后才落库">dry-run · 不写库</span>
+  <span class="model-badge" id="modelBadge">deepseek-chat</span>
+  <div class="gprog">
+    <span class="num">全库已定 <b id="gDone">0</b>/<b id="gTotal">0</b></span>
+    <div class="bar"><div class="fill" id="gFill" style="width:0%"></div></div>
+  </div>
+  <button class="hbtn" id="viewToggle">高级视图</button>
+  <button class="hbtn advanced-only" id="vocabToggle">受控词表</button>
+  <button class="hbtn advanced-only" id="refreshBtn">刷新</button>
+</header>
+
+<div class="guide hidden" id="guideBanner">
+  <div class="gt">
+    <b>怎么用，三步就够：</b>
+    ① 看下面的题面和蓝色标签（那是 AI 给这道题挑的考点）；
+    ② 觉得对点 <b>接受</b>，不对点 <b>修改</b>（点标签可换，再点保存）；实在不行点 <b>不要</b>；
+    ③ 这题过完自动跳下一题，一卷弄完点 <b>下一卷</b>。全弄完跟我说一声，我来落库。
+  </div>
+  <button class="gbtn" id="guideClose">知道了</button>
+</div>
+
+<div class="vocab-panel hidden" id="vocabPanel">
+  <div class="vocab-head">
+    <span class="ttl">受控词表</span>
+    <span class="cnt" id="vocabCnt"></span>
+    <button class="vtab on" data-subject="math">数学</button>
+    <button class="vtab" data-subject="chinese">语文</button>
+    <button class="vtab" data-subject="physics">物理</button>
+    <button class="vtab" data-subject="politics">政治</button>
+    <span class="note">标签逐字用于 AI 打标与落库;可增删改,改动即时生效于后续打标</span>
+  </div>
+  <div class="chips" id="vocabChips"></div>
+</div>
+
+<div class="simple-bar" id="simpleBar">
+  <select id="paperPickSimple"></select>
+  <span class="simple-prog">本卷已定 <b id="spDone">0</b>/<b id="spTotal">0</b><span class="bar"><span class="fill" id="spFill" style="width:0%"></span></span></span>
+  <button class="sbtn" id="tagSimpleBtn">给这卷 AI 打标</button>
+  <button class="sbtn plain" id="nextPaperBtn">下一卷 →</button>
+</div>
+
+<div class="toolbar advanced-only hidden">
+  <select class="paper-pick" id="paperPick"></select>
+  <select id="kindPick">
+    <option value="all">全部题型</option>
+    <option value="choice">选择题</option>
+    <option value="answer">解答/填空</option>
+  </select>
+  <select id="verdictPick">
+    <option value="all">全部状态</option>
+    <option value="suggested">有建议·待裁决</option>
+    <option value="none">未打标</option>
+    <option value="unmatched">建议为空/未匹配</option>
+    <option value="out">含越界标签</option>
+    <option value="accepted">已接受</option>
+    <option value="edited">已修改</option>
+    <option value="rejected">已拒绝</option>
+  </select>
+  <input type="search" id="searchBox" placeholder="题干关键词…">
+  <div class="stat-chips" id="statChips"></div>
+</div>
+
+<div class="actionbar advanced-only hidden">
+  <button class="abtn primary" id="tagBtn">AI 打标本卷</button>
+  <button class="abtn" id="tagAllBtn">全库剩余打标…</button>
+  <button class="abtn stop hidden" id="stopBtn">停止队列</button>
+  <button class="abtn" id="acceptBtn">批量接受(筛选内建议)</button>
+  <span class="runinfo" id="runInfo"></span>
+</div>
+
+<main>
+  <div id="simpleView" class="hidden">
+    <div class="simple-done hidden" id="simpleDone">
+      <div class="dt">这一卷全部弄完了</div>
+      <div class="dd" id="simpleDoneSub"></div>
+      <button class="sbtn" id="doneNextBtn">下一卷 →</button>
+    </div>
+    <div id="simpleCard"></div>
+    <div class="simple-hint" id="simpleHint"></div>
+  </div>
+  <div id="advView" class="hidden">
+    <div class="list-meta" id="listMeta"></div>
+    <div id="list"></div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+<div class="confirm-mask hidden" id="confirmMask">
+  <div class="confirm-box">
+    <div class="ct" id="cfTitle"></div>
+    <div class="cb" id="cfBody"></div>
+    <div class="cf">
+      <button class="abtn" id="cfNo">取消</button>
+      <button class="abtn primary" id="cfYes">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="/katex/katex.min.js"></script>
+<script src="/katex/contrib/auto-render.min.js"></script>
+<script>
+'use strict'
+const $ = (s) => document.querySelector(s)
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+const SUBJ_LABEL = { math:'数学', chinese:'语文', physics:'物理', politics:'政治', english:'英语', other:'综合' }
+
+const state = {
+  library: [], vocab: {}, slug: null, subject: null,
+  questions: [], filters: { kind:'all', verdict:'all', q:'' },
+  vocabSubject: 'math', expanded: new Set(), editMode: new Set(),
+  running: false, loopStop: false,
+  simple: localStorage.getItem('tt-simple') !== '0', // 默认简易模式
+}
+
+/* ---------- 基础 ---------- */
+let toastTimer = null
+function toast(msg, isErr) {
+  const t = $('#toast'); t.textContent = msg; t.classList.toggle('err', !!isErr); t.classList.add('show')
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), isErr ? 6000 : 3200)
+}
+function confirmBox(title, body) {
+  return new Promise((resolve) => {
+    $('#cfTitle').textContent = title; $('#cfBody').textContent = body
+    const mask = $('#confirmMask'); mask.classList.remove('hidden')
+    const done = (v) => { mask.classList.add('hidden'); $('#cfYes').onclick = $('#cfNo').onclick = null; resolve(v) }
+    $('#cfYes').onclick = () => done(true); $('#cfNo').onclick = () => done(false)
+  })
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts)
+  const j = await r.json().catch(() => ({ ok:false, error:'响应解析失败' }))
+  if (!j.ok) throw new Error(j.error || ('HTTP ' + r.status))
+  return j
+}
+function renderKatex(el) {
+  if (!window.renderMathInElement) return
+  renderMathInElement(el, {
+    delimiters: [ {left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false} ],
+    throwOnError: false,
+  })
+}
+const stemPlain = (s) => String(s || '').replace(/\$/g,'').replace(/\s+/g,' ').trim()
+const paperShort = (t) => t.slice(0, 26).replace(/（[^）]*$/, '').replace(/[…\.]$/, '')
+
+/* ---------- 题目状态归类 ---------- */
+function qState(q) {
+  if (q.dbTopics.length) return 'db'
+  const v = q.verdict && q.verdict.action !== 'pending' ? q.verdict : null
+  if (v) return v.action // accepted / edited / rejected
+  const s = q.suggestion
+  if (!s) return 'none'
+  if (!s.topics.length) return 'unmatched'
+  if (s.outOfVocab && s.outOfVocab.length) return 'out'
+  return 'suggested'
+}
+const STATE_LABEL = { db:'库内已有', accepted:'已接受', edited:'已修改', rejected:'已拒绝', none:'未打标', unmatched:'建议为空', out:'含越界', suggested:'待裁决' }
+const isPending = (q) => ['none','unmatched','out','suggested'].includes(qState(q))
+
+function filtered() {
+  const f = state.filters
+  return state.questions.filter((q) => {
+    if (f.kind !== 'all') {
+      if (f.kind === 'choice' && q.kind !== 'choice') return false
+      if (f.kind === 'answer' && q.kind === 'choice') return false
+    }
+    const st = qState(q)
+    if (f.verdict === 'suggested' && !(st === 'suggested' || st === 'out')) return false
+    if (f.verdict === 'none' && !(st === 'none' || st === 'unmatched')) return false
+    if (['accepted','edited','rejected'].includes(f.verdict) && st !== f.verdict) return false
+    if (f.verdict === 'unmatched' && st !== 'unmatched') return false
+    if (f.verdict === 'out' && st !== 'out') return false
+    if (f.q && !stemPlain(q.stem).includes(f.q.trim())) return false
+    return true
+  })
+}
+
+/* ---------- 视图切换 ---------- */
+function renderView() {
+  const simple = state.simple
+  $('#simpleBar').classList.toggle('hidden', !simple)
+  document.querySelectorAll('.advanced-only').forEach((el) => el.classList.add('hidden'))
+  $('#simpleView').classList.toggle('hidden', !simple)
+  $('#advView').classList.toggle('hidden', simple)
+  if (!simple) {
+    document.querySelectorAll('.advanced-only').forEach((el) => el.classList.remove('hidden'))
+    $('#vocabPanel').classList.toggle('hidden', !state._vocabOpen)
+    renderList()
+  } else {
+    $('#vocabPanel').classList.add('hidden')
+    renderSimple()
+  }
+  const btn = $('#viewToggle')
+  btn.textContent = simple ? '高级视图' : '简易模式'
+  btn.title = simple ? '切换到完整列表/过滤/批量视图' : '回到一题一题过的简易模式'
+}
+
+/* ---------- 渲染(共用部件) ---------- */
+function chipHtml(t, cls, title) {
+  return `<span class="tchip ${cls||''}"${title?` title="${esc(title)}"`:''}>${esc(t)}</span>`
+}
+function tagAreaHtml(q, vocab) {
+  const editing = state.editMode.has(q.id)
+  const sugg = q.suggestion
+  const finalTopics = q.verdict && q.verdict.action !== 'pending' ? q.verdict.topics : (sugg ? sugg.topics : [])
+  let tagRows = ''
+  if (editing) {
+    const sel = new Set(q._editTopics || [])
+    const kw = (q._editKw || '').trim()
+    const pool = vocab.filter((t) => !kw || t.includes(kw))
+    tagRows += `<div class="tagrow"><span class="taglab">选标签</span><span class="tagrow pickzone" style="display:inline">` +
+      pool.map((t) => `<span class="tchip clickable ${sel.has(t)?'on':''}" data-pick="${esc(t)}">${esc(t)}</span>`).join('') +
+      (pool.length ? '' : '<span class="tchip out">词表无匹配——可去页首词表添加</span>') +
+      `</span></div>` +
+      `<div class="tagrow"><span class="taglab">筛选</span><input type="search" class="qbtn" style="width:180px" data-editkw value="${esc(q._editKw||'')}" placeholder="输入过滤词表…"></div>`
+  } else {
+    if (sugg && sugg.topics.length) tagRows += `<div class="tagrow"><span class="taglab">AI 建议</span>${sugg.topics.map((t)=>chipHtml(t,'sugg')).join('')}</div>`
+    if (sugg && sugg.outOfVocab && sugg.outOfVocab.length) tagRows += `<div class="tagrow"><span class="taglab">越界</span>${sugg.outOfVocab.map((t)=>chipHtml(t,'out','不在受控词表——可加入词表后重打')).join('')}</div>`
+    if (sugg && !sugg.topics.length) tagRows += `<div class="tagrow"><span class="taglab">AI 建议</span><span class="tchip out">未给出有效标签，请手工修改</span></div>`
+    if (q.dbTopics.length) tagRows += `<div class="tagrow"><span class="taglab">库内</span>${q.dbTopics.map((t)=>chipHtml(t,'dbt')).join('')}</div>`
+    if (q.verdict && q.verdict.action !== 'pending') tagRows += `<div class="tagrow"><span class="taglab">已定</span>${(q.verdict.topics||[]).map((t)=>chipHtml(t, q.verdict.action==='rejected'?'out':'sugg')).join('')}</div>`
+    if (!tagRows) tagRows = `<div class="tagrow"><span class="taglab">建议</span><span style="font-size:12px;color:var(--ink3)">这题还没有 AI 建议——点上面的「给这卷 AI 打标」</span></div>`
+  }
+  return { tagRows, editing, finalTopics }
+}
+function cardBodyHtml(q, vocab, big) {
+  const kindLabel = q.multiple ? '多选' : (q.kind === 'choice' ? '单选' : '解答/填空')
+  const { tagRows, editing, finalTopics } = tagAreaHtml(q, vocab)
+  const who = q.suggestion ? `建议来源 ${esc(q.suggestion.model||'')} · ${esc((q.suggestion.ts||'').slice(5,16).replace('T',' '))}` : ''
+  const foot = editing
+    ? `<button class="qbtn acc ${big?'big':''}" data-save="${esc(q.id)}">保存标签</button><button class="qbtn ${big?'big':''}" data-canceledit="${esc(q.id)}">取消</button>`
+    : `<button class="qbtn acc ${big?'big':''}" data-accept="${esc(q.id)}" ${finalTopics.length?'':'disabled'}>接受</button>
+       <button class="qbtn ${big?'big':''}" data-edit="${esc(q.id)}">修改</button>
+       <button class="qbtn rej ${big?'big':''}" data-reject="${esc(q.id)}">不要</button>`
+  return `
+    <div class="simple-sec"><span class="qnum">${q.number}</span><span>第 ${q.number} 题 · ${kindLabel} · ${q.score} 分</span>${q.section?`<span style="color:var(--ink3)">· ${esc(q.section)}</span>`:''}${q.flagged?'<span style="color:var(--warn)">· 存疑拉黑题</span>':''}</div>
+    <div class="stembox" data-stem>${esc(q.stem)}</div>
+    ${q.options.length?`<div class="optsbox">${q.options.map((o)=>`<div class="opt">${esc(o)}</div>`).join('')}</div>`:''}
+    <div class="ansbox"><div class="ah">参考答案</div><div class="ab" data-ans>${q.answer?esc(q.answer):'缺答案（官方答案卷未录）'}</div></div>
+    <div class="tagzone">${tagRows}</div>
+    <div class="qfoot">${foot}<span class="who">${who}</span></div>`
+}
+function katexIn(root) {
+  root.querySelectorAll('[data-stem],[data-ans],.optsbox').forEach((el) => renderKatex(el))
+}
+
+/* ---------- 简易模式 ---------- */
+function renderSimple() {
+  const paper = state.library.find((p) => p.slug === state.slug)
+  const vocab = state.vocab[state.subject] || []
+  // 简易进度
+  if (paper) {
+    const done = paper.accepted + paper.dbTopics
+    $('#spDone').textContent = done; $('#spTotal').textContent = paper.questionCount
+    $('#spFill').style.width = paper.questionCount ? (done/paper.questionCount*100).toFixed(1)+'%' : '0%'
+  }
+  $('#tagSimpleBtn').disabled = state.running
+  const allDone = paper && paper.accepted + paper.dbTopics >= paper.questionCount
+  $('#simpleDone').classList.toggle('hidden', !allDone)
+  if (allDone) {
+    $('#simpleDoneSub').textContent = `${paper.title} · 共 ${paper.questionCount} 题`
+    $('#simpleCard').innerHTML = ''
+    $('#simpleHint').innerHTML = ''
+    return
+  }
+  const qs = state.questions.filter(isPending)
+  if (!qs.length) {
+    $('#simpleCard').innerHTML = `<div class="empty">没有待处理的题。</div>`
+    return
+  }
+  const q = qs[0] // 永远取第一个待处理题:接受/不要后自动跳下一题
+  const st = qState(q)
+  const hint = []
+  hint.push(`本卷还剩 <b>${qs.length}</b> 题`)
+  if (st === 'none' || st === 'unmatched') hint.push('这题还没有 AI 建议,点「给这卷 AI 打标」补一次即可')
+  if (st === 'out') hint.push('蓝色标签旁有<b>橙色越界标签</b>(不在词表里),修改时点掉即可,或去词表加进去')
+  $('#simpleHint').innerHTML = hint.join(' · ')
+  $('#simpleCard').innerHTML = `<div class="qrow open simple-card">${cardBodyHtml(q, vocab, true)}</div>`
+  katexIn($('#simpleCard'))
+}
+async function jumpNextPaper() {
+  const p = state.library.find((x) => x.questionCount > x.accepted + x.dbTopics)
+  if (!p) return toast('全库都弄完了!跟我说一声,我来落库')
+  if (p.slug === state.slug) return toast('本卷就是最后一卷啦')
+  state.slug = p.slug
+  state.expanded.clear(); state.editMode.clear()
+  syncPaperSelects()
+  await loadQuestions()
+}
+function syncPaperSelects() {
+  for (const sel of [$('#paperPick'), $('#paperPickSimple')]) {
+    sel.value = state.slug || ''
+  }
+}
+
+/* ---------- 高级列表 ---------- */
+function renderHeader() {
+  const total = state.library.reduce((a,p)=>a+p.questionCount,0)
+  const done = state.library.reduce((a,p)=>a+p.accepted+p.dbTopics,0)
+  $('#gDone').textContent = done; $('#gTotal').textContent = total
+  $('#gFill').style.width = total ? (done/total*100).toFixed(1)+'%' : '0%'
+}
+
+function renderPaperPick() {
+  const groups = {}
+  for (const p of state.library) (groups[p.subject] ||= []).push(p)
+  const html = Object.entries(groups).map(([sub, papers]) => {
+    const label = SUBJ_LABEL[sub] || sub
+    const opts = papers.map((p) => {
+      const done = p.accepted + p.dbTopics
+      const mark = p.suggested ? ` · 建议${p.suggested}` : ''
+      return `<option value="${esc(p.slug)}">${esc(paperShort(p.title))}（${done}/${p.questionCount}${mark}）</option>`
+    }).join('')
+    return `<optgroup label="${esc(label)}">${opts}</optgroup>`
+  }).join('')
+  $('#paperPick').innerHTML = html
+  $('#paperPickSimple').innerHTML = html
+  if (!state.slug && state.library.length) {
+    // 首选:有 AI 建议且没处理完的卷;否则第一套没处理完的
+    const best = state.library.find((p) => p.suggested > 0 && p.accepted + p.dbTopics < p.questionCount)
+      || state.library.find((p) => p.accepted + p.dbTopics < p.questionCount)
+      || state.library[0]
+    state.slug = best.slug
+  }
+  syncPaperSelects()
+}
+
+function renderStats() {
+  const qs = state.questions
+  const c = { sugg:0, none:0, acc:0, edit:0, rej:0, db:0, unmatched:0, out:0 }
+  for (const q of qs) {
+    const st = qState(q)
+    if (st === 'suggested') c.sugg++
+    else if (st === 'out') c.out++
+    else if (st === 'unmatched') c.unmatched++
+    else if (st === 'none') c.none++
+    else if (st === 'accepted') c.acc++
+    else if (st === 'edited') c.edit++
+    else if (st === 'rejected') c.rej++
+    else if (st === 'db') c.db++
+  }
+  $('#statChips').innerHTML =
+    `<span class="schip">共 <b>${qs.length}</b></span>` +
+    `<span class="schip ok">接受 <b>${c.acc}</b></span>` +
+    `<span class="schip">修改 <b>${c.edit}</b></span>` +
+    `<span class="schip bad">拒绝 <b>${c.rej}</b></span>` +
+    `<span class="schip">待裁决 <b>${c.sugg}</b></span>` +
+    `<span class="schip warn">未匹配 <b>${c.unmatched}</b></span>` +
+    `<span class="schip warn">越界 <b>${c.out}</b></span>` +
+    `<span class="schip">库内已有 <b>${c.db}</b></span>`
+}
+
+function renderList() {
+  const rows = filtered()
+  const paper = state.library.find((p) => p.slug === state.slug)
+  $('#listMeta').textContent = paper
+    ? `${paper.title} · ${SUBJ_LABEL[paper.subject]||paper.subject} · 筛选显示 ${rows.length}/${state.questions.length} 题（AI 建议 ${paper.suggested} · 已定 ${paper.accepted + paper.dbTopics}/${paper.questionCount}）`
+    : ''
+  const list = $('#list')
+  if (!rows.length) {
+    list.innerHTML = `<div class="empty">当前筛选下没有题目。${state.questions.length ? '试试放宽过滤条件，或点「AI 打标本卷」生成建议。' : '选择一套试卷开始。'}</div>`
+    return
+  }
+  const vocab = state.vocab[state.subject] || []
+  list.innerHTML = rows.map((q) => {
+    const st = qState(q)
+    const open = state.expanded.has(q.id)
+    const editing = state.editMode.has(q.id)
+    const kindLabel = q.multiple ? '多选' : (q.kind === 'choice' ? '单选' : '解答/填空')
+    let stateCls = 'none', stateText = STATE_LABEL[st] || st
+    if (st === 'suggested') stateCls = 'sugg'
+    else if (st === 'out') { stateCls = 'warn'; stateText = '待裁决·含越界' }
+    else if (st === 'unmatched') { stateCls = 'warn'; stateText = '建议为空' }
+    else if (st === 'none') stateCls = 'none'
+    else if (st === 'accepted') stateCls = 'ok'
+    else if (st === 'edited') stateCls = 'edit'
+    else if (st === 'rejected') stateCls = 'rej'
+    else if (st === 'db') { stateCls = 'db'; stateText = '库内已有' }
+    const { tagRows } = tagAreaHtml(q, vocab)
+    const who = q.suggestion ? `建议来源 ${esc(q.suggestion.model||'')} · ${esc((q.suggestion.ts||'').slice(5,16).replace('T',' '))}` : ''
+    return `<div class="qrow ${open?'open':''} verdict-${st==='db'?'':st}" data-id="${esc(q.id)}">
+      <div class="qhead" data-toggle="${esc(q.id)}">
+        <span class="qnum">${q.number}</span>
+        <span class="qmeta">${kindLabel}·${q.score}分</span>
+        <span class="qstem-prev">${esc(stemPlain(q.stem).slice(0,90))}</span>
+        <span class="qstate ${stateCls}">${stateText}</span>
+      </div>
+      <div class="qbody ${open?'':'hidden'}">
+        <div class="qsec">${q.section?`<b>${esc(q.section)}</b> · `:''}第 ${q.number} 题（${kindLabel}，${q.score} 分）${q.flagged?' · <b style="color:var(--warn)">存疑拉黑题</b>':''}</div>
+        <div class="stembox" data-stem>${esc(q.stem)}</div>
+        ${q.options.length?`<div class="optsbox">${q.options.map((o)=>`<div class="opt">${esc(o)}</div>`).join('')}</div>`:''}
+        <div class="ansbox"><div class="ah">参考答案</div><div class="ab" data-ans>${q.answer?esc(q.answer):'缺答案（官方答案卷未录）'}</div></div>
+        <div class="tagzone">${tagRows}</div>
+        <div class="qfoot">
+          ${editing
+            ? `<button class="qbtn acc" data-save="${esc(q.id)}">保存标签</button><button class="qbtn" data-canceledit="${esc(q.id)}">取消</button>`
+            : `<button class="qbtn acc" data-accept="${esc(q.id)}" ${tagAreaFinal(q).length?'':'disabled'}>接受</button>
+               <button class="qbtn" data-edit="${esc(q.id)}">修改</button>
+               <button class="qbtn rej" data-reject="${esc(q.id)}">不要</button>
+               ${q.verdict&&q.verdict.action!=='pending'?`<button class="qbtn" data-clear="${esc(q.id)}">撤销裁决</button>`:''}`}
+          <span class="who">${who}</span>
+        </div>
+      </div>
+    </div>`
+  }).join('')
+
+  list.querySelectorAll('.qrow.open').forEach((row) => katexIn(row))
+  renderStats()
+}
+function tagAreaFinal(q) {
+  return q.verdict && q.verdict.action !== 'pending' ? q.verdict.topics : (q.suggestion ? q.suggestion.topics : [])
+}
+
+/* ---------- 词表 ---------- */
+function renderVocab() {
+  const sub = state.vocabSubject
+  const arr = state.vocab[sub] || []
+  $('#vocabCnt').textContent = `${SUBJ_LABEL[sub]||sub} · ${arr.length} 个标签`
+  $('#vocabChips').innerHTML = arr.map((t, i) =>
+    `<span class="chip"><button class="rename" data-rename="${i}" title="点击改名">${esc(t)}</button><button class="x" data-del="${i}" title="删除">✕</button></span>`
+  ).join('') + `<span class="chip add" data-add>＋ 添加标签</span>`
+}
+async function saveVocab() {
+  try {
+    const j = await api('/api/vocab', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ vocab: { [state.vocabSubject]: state.vocab[state.vocabSubject] } }) })
+    state.vocab = j.vocab; renderVocab()
+  } catch (e) { toast('词表保存失败: ' + e.message, true) }
+}
+
+/* ---------- 数据加载 ---------- */
+async function loadLibrary() {
+  const j = await api('/api/library')
+  state.library = j.papers
+  renderHeader(); renderPaperPick()
+  if (state.simple) renderSimple()
+}
+async function loadVocab() {
+  const j = await api('/api/vocab')
+  state.vocab = j.vocab
+  renderVocab()
+}
+async function loadQuestions() {
+  if (!state.slug) return
+  const j = await api('/api/questions?slug=' + encodeURIComponent(state.slug))
+  state.questions = j.questions
+  state.subject = j.paper.subject
+  if (state.simple) renderSimple(); else renderList()
+}
+async function refreshAll() {
+  await Promise.all([loadLibrary(), loadVocab()])
+  await loadQuestions()
+}
+
+/* ---------- 打标 ---------- */
+function setRunning(on, text) {
+  state.running = on
+  $('#tagBtn').disabled = on; $('#tagAllBtn').disabled = on; $('#acceptBtn').disabled = on
+  $('#tagSimpleBtn').disabled = on
+  $('#stopBtn').classList.toggle('hidden', !on || !state.loopMode)
+  $('#runInfo').innerHTML = text || ''
+  if (on && state.simple) $('#tagSimpleBtn').textContent = 'AI 打标中…'
+  else if (state.simple) $('#tagSimpleBtn').textContent = '给这卷 AI 打标'
+}
+async function tagPaper(slug, force) {
+  const t0 = Date.now()
+  setRunning(true, `<span class="spin"></span>AI 打标中 <b>${esc(slug)}</b>…（每题 1~3 个考点，dry-run 不写库）`)
+  try {
+    const j = await api('/api/suggest', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ slug, force }) })
+    const sec = ((Date.now()-t0)/1000).toFixed(0)
+    await Promise.all([loadLibrary(), loadQuestions()])
+    const failNote = j.failed && j.failed.length ? `，失败题号：${j.failed.join(',')}` : ''
+    const note = j.note ? `（${j.note}）` : ''
+    toast(`打标完成：${j.done||0} 题 · ${sec}s${failNote} ${note}`, !!(j.failed && j.failed.length))
+  } catch (e) {
+    toast('打标失败: ' + e.message, true)
+    await Promise.all([loadLibrary(), loadQuestions()])
+  } finally {
+    if (!state.loopMode || state.loopStop) setRunning(false)
+  }
+}
+async function runAllLoop() {
+  const pending = state.library.filter((p) => p.questionCount > p.accepted + p.dbTopics)
+  if (!pending.length) return toast('全库没有待打标的题（均已有裁决或库内标签）')
+  const qCount = pending.reduce((a,p)=>a+(p.questionCount-p.accepted-p.dbTopics),0)
+  const okd = await confirmBox('全库剩余打标（dry-run）',
+    `将按卷循环调用 AI 为 ${pending.length} 套卷约 ${qCount} 题生成考点建议，预计 ${Math.max(2, Math.ceil(qCount*2.2/60))} 分钟以上；已裁决/库内已有标签的题会跳过。开始？`)
+  if (!okd) return
+  state.loopMode = true; state.loopStop = false
+  const results = []
+  for (let i = 0; i < pending.length; i++) {
+    if (state.loopStop) break
+    const p = pending[i]
+    setRunning(true, `<span class="spin"></span>队列 ${i+1}/${pending.length} 卷 · <b>${esc(p.slug)}</b>`)
+    try {
+      const j = await api('/api/suggest', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ slug: p.slug }) })
+      results.push(`${p.slug}: ${j.done||0}${j.failed&&j.failed.length?`(失败${j.failed.length})`:''}`)
+    } catch (e) { results.push(`${p.slug}: 失败(${e.message.slice(0,40)})`) }
+    await loadLibrary()
+  }
+  state.loopMode = false
+  setRunning(false, `队列结束：${results.length} 卷`)
+  await Promise.all([loadLibrary(), loadQuestions()])
+  toast('全库打标队列结束（dry-run，未写库）。明细见各卷。')
+}
+
+/* ---------- 裁决操作 ---------- */
+async function setVerdict(q, action, topics) {
+  try {
+    await api('/api/verdict', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ questionId:q.id, slug:state.slug, number:q.number, action, topics }) })
+    const j = await api('/api/questions?slug=' + encodeURIComponent(state.slug))
+    state.questions = j.questions
+    await loadLibrary()
+    if (state.simple) { renderSimple(); window.scrollTo(0, 0) } else renderList()
+  } catch (e) { toast('操作失败: ' + e.message, true) }
+}
+async function batchAccept() {
+  const rows = filtered().filter((q) => {
+    const st = qState(q)
+    return (st === 'suggested' || st === 'out') && q.suggestion && q.suggestion.topics.length
+  })
+  if (!rows.length) return toast('当前筛选下没有可批量接受的 AI 建议（需先打标）')
+  const okd = await confirmBox('批量接受', `将接受当前筛选下 ${rows.length} 题的 AI 建议标签（不改题面，只记裁决，仍未写库）。继续？`)
+  if (!okd) return
+  const byQ = {}
+  rows.forEach((q) => { byQ[q.id] = q.suggestion.topics })
+  try {
+    await api('/api/verdict-batch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ questionIds: rows.map((q)=>q.id), action:'accepted', slug:state.slug, topicsByQuestion: byQ }) })
+    await Promise.all([loadLibrary(), loadQuestions()])
+    toast(`已批量接受 ${rows.length} 题（dry-run，未写库）`)
+  } catch (e) { toast('批量接受失败: ' + e.message, true) }
+}
+
+/* ---------- 事件绑定 ---------- */
+for (const selId of ['#paperPick', '#paperPickSimple']) {
+  $(selId).addEventListener('change', (e) => {
+    state.slug = e.target.value
+    state.expanded.clear(); state.editMode.clear()
+    syncPaperSelects()
+    loadQuestions()
+  })
+}
+$('#kindPick').addEventListener('change', (e) => { state.filters.kind = e.target.value; renderList() })
+$('#verdictPick').addEventListener('change', (e) => { state.filters.verdict = e.target.value; renderList() })
+$('#searchBox').addEventListener('input', (e) => { state.filters.q = e.target.value; renderList() })
+$('#refreshBtn').addEventListener('click', () => refreshAll().then(() => toast('已刷新')).catch((e)=>toast(e.message,true)))
+$('#viewToggle').addEventListener('click', () => {
+  state.simple = !state.simple
+  localStorage.setItem('tt-simple', state.simple ? '1' : '0')
+  if (!state.simple) state._vocabOpen = false
+  renderView()
+})
+$('#guideClose').addEventListener('click', () => { $('#guideBanner').classList.add('hidden'); localStorage.setItem('tt-guide', '1') })
+$('#vocabToggle').addEventListener('click', () => { state._vocabOpen = !state._vocabOpen; $('#vocabPanel').classList.toggle('hidden', !state._vocabOpen) })
+document.querySelectorAll('.vtab').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.vtab').forEach((x) => x.classList.remove('on'))
+  b.classList.add('on'); state.vocabSubject = b.dataset.subject; renderVocab()
+}))
+$('#vocabChips').addEventListener('click', async (e) => {
+  const del = e.target.closest('[data-del]'); const ren = e.target.closest('[data-rename]'); const add = e.target.closest('[data-add]')
+  const arr = state.vocab[state.vocabSubject] || (state.vocab[state.vocabSubject] = [])
+  if (del) {
+    const t = arr[Number(del.dataset.del)]
+    if (!confirm(`删除标签「${t}」？（删了 AI 以后就不再用它，可随时再加回来）`)) return
+    arr.splice(Number(del.dataset.del), 1); renderVocab(); saveVocab()
+  }
+  else if (add) {
+    const t = prompt('新标签（逐字加入受控词表）:')
+    if (t && t.trim() && !arr.includes(t.trim())) { arr.push(t.trim()); renderVocab(); saveVocab() }
+  } else if (ren) {
+    const i = Number(ren.dataset.rename); const old = arr[i]
+    const t = prompt('修改标签（旧标签已在库中的题不受影响，仅影响后续打标）:', old)
+    if (t && t.trim() && t.trim() !== old) { arr[i] = t.trim(); renderVocab(); saveVocab() }
+  }
+})
+
+$('#tagBtn').addEventListener('click', () => { if (state.slug) tagPaper(state.slug, false) })
+$('#tagSimpleBtn').addEventListener('click', () => { if (state.slug) tagPaper(state.slug, false) })
+$('#tagAllBtn').addEventListener('click', runAllLoop)
+$('#stopBtn').addEventListener('click', () => { state.loopStop = true; $('#runInfo').innerHTML = '<span class="spin"></span>当前卷完成后停止…' })
+$('#acceptBtn').addEventListener('click', batchAccept)
+$('#nextPaperBtn').addEventListener('click', jumpNextPaper)
+$('#doneNextBtn').addEventListener('click', jumpNextPaper)
+
+// 列表/卡片共用点击:接受/修改/不要/撤销/保存
+document.addEventListener('click', (e) => {
+  const toggle = e.target.closest('[data-toggle]')
+  if (toggle) {
+    const id = toggle.dataset.toggle
+    state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id)
+    renderList(); return
+  }
+  const pick = e.target.closest('[data-pick]')
+  if (pick) {
+    const q = state.questions.find((x) => state.editMode.has(x.id))
+    if (!q) return
+    const t = pick.dataset.pick
+    q._editTopics ||= []
+    const i = q._editTopics.indexOf(t)
+    if (i >= 0) q._editTopics.splice(i, 1); else { q._editTopics.push(t); if (q._editTopics.length > 3) q._editTopics.shift() }
+    state.simple ? renderSimple() : renderList()
+    return
+  }
+  const btn = e.target.closest('[data-accept],[data-reject],[data-edit],[data-clear],[data-save],[data-canceledit]')
+  if (!btn) return
+  const id = btn.dataset.accept || btn.dataset.reject || btn.dataset.edit || btn.dataset.clear || btn.dataset.save || btn.dataset.canceledit
+  const q = state.questions.find((x) => x.id === id)
+  if (!q) return
+  if (btn.dataset.accept !== undefined) {
+    setVerdict(q, 'accepted', tagAreaFinal(q))
+  } else if (btn.dataset.reject !== undefined) {
+    setVerdict(q, 'rejected', tagAreaFinal(q))
+  } else if (btn.dataset.edit !== undefined) {
+    state.editMode.add(id)
+    if (!q._editTopics) q._editTopics = tagAreaFinal(q).slice()
+    state.simple ? renderSimple() : (state.expanded.add(id), renderList())
+  } else if (btn.dataset.canceledit !== undefined) {
+    state.editMode.delete(id); delete q._editTopics
+    state.simple ? renderSimple() : renderList()
+  } else if (btn.dataset.save !== undefined) {
+    const topics = q._editTopics || []
+    if (!topics.length) return toast('至少保留一个标签；想清空请用「不要」', true)
+    state.editMode.delete(id)
+    setVerdict(q, 'edited', topics).then(() => { delete q._editTopics })
+  } else if (btn.dataset.clear !== undefined) {
+    setVerdict(q, 'pending', [])
+  }
+})
+document.addEventListener('input', (e) => {
+  if (e.target.hasAttribute && e.target.hasAttribute('data-editkw')) {
+    const q = state.questions.find((x) => state.editMode.has(x.id))
+    if (q) {
+      q._editKw = e.target.value
+      state.simple ? renderSimple() : renderList()
+      const box = document.querySelector('[data-editkw]')
+      if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length) }
+    }
+  }
+})
+
+/* ---------- 启动 ---------- */
+if (!localStorage.getItem('tt-guide')) $('#guideBanner').classList.remove('hidden')
+refreshAll().then(() => renderView()).catch((e) => toast('初始化失败: ' + e.message, true))
+</script>
+</body>
+</html>
