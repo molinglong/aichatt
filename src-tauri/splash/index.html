@@ -9,10 +9,13 @@
      2026-10-08 方案B「描线绘制」:等待态只显示 logo;连不上时才浮现错误文案 + 重试。
      2026-11-08 删点阵背景;深色底对齐正文「深渊微光」--background #040508 / --foreground #EEF1FC。
      2026-11-11 方案C「落点」重设计(design/preview-splash-redesign.html 挑稿,C + 只留图形标):
-     删 aichatt 字标,仅「八」形标(64px)落光学中心(body padding-bottom 抬升);
-     两笔描线后,红点自上方坠落、加速触地压扁回弹落位,一圈涟漪散开。
-     动效只用 transform/opacity;reduced-motion 呈终态(红点在位、无涟漪)。
-     探测/错误/跳转逻辑零改动,仅 MIN_IN 1150→1800(等红点落定 ~1.56s + 涟漪散尽 ~1.81s)。 */
+     删 aichatt 字标,仅「八」形标(64px)落光学中心(body padding-bottom 抬升)。
+     2026-11-14 方案5「墨印」重设计(design/preview-splash-innovate.html 挑稿,五选一):
+     整标「盖章」压落(1.55 过冲 → .93 压扁 → 1.035 → .985 回稳),落稳瞬间一圈墨光如印泥
+     自标心晕开消散,红点作为印上的一点随后过冲钤入,带一圈涟漪。全程 ~1.48s,MIN_IN 1800 不用动。
+     动效只用 transform/opacity;reduced-motion 呈终态(标在位、红点钤好、无晕光)。
+     探测/错误/跳转逻辑零改动。另:svg 补 overflow:visible —— 旧版坠落红点的起跳段
+     在 viewBox 外,被上缘整段裁掉(真机只看到最后 ~1/3),补上后任何出界轨迹不再被裁。 */
   :root {
     --bg: #f5f5f7;
     --ink: #1d1d1f;
@@ -21,6 +24,7 @@
     --btn-bg: #ffffff;
     --btn-hover: #f0f0f2;
     --accent: #e5484d;
+    --halo-c: rgb(29 29 31 / .07);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -30,6 +34,7 @@
       --line: #3a3a3c;
       --btn-bg: #2c2c2e;
       --btn-hover: #3a3a3c;
+      --halo-c: rgb(238 241 252 / .09);
     }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -60,9 +65,22 @@
     text-align: center;
     padding: 0 32px;
   }
-  /* 品牌形标:内联 SVG「八」。下落红点的初始偏移只写在动效媒体查询内,
+  /* 锁标壳:晕光锚在 mark 中心。margin 定心,不占 transform,与 bleed 动效无冲突 */
+  .lockup { position: relative; display: flex; }
+  .halo {
+    position: absolute;
+    width: 240px; height: 240px;
+    left: 50%; top: 50%;
+    margin: -120px 0 0 -120px;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, var(--halo-c), transparent 72%);
+    opacity: 0; /* 常隐:只在动效媒体查询内由 bleed 驱动;reduced-motion 下天然无晕光 */
+    pointer-events: none;
+    z-index: 0;
+  }
+  /* 品牌形标:内联 SVG「八」。钤入红点的初始 scale(0) 只写在动效媒体查询内,
      降级(reduced-motion)下天然呈现终态(红点在位),不会留下空位。 */
-  .drawmark { width: 64px; height: 49px; display: block; color: var(--ink); }
+  .drawmark { width: 64px; height: 49px; display: block; color: var(--ink); overflow: visible; position: relative; z-index: 1; }
   .dropdot { transform-box: fill-box; transform-origin: center; }
   .ripple {
     opacity: 0;
@@ -94,25 +112,31 @@
   @keyframes out { to { opacity: 0; transform: scale(1.04); } }
 
   @media (prefers-reduced-motion: no-preference) {
-    .s1, .s2 { stroke-dasharray: 1; stroke-dashoffset: 1; }
-    .s1 { animation: draw 500ms ease-out 140ms forwards; }
-    .s2 { animation: draw 500ms ease-out 340ms forwards; }
-    @keyframes draw { to { stroke-dashoffset: 0; } }
-    /* 红点自上方坠落:加速 → 触地压扁 → 回弹落位(920ms 起拍,52% 处触地) */
-    .dropdot { transform: translate(0, -64px); animation: drop 640ms 920ms forwards; }
-    @keyframes drop {
-      0% { transform: translate(0, -64px); animation-timing-function: cubic-bezier(.45,.05,.8,.4); }
-      52% { transform: translate(0, 0) scale(1.28, .7); animation-timing-function: cubic-bezier(.2,.6,.35,1); }
-      70% { transform: translate(0, -9px) scale(.95, 1.06); }
-      86% { transform: translate(0, 0) scale(1.06, .94); }
-      100% { transform: none; }
+    /* 盖章压落:自上方 1.55 倍压下(先淡入),触地过冲压扁 .93,回弹 1.035 → .985 回稳 */
+    .drawmark { animation: stamp 640ms cubic-bezier(.3,.6,.3,1) both; }
+    @keyframes stamp {
+      0% { transform: scale(1.55); opacity: 0; }
+      30% { opacity: 1; }
+      46% { transform: scale(.93); }
+      64% { transform: scale(1.035); }
+      82% { transform: scale(.985); }
+      100% { transform: scale(1); opacity: 1; }
     }
-    .ripple { animation: ripple 560ms ease-out 1250ms; }
+    /* 印泥晕开:盖章触地(~280ms)瞬间,一圈墨光自标心晕开消散 */
+    .halo { animation: bleed 520ms ease-out 280ms forwards; }
+    @keyframes bleed {
+      0% { opacity: .55; transform: scale(.55); }
+      100% { opacity: 0; transform: scale(1.45); }
+    }
+    /* 红点钤入:整标落稳后,红点过冲回弹落位(600ms 起拍) */
+    .dropdot { transform: scale(0); animation: pop 340ms cubic-bezier(.34,1.7,.64,1) 600ms forwards; }
+    @keyframes pop { to { transform: scale(1); } }
+    .ripple { animation: ripple 560ms ease-out 920ms; }
     @keyframes ripple {
       0% { opacity: .4; transform: scale(.5); }
       100% { opacity: 0; transform: scale(3.2); }
     }
-    /* 错误态浮现(红点早已落定,只淡入文字) */
+    /* 错误态浮现(盖章早已落定,只淡入文字) */
     body.error .status { animation: fade-up 300ms ease both; }
     body.error button { animation: fade-up 300ms ease 80ms both; }
     body.error .hint { animation: fade-up 300ms ease 160ms both; }
@@ -122,12 +146,15 @@
 </head>
 <body>
   <div class="panel">
-    <svg class="drawmark" viewBox="0 0 128 98" fill="none" aria-hidden="true">
-      <path class="s1" d="M60 6 C46 32 28 60 8 90" stroke="currentColor" stroke-width="14" stroke-linecap="round" pathLength="1"/>
-      <path class="s2" d="M68 24 C80 46 98 70 120 90" stroke="currentColor" stroke-width="14" stroke-linecap="round" pathLength="1"/>
-      <circle class="dropdot" cx="86" cy="12" r="8" fill="var(--accent)"/>
-      <circle class="ripple" cx="86" cy="12" r="8"/>
-    </svg>
+    <div class="lockup">
+      <div class="halo"></div>
+      <svg class="drawmark" viewBox="0 0 128 98" fill="none" aria-hidden="true">
+        <path class="s1" d="M60 6 C46 32 28 60 8 90" stroke="currentColor" stroke-width="14" stroke-linecap="round" pathLength="1"/>
+        <path class="s2" d="M68 24 C80 46 98 70 120 90" stroke="currentColor" stroke-width="14" stroke-linecap="round" pathLength="1"/>
+        <circle class="dropdot" cx="86" cy="12" r="8" fill="var(--accent)"/>
+        <circle class="ripple" cx="86" cy="12" r="8"/>
+      </svg>
+    </div>
     <div class="status" id="status">无法连接服务器</div>
     <button id="retry" type="button">重试</button>
     <div class="hint" id="hint"></div>
@@ -137,8 +164,8 @@
     // 探测原理:no-cors 模式下 fetch 只在网络层失败时 reject(DNS/连接不通),
     // 服务器返回任何状态码(含 503)都会 resolve opaque 响应 —— 足以判断"能不能连上"。
     // 三拍衔接:入场动画与探测并行互不等待;探测秒回也先播完最短入场闸(MIN_IN,
-    // 覆盖红点落定+涟漪散尽),再补一拍退场(EXIT)才整窗跳转,消除"闪一下硬切";
-    // 远端有 320ms 淡入接住。
+    // 墨印全程 ~1.48s,1800 已覆盖盖章落定+红点钤入+涟漪散尽),再补一拍退场
+    // (EXIT)才整窗跳转,消除"闪一下硬切";远端有 320ms 淡入接住。
     var ORIGIN = window.AICHATT_ORIGIN
     var retryBtn = document.getElementById('retry')
     var hintEl = document.getElementById('hint')
