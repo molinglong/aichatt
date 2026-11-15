@@ -18,7 +18,7 @@ const geistMono = localFont({
 
 export const metadata: Metadata = {
   title: "aichatt",
-  description: "支持 OpenAI、Anthropic、DeepSeek、通义千问、文心一言的多模型 AI 对话平台",
+  description: "个人生活助手:多模型对话打底,出行、闲鱼行情、待办、写作与学习闭环全内置。",
   // PWA 清单: 添加到主屏幕后 standalone 全屏运行,
   // 配合 viewport-fit=cover + globals.css 的 --sat/--sab 安全区变量
   manifest: "/manifest.json",

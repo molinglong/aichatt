@@ -1,9 +1,10 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { Save, Trash2, Loader2, Timer, CheckCircle, AlertCircle, Key, KeyRound, Eye, EyeOff, Zap, ExternalLink, Brain, Plus, Settings2, HelpCircle, Info, MessageSquare, GitBranch, Cpu, Wrench, BarChart3, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Filter, LayoutDashboard, Sparkles, ImageIcon, Check, RefreshCw, Globe, Search, LogOut, User, CalendarDays, Pencil, X, FileUp, Download, Copy, VenetianMask, RotateCcw, Plug, MapPin, FolderOpen, Gauge, Ticket, Gift, Smartphone, FileJson, Watch as WatchIcon, Fish } from 'lucide-react'
+import { Save, Trash2, Loader2, Timer, CheckCircle, AlertCircle, Key, KeyRound, Eye, EyeOff, Zap, ExternalLink, Brain, Plus, Settings2, HelpCircle, Info, MessageSquare, MoreHorizontal, GitBranch, Cpu, Wrench, BarChart3, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Filter, LayoutDashboard, Sparkles, ImageIcon, Check, RefreshCw, Globe, Search, LogOut, User, CalendarDays, Pencil, X, FileUp, Download, Copy, VenetianMask, RotateCcw, Plug, MapPin, FolderOpen, Gauge, Ticket, Gift, Smartphone, FileJson, Watch as WatchIcon, Fish } from 'lucide-react'
 import { signOut, useSession } from 'next-auth/react'
 import { cn } from '@/lib/utils'
+import pkg from '../../package.json'
 import {
   applyAppearance,
   GRID_TONES,
@@ -6857,14 +6858,14 @@ export function SettingsModal({
                         <MessageSquare className="w-6 h-6 text-accent-foreground" />
                       </div>
                       <p className="text-sm font-semibold text-content-primary">aichatt</p>
-                      <p className="text-[11px] text-content-muted">AI 多模型对话助手 · v0.1.0</p>
+                      <p className="text-[11px] text-content-muted">个人生活助手 · 多模型驱动 · v{pkg.version}</p>
                     </div>
 
                     {/* Info rows */}
                     <div className="rounded-xl set-card bg-surface/60 px-3.5 py-2.5 divide-y divide-line/40">
                       <div className="flex items-center justify-between gap-3 py-2">
                         <span className="text-xs text-content-secondary shrink-0">版本</span>
-                        <span className="text-xs text-content-primary text-right">0.1.0</span>
+                        <span className="text-xs text-content-primary text-right">{pkg.version}</span>
                       </div>
                       <div className="flex items-center justify-between gap-3 py-2">
                         <span className="text-xs text-content-secondary shrink-0">技术栈</span>
@@ -6872,11 +6873,11 @@ export function SettingsModal({
                       </div>
                       <div className="flex items-center justify-between gap-3 py-2">
                         <span className="text-xs text-content-secondary shrink-0">数据存储</span>
-                        <span className="text-xs text-content-primary text-right">本地 SQLite / Turso</span>
+                        <span className="text-xs text-content-primary text-right">PostgreSQL（Prisma）</span>
                       </div>
                       <div className="flex items-center justify-between gap-3 py-2">
                         <span className="text-xs text-content-secondary shrink-0">部署平台</span>
-                        <span className="text-xs text-content-primary text-right">Vercel</span>
+                        <span className="text-xs text-content-primary text-right">自托管 VPS</span>
                       </div>
                     </div>
 

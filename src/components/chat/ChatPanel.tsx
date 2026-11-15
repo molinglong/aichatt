@@ -15,6 +15,7 @@ import { loadStudyLesson, patchStudyLesson } from '@/lib/study/lesson-session'
 import { HeroModelChip } from './HeroModelChip'
 import { ModelSelector } from './ModelSelector'
 import { ChatInput } from './ChatInput'
+import { WelcomeEntryCards } from './WelcomeEntryCards'
 import { GoogleMobileNav } from '@/components/mobile/GoogleMobileNav'
 import { ProfileProbe } from './ProfileProbe'
 import { ComparePanel } from './ComparePanel'
@@ -2459,6 +2460,8 @@ export function ChatPanel({
                   <HeroModelChip models={mergedModels} selectedModel={currentModel} onModelChange={handleModelChange} />
                 </span>
               </p>
+              {/* 定位改版(2026-11-15):生活能力露出面——出行/闲鱼问句深链,其余直跳;临时聊天不渲染 */}
+              <WelcomeEntryCards />
             </div>
           )}
         />

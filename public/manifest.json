@@ -1,7 +1,7 @@
 {
   "name": "aichatt",
   "short_name": "aichatt",
-  "description": "支持 OpenAI、Anthropic、DeepSeek、通义千问、文心一言的多模型 AI 对话平台",
+  "description": "个人生活助手:多模型对话打底,出行、闲鱼行情、待办、写作与学习闭环全内置。",
   "start_url": "/chat",
   "scope": "/",
   "display": "standalone",

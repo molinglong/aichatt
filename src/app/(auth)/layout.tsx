@@ -31,17 +31,17 @@ export default function AuthLayout({
         {/* 中部标语 + 药丸 */}
         <div className="relative z-10">
           <h1 className="font-ultra auth-reveal auth-delay-2 text-[clamp(34px,4.6vw,52px)] leading-[1.28] tracking-[0.1em] text-content-primary">
-            让每一次对话
+            帮你接住日常
             <br />
-            都恰到好处
+            也守住学习
           </h1>
           <p className="auth-reveal auth-delay-3 mt-[22px] text-[14.5px] leading-[1.9] tracking-[0.04em] text-content-secondary">
-            多模型自由切换，知识随对话沉淀。
+            多模型自由切换，出行、行情、待办、写作，一句问起。
             <br />
-            一间安静的产房，孕育每一个想法。
+            错题、复习、冲刺，一样管住。
           </p>
           <div className="auth-reveal auth-delay-4 mt-[30px] flex flex-wrap gap-2">
-            {["多模型接入", "知识沉淀", "极简体验"].map((tag) => (
+            {["多模型接入", "生活与学习", "数据在自己手里"].map((tag) => (
               <span
                 key={tag}
                 className="rounded-full border border-line-strong/55 bg-surface/55 px-3.5 py-1.5 text-xs tracking-[0.04em] text-content-secondary backdrop-blur-sm transition hover:-translate-y-px hover:bg-surface/85 hover:text-content-primary"
@@ -54,7 +54,7 @@ export default function AuthLayout({
 
         {/* 底部版权 */}
         <div className="auth-reveal auth-delay-4 relative z-10 text-xs tracking-[0.1em] text-content-muted">
-          © {new Date().getFullYear()} aichatt · AI 多模型对话助手
+          © {new Date().getFullYear()} aichatt · 个人生活助手
         </div>
 
         {/* 缩影：CSS 画的对话卡片，暗示产品形态（纯装饰，宽屏才显示避免拥挤） */}

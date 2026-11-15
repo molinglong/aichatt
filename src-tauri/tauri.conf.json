@@ -46,7 +46,7 @@
       }
     },
     "category": "Productivity",
-    "shortDescription": "AI 多模型对话助手",
-    "longDescription": "支持 OpenAI、Anthropic、DeepSeek、通义千问、文心一言的多模型 AI 对话平台桌面客户端"
+    "shortDescription": "个人生活助手 · 多模型驱动",
+    "longDescription": "多模型对话打底的个人生活助手:出行规划、闲鱼行情、待办、写作画布与学习闭环(复习/拟卷/错题)全内置,桌面客户端"
   }
 }

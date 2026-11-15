@@ -49,21 +49,21 @@ function pingTemplate(type: PingType, p: Record<string, unknown>): PingTemplate 
   switch (type) {
     case "review_due":
       return {
-        source: "学习管家 · 复习到期",
+        source: "管家 · 复习到期",
         icon: "🔁",
         text: `${p.count} 张卡片今天到期:${String(p.items ?? "").slice(0, 80)}。`,
         actions: [{ label: "开始复习", href: "/study?panel=review" }],
       }
     case "lesson_archived":
       return {
-        source: "学习管家 · 结课归档",
+        source: "管家 · 结课归档",
         icon: "✅",
         text: `「${String(p.question ?? "").slice(0, 40)}」讲完了,共 ${p.steps ?? "?"} 步,已存入错题本。${p.weak ? "过程中有没懂的点,复习时会重点再考。" : ""}`,
         actions: [{ label: "回看讲解", href: "/study" }],
       }
     case "monitor_done":
       return {
-        source: `监控 · ${String(p.keyword ?? "")}`,
+        source: `管家 · 监控:${String(p.keyword ?? "")}`,
         icon: "🐟",
         text: `你挂的闲鱼监控「${String(p.keyword ?? "")}」有新数据了。`,
         actions: [{ label: "看行情", href: `/chat/c/${String(p.conversationId ?? "")}` }],

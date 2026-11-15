@@ -9,7 +9,8 @@ import { prefetchTabData, type TabKey } from '@/lib/query/prefetchTab'
 import { useStartNewChat } from '@/hooks/useStartNewChat'
 
 /**
- * 页面导航（聊天 / 学习模式 / 生图 / 观点探索 / 写作画布）单一数据源。
+ * 页面导航（聊天 / 学习 / 生图 / 观点探索 / 写作画布）单一数据源。
+ * （2026-11-15 定位改版:「学习模式」降叫「学习」,顺序与功能不动。）
  *
  * 三处消费：移动端 BottomDock、侧边栏导航（T-C 顶栏下沉后新增）。
  * （原桌面顶栏中部胶囊已随 T-C 下线，导航进侧栏。）
@@ -107,7 +108,7 @@ export function usePageNav(opts?: {
     },
     {
       key: 'study',
-      label: '学习模式',
+      label: '学习',
       shortLabel: '学习',
       icon: BookOpen,
       active: Boolean(isStudyPage),
