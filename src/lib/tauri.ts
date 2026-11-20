@@ -338,8 +338,9 @@ export const tauri = {
 
   /**
    * 关闭窗口:先播「缩小淡出」退场动画(globals.css 的 tauri-app-out,
-   * html 上 data-closing 门控),180ms 后再真正关窗。
-   * 关闭失败(极少见)时回滚动画,窗口恢复可用。
+   * html 上 data-closing 门控),180ms 后收进托盘(2026-11-20 起 close_window
+   * 只隐藏不退出;真退出走 quitApp)。
+   * 无论成败都要摘掉 data-closing —— 否则从托盘拉回窗口时界面仍停在退场态。
    */
   close: () => {
     if (!getIsTauri()) return invoke('close_window')
@@ -349,14 +350,25 @@ export const tauri = {
     return new Promise((resolve) => {
       window.setTimeout(() => {
         invoke('close_window')
-          .catch(() => html.removeAttribute('data-closing'))
-          .finally(() => resolve(null))
+          .finally(() => {
+            html.removeAttribute('data-closing')
+            resolve(null)
+          })
       }, 180)
     })
   },
   minimize: () => invoke('minimize_window'),
   toggleFullscreen: () => invoke('toggle_fullscreen'),
   toggleMaximize: () => invoke('toggle_maximize'),
+
+  /**
+   * 真退出应用(2026-11-20 托盘模式):关闭键默认只收进托盘,长按/右键菜单
+   * 走这里才退出进程。锁定期 Rust 侧会拒绝并推剩余时间提示,不会破锁。
+   */
+  async quitApp(): Promise<void> {
+    if (!getIsTauri()) return
+    await invoke('quit_app')
+  },
 
   /**
    * 监管模式:启动窗口锁定(真全屏 + 置顶 + 拦关闭/最小化 + 失焦拉回)。

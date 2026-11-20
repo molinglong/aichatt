@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { tauri } from '@/lib/tauri'
 
 /**
@@ -44,7 +45,52 @@ export function TrafficLights({ onClose }: { onClose?: () => void } = {}) {
     tauri.toggleFullscreen()
   }
 
+  // 关闭键长按/右键 → 退出菜单(2026-11-20 托盘模式):普通点击 = 收进托盘,
+  // 长按 600ms 或右键才出「退出 aichatt」,避免误退出。
+  const [exitMenuAt, setExitMenuAt] = useState<{ x: number; y: number } | null>(null)
+  const holdTimer = useRef<number | null>(null)
+  const holdFired = useRef(false)
+
+  const clearHold = () => {
+    if (holdTimer.current) {
+      window.clearTimeout(holdTimer.current)
+      holdTimer.current = null
+    }
+  }
+  const openExitMenu = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    setExitMenuAt({
+      x: Math.max(8, Math.min(r.left, window.innerWidth - 168)),
+      y: Math.min(r.bottom + 8, window.innerHeight - 52),
+    })
+  }
+  const startHold = (el: HTMLElement) => {
+    holdFired.current = false
+    clearHold()
+    holdTimer.current = window.setTimeout(() => {
+      holdFired.current = true
+      openExitMenu(el)
+    }, 600)
+  }
+  const handleRedClick = () => {
+    if (holdFired.current) {
+      holdFired.current = false
+      return
+    }
+    handleClose()
+  }
+
+  useEffect(() => {
+    if (!exitMenuAt) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExitMenuAt(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [exitMenuAt])
+
   return (
+    <>
     <div
       className="group/tl flex items-center gap-1.5 select-none"
       // Tauri:禁止这块区域响应拖拽,否则点按钮时会拖动窗口
@@ -55,7 +101,14 @@ export function TrafficLights({ onClose }: { onClose?: () => void } = {}) {
         focused={focused}
         hovered={hovered === 'close'}
         icon={'\u2715' /* × */}
-        onClick={handleClose}
+        onClick={handleRedClick}
+        onPointerDown={(e) => startHold(e.currentTarget)}
+        onPointerUp={clearHold}
+        onPointerLeave={clearHold}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          openExitMenu(e.currentTarget)
+        }}
         onEnter={() => setHovered('close')}
         onLeave={() => setHovered(null)}
       />
@@ -78,6 +131,40 @@ export function TrafficLights({ onClose }: { onClose?: () => void } = {}) {
         onLeave={() => setHovered(null)}
       />
     </div>
+    {exitMenuAt &&
+      createPortal(
+        <>
+          {/* 点外部关闭 */}
+          <div
+            className="fixed inset-0 z-[9998]"
+            onClick={() => setExitMenuAt(null)}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setExitMenuAt(null)
+            }}
+          />
+          <div
+            role="menu"
+            aria-label="关闭选项"
+            className="fixed z-[9999] min-w-[148px] rounded-xl border border-line bg-surface p-1 shadow-lg"
+            style={{ left: exitMenuAt.x, top: exitMenuAt.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-content-primary transition-colors hover:bg-surface-subtle"
+              onClick={() => {
+                setExitMenuAt(null)
+                void tauri.quitApp()
+              }}
+            >
+              退出 aichatt
+            </button>
+          </div>
+        </>,
+        document.body
+      )}
+    </>
   )
 }
 
@@ -89,6 +176,10 @@ function TrafficLight({
   onClick,
   onEnter,
   onLeave,
+  onPointerDown,
+  onPointerUp,
+  onPointerLeave,
+  onContextMenu,
 }: {
   color: 'red' | 'yellow' | 'green'
   icon: string
@@ -97,6 +188,10 @@ function TrafficLight({
   onClick: () => void
   onEnter: () => void
   onLeave: () => void
+  onPointerDown?: (e: React.PointerEvent<HTMLButtonElement>) => void
+  onPointerUp?: () => void
+  onPointerLeave?: () => void
+  onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void
 }) {
   // hover 显色用命名 group(group/tl),避免外层组件的 group 误触发;
   // 字面量类名写死在映射表里,保证 Tailwind JIT 能扫描生成
@@ -111,7 +206,13 @@ function TrafficLight({
       type="button"
       onClick={onClick}
       onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
+      onMouseLeave={() => {
+        onLeave()
+        onPointerLeave?.()
+      }}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onContextMenu={onContextMenu}
       aria-label={color}
       className={[
         'flex h-3 w-3 items-center justify-center rounded-full transition-colors duration-150',

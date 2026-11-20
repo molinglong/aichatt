@@ -75,6 +75,8 @@ fn main() {
             "course_get_state",
             "course_screenshot",
             "course_set_veiled",
+            // 托盘模式:真退出(关闭键长按/右键菜单)
+            "quit_app",
         ])),
     )
     .unwrap();

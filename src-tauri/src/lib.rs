@@ -32,6 +32,10 @@ mod pet_window;
 #[cfg(desktop)]
 use pet_window::*;
 
+// 系统托盘(2026-11-20):关闭 = 收进托盘后台常驻(小鸡图标),托盘菜单显示/退出
+#[cfg(desktop)]
+mod tray;
+
 // 性能采样:CPU / 内存 / GPU,驱动桌面小鸡的过热档位(仅 Windows 有实现)
 #[cfg(target_os = "windows")]
 #[macro_use]
@@ -1198,6 +1202,32 @@ fn deep_link_ask_take(state: tauri::State<'_, DeepLinkPending>) -> Option<DeepLi
     state.0.lock().unwrap().take()
 }
 
+// ── 真退出(2026-11-20):关闭/托盘退出统一走这里 ─────────────────────
+// 关闭键默认只收进托盘(CloseRequested 里 prevent_close + hide);只有托盘菜单
+// 「退出」与关闭键长按/右键菜单会置 QUITTING 再 exit,CloseRequested 才放行。
+// 锁定期不退出:转成剩余时间提示,不破锁。
+#[cfg(desktop)]
+static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 真正退出应用(托盘菜单 / 关闭键长按共用)。锁定期拒绝并提示剩余时间。
+pub fn request_quit(app: &tauri::AppHandle) {
+    #[cfg(desktop)]
+    if focus_lock::fl_is_locked() {
+        focus_lock::fl_emit_blocked(app);
+        return;
+    }
+    #[cfg(desktop)]
+    QUITTING.store(true, std::sync::atomic::Ordering::Relaxed);
+    app.exit(0);
+}
+
+/// 前端「退出 aichatt」调用(关闭键长按/右键菜单)
+#[cfg(desktop)]
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    request_quit(&app);
+}
+
 pub fn run() {
     let builder = tauri::Builder::default()
         // 本地文件能力:系统目录选择对话框(用于用户授权工作区根)
@@ -1264,6 +1294,12 @@ pub fn run() {
             #[cfg(desktop)]
             if let Err(e) = pet_window::pet_ensure_window(app.handle()) {
                 eprintln!("pet window create failed: {}", e);
+            }
+
+            // 系统托盘:关闭 = 收进托盘后台常驻(小鸡图标),菜单显示/退出
+            #[cfg(desktop)]
+            if let Err(e) = tray::setup(app.handle()) {
+                eprintln!("[tray] setup failed: {}", e);
             }
 
             // 浏览器深链:注册 aichatt:// 协议(HKCU,免管理员;每次启动都写,保证装完即生效)
@@ -1337,11 +1373,23 @@ pub fn run() {
                                 focus_lock::fl_emit_blocked(&app_handle);
                                 return;
                             }
-                            if let Some(buddy) = app_handle.get_webview_window("buddy") {
-                                let _ = buddy.close();
-                            }
-                            if let Some(pet) = app_handle.get_webview_window(pet_window::PET_LABEL) {
-                                let _ = pet.close();
+                            // 2026-11-20 用户拍板:关闭 = 收进系统托盘(后台常驻),
+                            // 不再退出进程;真退出走托盘菜单 / 关闭键长按 / 右键菜单,
+                            // 它们会先置 QUITTING 再 exit,那时才允许这里的 close 走到最后。
+                            #[cfg(desktop)]
+                            if !QUITTING.load(std::sync::atomic::Ordering::Relaxed) {
+                                api.prevent_close();
+                                tray::note_pet_visibility(&app_handle);
+                                if let Some(main) = app_handle.get_window("main") {
+                                    let _ = main.hide();
+                                }
+                                // 设置子窗也一并收起,托盘「显示」时按需再开
+                                if let Some(settings) = app_handle.get_webview_window("settings") {
+                                    let _ = settings.hide();
+                                }
+                                if let Some(buddy) = app_handle.get_webview_window("buddy") {
+                                    let _ = buddy.hide();
+                                }
                             }
                         }
                         #[cfg(desktop)]
@@ -1429,6 +1477,7 @@ pub fn run() {
             course_get_state,
             course_screenshot,
             course_set_veiled,
+            quit_app,
             pet_probe,
             pet_set_click_through,
             pet_move_window,

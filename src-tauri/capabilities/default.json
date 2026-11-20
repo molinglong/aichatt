@@ -101,6 +101,7 @@
     "allow-course-reload",
     "allow-course-get-state",
     "allow-course-screenshot",
-    "allow-course-set-veiled"
+    "allow-course-set-veiled",
+    "allow-quit-app"
   ]
 }

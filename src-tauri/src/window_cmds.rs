@@ -51,11 +51,12 @@ pub fn minimize_window(webview: tauri::Webview) -> Result<(), String> {
 }
 
 /// 关闭窗口(对应 macOS 红色按钮)。
-/// 桌面客户端体验:可以配置成"关闭到托盘",但首版先直接退出。
+/// 2026-11-20 起:关闭 = 收进系统托盘(应用后台常驻),不再退出进程;
+/// 真退出走托盘菜单「退出」或关闭键长按/右键菜单(quit_app)。
 #[tauri::command]
 pub fn close_window(webview: tauri::Webview) -> Result<(), String> {
     fl_guard()?;
-    webview.window().close().map_err(|e| e.to_string())
+    webview.window().hide().map_err(|e| e.to_string())
 }
 
 /// 双击标题栏切换最大化(Windows 习惯,补充 macOS 红绿灯没有的行为)。
