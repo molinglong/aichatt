@@ -10,6 +10,7 @@
   --ck-shell: #fffdf6;
   --bub: #ffd75e;
   --bub-ink: #6b5420;
+  --ck-shadow: rgba(232, 162, 60, 0.3);
   position: fixed;
   inset: 0;
   overflow: hidden;
@@ -27,6 +28,7 @@
   --ck-shell: #efe8d8;
   --bub: #e3c452;
   --bub-ink: #4a3a10;
+  --ck-shadow: rgba(217, 154, 48, 0.26);
 }
 
 /* 撸过头气成红蛋:玫红肤(刻意避开性能过载蛋的橙红/蒸汽/裂纹/指标字)。
@@ -37,15 +39,18 @@
   --ck-blush: #ff9bb0;
   --ck-eye: #3b1018;
   --ck-beak: #e06a58;
+  --ck-shadow: rgba(169, 59, 82, 0.3);
 }
 
+/* 草皮地面(挑稿 A 案):全窗 SVG;踩踏区(x 59~341)顶线压着鸡脚底 158~160,
+   两端自由起伏放装饰。夜里随 .night 换暗色,红蛋期地面不变色(影在 mover 里才跟着变) */
 .ground {
   position: absolute;
-  left: 24px;
-  right: 100px;
-  bottom: 12px;
-  border-top: 2px dashed var(--ck-line);
-  opacity: 0.4;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
 }
 
 /* ── 漫步:位置由 JS 大脑驱动(140ms 步进),CSS 只做线性过渡平滑 ── */
@@ -72,6 +77,23 @@
   height: 74px;
   display: block;
   overflow: visible;
+}
+
+/* 脚下软影:蛋壳底在 mover 内 y≈67,影中心压 160.5(草皮顶线上)。
+   在 chickBox 外,所以 hop/蹲跳鸡动影不动;被拎起淡出;红蛋期随 --ck-shadow 变玫红 */
+.shadow {
+  position: absolute;
+  left: 10px;
+  bottom: -1px;
+  width: 54px;
+  height: 11px;
+  background: radial-gradient(closest-side, var(--ck-shadow), transparent 74%);
+  opacity: 1;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+.drag .shadow {
+  opacity: 0;
 }
 
 /* ── 部位 ── */
@@ -431,7 +453,7 @@
 .eggs {
   position: absolute;
   right: 14px;
-  bottom: 9px;
+  bottom: 19px;
   display: flex;
   align-items: flex-end;
   gap: 3px;
@@ -1138,7 +1160,7 @@
 }
 .chaseRock {
   position: absolute;
-  bottom: 12px;
+  bottom: 17px;
   width: 26px;
   height: 20px;
   opacity: 0;
@@ -1552,6 +1574,7 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   transition: opacity 0.22s ease;
   pointer-events: none;
+  white-space: nowrap;
   z-index: 7;
 }
 /* 两端卷轴杆(与报时横幅同款) */
@@ -1593,10 +1616,12 @@
 .hudCol {
   display: flex;
   flex-direction: column;
+  flex: none; /* 列不压缩:宽度由内容撑开,避免标签被挤成两行 */
   align-items: center;
   gap: 2px;
 }
 .hudM {
+  white-space: nowrap;
   font-size: 9px;
   letter-spacing: 0.5px;
   font-weight: 700;
@@ -1625,6 +1650,7 @@
   transition: height 0.4s ease, background 0.3s ease;
 }
 .hudV {
+  white-space: nowrap;
   font-size: 9.5px;
   color: var(--ck-eye);
   opacity: 0.75;
