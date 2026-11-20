@@ -2058,7 +2058,7 @@ export default function PetPage() {
               <i
                 className={s.hudFill}
                 style={{
-                  height: `${Math.max(0, Math.min(100, v ?? 0))}%`,
+                  width: `${Math.max(0, Math.min(100, v ?? 0))}%`,
                   background: v == null ? 'transparent' : v >= danger ? '#e05a4a' : v >= warn ? '#e8a23c' : '#8fb96e',
                 }}
               />
