@@ -1063,7 +1063,7 @@ export default function PetPage() {
       const label = `${String(h).padStart(2, '0')}:00`
       // 摆位:横幅约 150px,离鸡 10px(mover 74 + gap 10);放不下依次退让
       const x = walkRef.current.x
-      const BW = 150
+      const BW = 190
       const gap = 84
       let side: 'right' | 'left' | 'top' = 'right'
       if (x + gap + BW > window.innerWidth - 8) {
@@ -2256,7 +2256,8 @@ export default function PetPage() {
         </div>
         {/* 气泡挂在 mover 里跟着小鸡走(尾巴恒指鸡头顶);穿透命中按 chickRef 判,气泡 pointer-events:none 无影响 */}
         {bubble ? <div className={`${s.bubble} ${s.bubbleShow}`}>{bubble}</div> : null}
-        {/* 整点报时横幅(A 案):卷轴小横幅贴鸡旁,随小鸡移动;右/左/头顶三向避让 */}
+        {/* 整点报时横幅(C 案 2026-11-20 用户最终挑定):大号时间横幅贴鸡旁,
+            左 26px 大字时刻 + 右列「整点啦 / 起来活动一下」;随小鸡移动,三向避让 */}
         {chimeBanner ? (
           <div
             className={`${s.chimeBanner} ${
@@ -2264,9 +2265,11 @@ export default function PetPage() {
             } ${s.chimeBannerShow}`}
             aria-hidden
           >
-            <span>⏰</span>
             <span className={s.chimeBannerTime}>{chimeBanner.label}</span>
-            <span className={s.chimeBannerSub}>整点啦</span>
+            <span className={s.chimeBannerCol}>
+              <span className={s.chimeBannerTitle}>整点啦</span>
+              <span className={s.chimeBannerHint}>起来活动一下</span>
+            </span>
           </div>
         ) : null}
       </div>
