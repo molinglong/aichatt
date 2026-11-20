@@ -532,6 +532,15 @@ export function FocusLockButton() {
   const endsAtMs = status?.endsAtMs ?? 0
   const countUp = status?.countUp ?? false
   const startedAtMs = status?.startedAtMs ?? 0
+
+  // 受限模式(监管锁)期间保持纯聊天:进入锁定若仍在「工作模式」(右侧产物区),
+  // 自动切回聊天模式(2026-11-20 用户口径)。手动/定时/重启续锁/外部启动四条
+  // 路径最终都落到 status.locked,故以 locked 作为唯一触发点。
+  useEffect(() => {
+    if (!locked) return
+    const store = useChatStore.getState()
+    if (store.workMode) store.setWorkMode(false)
+  }, [locked])
   useEffect(() => {
     if (!locked) return
     if (countUp) {
