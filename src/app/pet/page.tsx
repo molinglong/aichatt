@@ -340,6 +340,10 @@ export default function PetPage() {
   const [perf, setPerf] = useState<Perf1 | null>(null)
   /** 性能角标常驻开关(localStorage 记忆) */
   const [hudOn, setHudOn] = useState(false)
+  /** 角标横幅摆位:右侧贴鸡 → 放不下翻左侧 */
+  const [hudSide, setHudSide] = useState<'right' | 'left'>('right')
+  /** 量角标实际宽度用(随温度有值/无值变化) */
+  const hudRef = useRef<HTMLDivElement | null>(null)
   /** 过热缩回红蛋(≥95% 持续 3s 触发,60s 冷却) */
   const [eggMode, setEggMode] = useState(false)
   const [hatching, setHatching] = useState(false)
@@ -1955,6 +1959,26 @@ export default function PetPage() {
   const occTier = hot >= 90 ? 2 : hot >= 80 ? 1 : 0
   const heatTier = eggMode || ultimate ? 0 : Math.max(tempTier, occTier)
   const showHud = hudOn || crit
+  // 角标横幅摆位跟随小鸡(与地面平行的单行横幅):每 350ms 按当前 x 重算一次。
+  // 宽度用实测 offsetWidth(随「温度 —/有值」会变);右侧放不下翻左侧,
+  // 两侧都放不下就保持上一侧(窗口 440 下实测宽度可保证任意站位至少一侧贴得下)。
+  useEffect(() => {
+    if (!showHud) return
+    const calc = () => {
+      const x = walkRef.current.x
+      const vw = window.innerWidth
+      const W = hudRef.current?.offsetWidth ?? 170
+      if (x + 84 + W <= vw - 4) {
+        setHudSide((prev) => (prev === 'right' ? prev : 'right'))
+      } else if (x - 10 - W >= 0) {
+        setHudSide((prev) => (prev === 'left' ? prev : 'left'))
+      }
+      // 两侧都卡边:保持当前侧不动(避免来回跳)
+    }
+    calc()
+    const id = window.setInterval(calc, 350)
+    return () => window.clearInterval(id)
+  }, [showHud])
   const perfName = perf ? (perf.cpu >= perf.mem && perf.cpu >= (perf.gpu ?? 0) ? 'CPU' : perf.mem >= (perf.gpu ?? 0) ? '内存' : 'GPU') : 'CPU'
 
   const rootCls = [
@@ -2040,33 +2064,6 @@ export default function PetPage() {
       <div className={s.eggs} aria-hidden>
         {Array.from({ length: shownEggs }, (_, i) => (
           <EggSvg key={i} />
-        ))}
-      </div>
-      {/* 性能角标:常驻开关或 ≥90% 时自动亮起 */}
-      <div className={`${s.hud} ${crit ? s.hudAlert : ''}`} style={{ opacity: showHud ? 1 : 0 }} aria-hidden>
-        {(
-          [
-            ['CPU', perf?.cpu ?? 0, 80, 90, ''],
-            ['内存', perf?.mem ?? 0, 80, 90, ''],
-            ['GPU', perf?.gpu ?? null, 80, 90, ''],
-            ['温度', perf?.gpuTemp ?? null, 75, 85, '°'],
-          ] as Array<[string, number | null, number, number, string]>
-        ).map(([label, v, warn, danger, unit]) => (
-          <div key={label} className={s.hudCol}>
-            <span className={s.hudM}>{label}</span>
-            <span className={s.hudTrack}>
-              <i
-                className={s.hudFill}
-                style={{
-                  width: `${Math.max(0, Math.min(100, v ?? 0))}%`,
-                  background: v == null ? 'transparent' : v >= danger ? '#e05a4a' : v >= warn ? '#e8a23c' : '#8fb96e',
-                }}
-              />
-            </span>
-            <span className={s.hudV}>
-              {v == null ? '—' : Math.round(v) + unit}
-            </span>
-          </div>
         ))}
       </div>
       {/* 执勤小报告:拽拉绳 + 纸条(监管模式悬停触发) */}
@@ -2270,6 +2267,39 @@ export default function PetPage() {
               <span className={s.chimeBannerTitle}>整点啦</span>
               <span className={s.chimeBannerHint}>起来活动一下</span>
             </span>
+          </div>
+        ) : null}
+        {/* 性能角标(2026-11-20 用户口径):保持原来的「标签 + 竖条 + 数值」三/四列样式,
+            但不再钉在右下角(会被漫步小鸡压住),改成贴在小鸡侧面、与地面平行、
+            跟着小鸡走;右侧放不下翻左侧(实测宽度下任意站位都至少一侧贴得下)。 */}
+        {showHud ? (
+          <div
+            className={`${s.hud} ${hudSide === 'left' ? s.hudLeft : ''} ${crit ? s.hudAlert : ''}`}
+            ref={hudRef}
+            aria-hidden
+          >
+            {(
+              [
+                ['CPU', perf?.cpu ?? 0, 80, 90, ''],
+                ['内存', perf?.mem ?? 0, 80, 90, ''],
+                ['GPU', perf?.gpu ?? null, 80, 90, ''],
+                ['温度', perf?.gpuTemp ?? null, 75, 85, '°'],
+              ] as Array<[string, number | null, number, number, string]>
+            ).map(([label, v, warn, danger, unit]) => (
+              <div key={label} className={s.hudCol}>
+                <span className={s.hudM}>{label}</span>
+                <span className={s.hudTrack}>
+                  <i
+                    className={s.hudFill}
+                    style={{
+                      height: `${Math.max(0, Math.min(100, v ?? 0))}%`,
+                      background: v == null ? 'transparent' : v >= danger ? '#e05a4a' : v >= warn ? '#e8a23c' : '#8fb96e',
+                    }}
+                  />
+                </span>
+                <span className={s.hudV}>{v == null ? '—' : Math.round(v) + unit}</span>
+              </div>
+            ))}
           </div>
         ) : null}
       </div>

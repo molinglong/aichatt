@@ -1536,30 +1536,25 @@
   }
 }
 
-/* ── 性能角标(右下角三根铅笔小竖条) ── */
-/* 性能角标 → 顶部横幅(2026-11-20 用户拍板「做成横幅」):
-   原来钉在右下角的小方标会被漫步的小鸡压住(鸡右缘 342 vs 角标左缘 ~340),
-   改成横跨窗口顶部的一条卷轴横幅(与整点报时横幅同款:白底+橙边+两端卷轴杆),
-   与小鸡(贴底漫步,头顶 y≈80)垂直分离,永不遮挡。 */
+/* 性能角标(2026-11-20 用户口径:保持原竖条三/四列样式,但贴在小鸡侧面与地面平行、
+   随小鸡移动;右侧放不下由 JS 翻左侧 .hudLeft)。原来钉右下角会被漫步小鸡压住。 */
 .hud {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  top: 6px;
+  left: 84px;
+  bottom: 10px;
   display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 10px;
+  gap: 7px;
+  align-items: flex-end;
+  padding: 6px 8px 5px;
   background: rgba(255, 253, 246, 0.92);
   border: 1.8px solid var(--ck-line);
-  border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  border-radius: 9px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   transition: opacity 0.22s ease;
   pointer-events: none;
   z-index: 7;
 }
-/* 两端卷轴杆(与 .chimeBanner 同款) */
+/* 两端卷轴杆(与报时横幅同款) */
 .hud::before,
 .hud::after {
   content: '';
@@ -1572,6 +1567,10 @@
 }
 .hud::before { left: -7px; }
 .hud::after { right: -7px; }
+.hudLeft {
+  left: auto;
+  right: 84px;
+}
 .night .hud {
   background: rgba(35, 34, 32, 0.92);
 }
@@ -1593,28 +1592,26 @@
 }
 .hudCol {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 .hudM {
-  font-size: 8.5px;
-  letter-spacing: 0.4px;
+  font-size: 9px;
+  letter-spacing: 0.5px;
   font-weight: 700;
   color: var(--ck-eye);
   opacity: 0.8;
   font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
 }
-/* 横向短条:占比用宽表示(JSX 里 style.width = 百分比) */
 .hudTrack {
-  width: 24px;
-  height: 5px;
-  border: 1.4px solid var(--ck-line);
-  border-radius: 3px;
+  width: 11px;
+  height: 40px;
+  border: 1.6px solid var(--ck-line);
+  border-radius: 5px;
   background: #f3efe2;
   position: relative;
   overflow: hidden;
-  flex: none;
 }
 .night .hudTrack {
   background: #3a3733;
@@ -1622,14 +1619,13 @@
 .hudFill {
   position: absolute;
   left: 0;
-  top: 0;
+  right: 0;
   bottom: 0;
-  width: 0;
-  border-radius: 2px;
-  transition: width 0.4s ease, background 0.3s ease;
+  height: 0;
+  transition: height 0.4s ease, background 0.3s ease;
 }
 .hudV {
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--ck-eye);
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
