@@ -334,6 +334,8 @@ export default function PetPage() {
   /** 横幅菜单位置与展开起点:打开时按鸡头居中算(默认 = 原 CSS fallback) */
   const [menuLeft, setMenuLeft] = useState(108)
   const [menuOrigin, setMenuOrigin] = useState<'left bottom' | 'right bottom'>('left bottom')
+  /** 整点报时横幅(2026-11-20 用户挑 A 案):时刻 + 摆放方向(右/左/头顶自动避让) */
+  const [chimeBanner, setChimeBanner] = useState<{ label: string; side: 'right' | 'left' | 'top' } | null>(null)
   /** 性能采样(仅 Tauri):3s 一次,驱动过热档位与红蛋 */
   const [perf, setPerf] = useState<Perf1 | null>(null)
   /** 性能角标常驻开关(localStorage 记忆) */
@@ -403,6 +405,7 @@ export default function PetPage() {
   const chimeUntilRef = useRef(0)
   /** 移动大脑状态 */
   const walkRef = useRef({ x: 20, dir: 1, pause: 0, attract: 0, curiousAt: 0, notice: false, dash: null as { x: number } | null })
+  const chimeBannerTimerRef = useRef(0)
   const nuzzlingRef = useRef(false)
   /** 执勤小报告 */
   const cardRef = useRef<HTMLDivElement | null>(null)
@@ -1039,9 +1042,11 @@ export default function PetPage() {
     else perform(pick)
   }, [perform, chirp, chirpSound, showBubble])
 
-  /** 整点报时(2026-11-20 用户挑 B):鸡头上冒一枚气泡报时刻,不再挂 112px 挂钟
-   *  (挂钟从窗口上方滑下来像横幅,用户嫌太重)。气泡在播/手上有互动就顺延
-   *  (每分钟复查);睡着也报但只冒泡不蹦(不吵觉)。 */
+  /** 整点报时(2026-11-20 用户挑 A 案 · 原型 design/preview-pet-chime-banner.html):
+   *  鸡旁展开一条「卷轴小横幅」——白底橙边 + 两端卷轴杆 + 300ms 展开,停 3.6s 收起,
+   *  与右键菜单同款。摆位按小鸡当前位置自动避让:右侧放得下贴右,否则贴左,
+   *  两侧都放不下(鸡在中间)退化为头顶居中。气泡在播/手上有互动就顺延;
+   *  睡着也报但只出横幅不蹦(不吵觉)。 */
   const chimeNow = useCallback(
     (force = false) => {
       const now = new Date()
@@ -1055,11 +1060,22 @@ export default function PetPage() {
       chimeHourRef.current = h
       // 报时优先:追跑中的小剧场收场,小鸡立正
       if (chasePhaseRef.current !== 'idle') abortChase()
-      showBubble(h === 0 ? '⏰ 午夜 12 点啦!' : `⏰ ${h} 点啦!`, 3600)
+      const label = `${String(h).padStart(2, '0')}:00`
+      // 摆位:横幅约 150px,离鸡 10px(mover 74 + gap 10);放不下依次退让
+      const x = walkRef.current.x
+      const BW = 150
+      const gap = 84
+      let side: 'right' | 'left' | 'top' = 'right'
+      if (x + gap + BW > window.innerWidth - 8) {
+        side = x - gap - BW >= 8 ? 'left' : 'top'
+      }
+      setChimeBanner({ label, side })
       chimeUntilRef.current = Date.now() + 3600
       perform('hop1')
+      window.clearTimeout(chimeBannerTimerRef.current)
+      chimeBannerTimerRef.current = window.setTimeout(() => setChimeBanner(null), 3600)
     },
-    [perform, showBubble, abortChase]
+    [perform, abortChase]
   )
 
   /* ── 执勤小报告:监管模式悬停 450ms → 拽绳 480ms → 窗口长高纸条展开 ── */
@@ -2240,6 +2256,19 @@ export default function PetPage() {
         </div>
         {/* 气泡挂在 mover 里跟着小鸡走(尾巴恒指鸡头顶);穿透命中按 chickRef 判,气泡 pointer-events:none 无影响 */}
         {bubble ? <div className={`${s.bubble} ${s.bubbleShow}`}>{bubble}</div> : null}
+        {/* 整点报时横幅(A 案):卷轴小横幅贴鸡旁,随小鸡移动;右/左/头顶三向避让 */}
+        {chimeBanner ? (
+          <div
+            className={`${s.chimeBanner} ${
+              chimeBanner.side === 'left' ? s.chimeBannerLeft : chimeBanner.side === 'top' ? s.chimeBannerTop : ''
+            } ${s.chimeBannerShow}`}
+            aria-hidden
+          >
+            <span>⏰</span>
+            <span className={s.chimeBannerTime}>{chimeBanner.label}</span>
+            <span className={s.chimeBannerSub}>整点啦</span>
+          </div>
+        ) : null}
       </div>
       {menu ? (
         <div className={s.menu} data-menu style={{ left: menuLeft, transformOrigin: menuOrigin }}>

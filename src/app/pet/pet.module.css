@@ -1766,3 +1766,80 @@
 .signCard:active {
   transform: translateX(-50%) scale(0.97) rotate(-1.6deg);
 }
+
+/* ── 整点报时横幅(A 案,2026-11-20 用户挑定;原型 design/preview-pet-chime-banner.html)──
+   右键菜单同款卷轴小横幅:白底 + 橙描边 + 两端卷轴杆,从鸡侧 300ms 展开,停 3.6s。
+   挂在 .mover 里随小鸡走;右/左/头顶三向由 JS 按鸡位置选(见 chimeNow)。 */
+.chimeBanner {
+  position: absolute;
+  left: 84px;
+  bottom: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--ck-shell);
+  border: 2px solid var(--ck-line);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  color: var(--ck-eye);
+  font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  white-space: nowrap;
+  opacity: 0;
+  transform: scaleX(0.2);
+  transform-origin: left bottom;
+  pointer-events: none;
+  z-index: 11;
+}
+/* 两端小杆:横幅的卷轴杆(与右键菜单 .menu 同款) */
+.chimeBanner::before,
+.chimeBanner::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--ck-line);
+}
+.chimeBanner::before { left: -7px; }
+.chimeBanner::after { right: -7px; }
+
+.chimeBannerLeft {
+  left: auto;
+  right: 84px;
+  transform-origin: right bottom;
+}
+.chimeBannerTop {
+  left: 50%;
+  right: auto;
+  bottom: 96px;
+  transform: translateX(-50%) scaleX(0.2);
+  transform-origin: center bottom;
+}
+.chimeBannerShow {
+  animation: chimeUnfurl 300ms cubic-bezier(0.22, 0.9, 0.36, 1) both;
+}
+.chimeBannerTop.chimeBannerShow {
+  animation-name: chimeUnfurlTop;
+}
+@keyframes chimeUnfurl {
+  from { opacity: 0; transform: scaleX(0.2); }
+  to { opacity: 1; transform: scaleX(1); }
+}
+@keyframes chimeUnfurlTop {
+  from { opacity: 0; transform: translateX(-50%) scaleX(0.2); }
+  to { opacity: 1; transform: translateX(-50%) scaleX(1); }
+}
+.chimeBannerTime {
+  font: 700 14px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.3px;
+}
+.chimeBannerSub {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.72;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chimeBannerShow { animation-duration: 1ms; }
+}
