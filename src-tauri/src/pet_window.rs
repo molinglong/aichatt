@@ -57,16 +57,27 @@ pub fn pet_home(app: &tauri::AppHandle) -> Result<(i32, i32), String> {
     Ok((x, y))
 }
 
+/// 生产包线上站点(与 src-tauri/splash/config.js 的 AICHATT_ORIGIN 同一域名,改域名两处同步)
+const PROD_ORIGIN: &str = "https://chat.yuban.icu";
+
 /// 创建 pet 窗口(不存在时)。先整窗穿透 + 落到任务栏上沿,再交给前端接管。
 pub fn pet_ensure_window(app: &tauri::AppHandle) -> Result<(), String> {
     if app.get_webview_window(PET_LABEL).is_some() {
         return Ok(());
     }
-    let win = tauri::WebviewWindowBuilder::new(
-        app,
-        PET_LABEL,
-        tauri::WebviewUrl::App("/pet/".into()),
-    )
+    // 生产包 frontendDist 只有 splash 兜底页:App("/pet/") 会落在壳内 404 = 白屏
+    // (2026-11-20 用户报「小鸡一直加载中」的根因)。生产必须直连线上站点;
+    // dev/调试构建仍走 devUrl(localhost:3456)。
+    let pet_url = if cfg!(debug_assertions) {
+        tauri::WebviewUrl::App("/pet/".into())
+    } else {
+        tauri::WebviewUrl::External(
+            format!("{PROD_ORIGIN}/pet/")
+                .parse()
+                .map_err(|e| format!("pet url: {e}"))?,
+        )
+    };
+    let win = tauri::WebviewWindowBuilder::new(app, PET_LABEL, pet_url)
     .title("桌面小鸡")
     .inner_size(PET_W, PET_H)
     .position(0.0, 0.0)

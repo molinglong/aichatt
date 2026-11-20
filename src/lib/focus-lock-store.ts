@@ -201,9 +201,9 @@ const FL_SCHED_ACTIVE_KEY = 'focusLock:schedActive'
 const FL_SCHED_WIN_KEY = 'focusLock:schedWin'
 
 export const FOCUS_SKIP_QUOTA_PER_MONTH = 2
-/** 测试期跳过不限次(2026-11-20 用户口径:测试模式别卡人)。正式版改回 false
- *  即恢复每月 2 次;used 计数照记,只是不再挡住入口。 */
-export const FOCUS_SKIP_QUOTA_UNLIMITED = true
+/** 测试期不限次已下线(2026-11-20 用户口径):恢复每月 2 次。
+ *  保留开关只为将来临时放开,别再默认 true。 */
+export const FOCUS_SKIP_QUOTA_UNLIMITED = false
 
 export interface FocusLockWindow {
   id: string
