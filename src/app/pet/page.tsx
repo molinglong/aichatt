@@ -334,8 +334,6 @@ export default function PetPage() {
   /** 横幅菜单位置与展开起点:打开时按鸡头居中算(默认 = 原 CSS fallback) */
   const [menuLeft, setMenuLeft] = useState(108)
   const [menuOrigin, setMenuOrigin] = useState<'left bottom' | 'right bottom'>('left bottom')
-  /** 整点报时钟:非 null 时挂钟在台上(h/m 为报时时刻) */
-  const [chimeAt, setChimeAt] = useState<{ h: number; m: number } | null>(null)
   /** 性能采样(仅 Tauri):3s 一次,驱动过热档位与红蛋 */
   const [perf, setPerf] = useState<Perf1 | null>(null)
   /** 性能角标常驻开关(localStorage 记忆) */
@@ -381,6 +379,8 @@ export default function PetPage() {
   const lockedRef = useRef(false)
   const nightRef = useRef(false)
   const bubbleTimerRef = useRef<number>(0)
+  /** 气泡是否正在台上(报时判据用;timer id 不清零,单看它必然误判「永远在播」) */
+  const bubbleBusyRef = useRef(false)
   const audioRef = useRef<AudioContext | null>(null)
   /** 性能过热:≥95% 起始时刻 / 冷却截止 / 当前是否红蛋 */
   const hotSinceRef = useRef(0)
@@ -401,7 +401,6 @@ export default function PetPage() {
   /** 整点报时:上一枚已敲的小时 + 报时钟在台截止时刻 */
   const chimeHourRef = useRef(-1)
   const chimeUntilRef = useRef(0)
-  const chimeTimerRef = useRef(0)
   /** 移动大脑状态 */
   const walkRef = useRef({ x: 20, dir: 1, pause: 0, attract: 0, curiousAt: 0, notice: false, dash: null as { x: number } | null })
   const nuzzlingRef = useRef(false)
@@ -443,8 +442,12 @@ export default function PetPage() {
 
   const showBubble = useCallback((text: string, ms = 1900) => {
     setBubble(text)
+    bubbleBusyRef.current = true
     window.clearTimeout(bubbleTimerRef.current)
-    bubbleTimerRef.current = window.setTimeout(() => setBubble(null), ms)
+    bubbleTimerRef.current = window.setTimeout(() => {
+      setBubble(null)
+      bubbleBusyRef.current = false
+    }, ms)
   }, [])
 
   /** 点复习牌:把主窗提到前台并直落学习台复习抽屉(/study?panel=review 现成深链) */
@@ -1036,8 +1039,9 @@ export default function PetPage() {
     else perform(pick)
   }, [perform, chirp, chirpSound, showBubble])
 
-  /** 整点报时钟:拉一块简约挂钟报当前时刻,挂 ~4.6s 自己退下。
-   *  气泡在播/手上有互动就顺延(每分钟复查);睡着也报但只亮钟不蹦(不吵觉)。 */
+  /** 整点报时(2026-11-20 用户挑 B):鸡头上冒一枚气泡报时刻,不再挂 112px 挂钟
+   *  (挂钟从窗口上方滑下来像横幅,用户嫌太重)。气泡在播/手上有互动就顺延
+   *  (每分钟复查);睡着也报但只冒泡不蹦(不吵觉)。 */
   const chimeNow = useCallback(
     (force = false) => {
       const now = new Date()
@@ -1045,18 +1049,15 @@ export default function PetPage() {
       if (!force) {
         if (now.getMinutes() !== 0) return
         if (chimeHourRef.current === h) return
-        if (bubbleTimerRef.current) return
+        if (bubbleBusyRef.current) return
         if (pressRef.current.down) return
       }
       chimeHourRef.current = h
-      chimeUntilRef.current = Date.now() + 4800
-      // 报时优先:追跑中的小剧场收场,小鸡立正看钟
+      // 报时优先:追跑中的小剧场收场,小鸡立正
       if (chasePhaseRef.current !== 'idle') abortChase()
-      setChimeAt({ h, m: now.getMinutes() })
-      showBubble(h === 0 ? '午夜 12 点!' : `${h} 点啦!`, 3200)
+      showBubble(h === 0 ? '⏰ 午夜 12 点啦!' : `⏰ ${h} 点啦!`, 3600)
+      chimeUntilRef.current = Date.now() + 3600
       perform('hop1')
-      window.clearTimeout(chimeTimerRef.current)
-      chimeTimerRef.current = window.setTimeout(() => setChimeAt(null), 4600)
     },
     [perform, showBubble, abortChase]
   )
@@ -1978,10 +1979,7 @@ export default function PetPage() {
     >
       {/* 防不透明底:root layout 的 body 带 bg-background 类,必须 !important 才压得过 */}
       <style>{'html,body{background:transparent!important;margin:0;overflow:hidden}'}</style>
-      {/* 整点报时钟:画在小鸡身后(z 序在前),指针指真实时刻 */}
-      <div className={`${s.chime} ${chimeAt ? s.chimeShow : ''}`} aria-hidden>
-        <ChimeClock h={chimeAt?.h ?? 0} m={chimeAt?.m ?? 0} />
-      </div>
+      {/* 整点报时改为鸡头气泡(2026-11-20 用户挑 B),不再挂挂钟 */}
       <div className={s.ground} />
       {/* 举牌:到点 / 濒临 ≤10 分 / 逾期(红牌+皱眉) */}
       {sign ? (
@@ -2471,50 +2469,3 @@ function ChaseBirdSvg() {
   )
 }
 
-/** 简约蜡笔挂钟:只留 12/3/6/9 四个刻度,时针/分针指真实时刻 */
-function ChimeClock({ h, m }: { h: number; m: number }) {
-  const hourDeg = (h % 12) * 30 + m * 0.5
-  const minDeg = m * 6
-  const tick = (deg: number) => (
-    <line
-      key={deg}
-      x1="60"
-      y1="12"
-      x2="60"
-      y2="21"
-      transform={`rotate(${deg} 60 60)`}
-      style={{ stroke: 'var(--ck-line)' }}
-      strokeWidth={3}
-      strokeLinecap="round"
-      opacity={0.75}
-    />
-  )
-  return (
-    <svg viewBox="0 0 120 120" aria-hidden>
-      <circle cx="60" cy="60" r="54" style={{ fill: 'var(--ck-shell)' }} stroke="var(--ck-line)" strokeWidth={3} />
-      <circle cx="60" cy="60" r="46" style={{ stroke: 'var(--ck-line)' }} strokeWidth={1.4} fill="none" opacity={0.35} />
-      {[0, 90, 180, 270].map(tick)}
-      <line
-        x1="60"
-        y1="60"
-        x2="60"
-        y2="37"
-        transform={`rotate(${hourDeg} 60 60)`}
-        style={{ stroke: 'var(--ck-eye)' }}
-        strokeWidth={4.6}
-        strokeLinecap="round"
-      />
-      <line
-        x1="60"
-        y1="60"
-        x2="60"
-        y2="25"
-        transform={`rotate(${minDeg} 60 60)`}
-        style={{ stroke: 'var(--ck-eye)' }}
-        strokeWidth={2.6}
-        strokeLinecap="round"
-      />
-      <circle cx="60" cy="60" r="3.6" style={{ fill: 'var(--ck-line)' }} />
-    </svg>
-  )
-}
