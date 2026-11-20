@@ -10,7 +10,7 @@
   --ck-shell: #fffdf6;
   --bub: #ffd75e;
   --bub-ink: #6b5420;
-  --ck-shadow: rgba(232, 162, 60, 0.3);
+  --ck-shadow: rgba(232, 162, 60, 0.38);
   position: fixed;
   inset: 0;
   overflow: hidden;
@@ -28,7 +28,7 @@
   --ck-shell: #efe8d8;
   --bub: #e3c452;
   --bub-ink: #4a3a10;
-  --ck-shadow: rgba(217, 154, 48, 0.26);
+  --ck-shadow: rgba(217, 154, 48, 0.32);
 }
 
 /* 撸过头气成红蛋:玫红肤(刻意避开性能过载蛋的橙红/蒸汽/裂纹/指标字)。
@@ -39,7 +39,7 @@
   --ck-blush: #ff9bb0;
   --ck-eye: #3b1018;
   --ck-beak: #e06a58;
-  --ck-shadow: rgba(169, 59, 82, 0.3);
+  --ck-shadow: rgba(169, 59, 82, 0.38);
 }
 
 /* 草皮地面(挑稿 A 案):全窗 SVG;踩踏区(x 59~341)顶线压着鸡脚底 158~160,
@@ -57,7 +57,7 @@
 .mover {
   position: absolute;
   left: 18px;
-  bottom: 10px;
+  bottom: 8px;
   width: 74px;
   height: 74px;
   transition: transform 140ms linear;
@@ -79,14 +79,14 @@
   overflow: visible;
 }
 
-/* 脚下软影:蛋壳底在 mover 内 y≈67,影中心压 160.5(草皮顶线上)。
+/* 脚下软影:蛋壳底在 mover 内 y≈67,影主体铺在草皮顶(顶线在脚底下 2~5px)。
    在 chickBox 外,所以 hop/蹲跳鸡动影不动;被拎起淡出;红蛋期随 --ck-shadow 变玫红 */
 .shadow {
   position: absolute;
-  left: 10px;
-  bottom: -1px;
-  width: 54px;
-  height: 11px;
+  left: 8px;
+  bottom: -2px;
+  width: 58px;
+  height: 12px;
   background: radial-gradient(closest-side, var(--ck-shadow), transparent 74%);
   opacity: 1;
   transition: opacity 0.18s ease;
@@ -453,7 +453,7 @@
 .eggs {
   position: absolute;
   right: 14px;
-  bottom: 19px;
+  bottom: 22px;
   display: flex;
   align-items: flex-end;
   gap: 3px;
@@ -1160,7 +1160,7 @@
 }
 .chaseRock {
   position: absolute;
-  bottom: 17px;
+  bottom: 19px;
   width: 26px;
   height: 20px;
   opacity: 0;
@@ -1879,6 +1879,8 @@
 .chimeBannerTime {
   font: 800 26px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
   letter-spacing: 0.5px;
+  color: #e0821c; /* 琥珀橙:与鸡描边同族,白底上够跳 */
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 .chimeBannerCol {
   display: flex;
@@ -1888,6 +1890,7 @@
 .chimeBannerTitle {
   font-size: 11.5px;
   font-weight: 700;
+  color: #e8623c; /* 暖珊瑚 */
 }
 .chimeBannerHint {
   font-size: 10.5px;
