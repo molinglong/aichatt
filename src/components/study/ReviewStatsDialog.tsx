@@ -2,11 +2,11 @@
 
 /**
  * 复习统计弹层(阶段三方案B:独立浮层,小组件「复习统计」卡/统计行 chip 进入)。
- * 内容三块:汇总 chips(连击/今日/待到期/近7日)+ 近 12 周热力图 + 考点掌握度排行(低在前)。
+ * 内容三块:汇总 chips(连击/今日/待到期/近7日)+ 近半年热力图 + 考点掌握度排行(低在前)。
  * 「专项 ›」= 按考点过滤复习队列;底部「排个冲刺计划」进计划弹层(阶段四)。
  * 骨架与 StudyPanelDialog 同配方:桌面居中磨砂遮罩玻璃卡 + ESC/点外关,移动端全屏 + 返回键收口。
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { X, Flame } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useIsMobileViewport } from '@/hooks/useIsMobileViewport'
@@ -52,6 +52,13 @@ export function ReviewStatsDialog({
   const isMobile = useIsMobileViewport()
   // 弹层内无导航,只借返回键哨兵收口
   useBackToClose(open, onClose)
+
+  // 热力图溢出时(移动端)初始滚到最新一端,避免首屏停在半年前的空白周
+  const heatScrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = heatScrollRef.current
+    if (el && el.scrollWidth > el.clientWidth) el.scrollLeft = el.scrollWidth - el.clientWidth
+  }, [open, stats])
 
   useEffect(() => {
     if (!open || isMobile) return
@@ -135,21 +142,23 @@ export function ReviewStatsDialog({
                 </span>
               </div>
 
-              {/* 近 12 周热力图:行=星期一~日,列=周(GitHub 口径) */}
-              <div className="mt-5 text-[11px] text-content-muted">复习频率 · 近 12 周</div>
-              <div className="mt-2 flex gap-[3px] overflow-x-auto pb-1">
-                {/* 84 天按周列排:第一列补齐周一开头 */}
-                {chunkHeatmapIntoWeeks(stats.heatmap).map((week, wi) => (
-                  <div key={wi} className="flex flex-col gap-[3px]">
-                    {week.map((d, di) => (
-                      <span
-                        key={di}
-                        title={d ? `${d.date} · 复习 ${d.count} 张` : undefined}
-                        className={cn('h-[13px] w-[13px] rounded-[3px]', d ? heatClass(d.count) : 'opacity-0')}
-                      />
-                    ))}
-                  </div>
-                ))}
+              {/* 近半年热力图:行=星期一~日,列=周(GitHub 口径);宽于容器时横向滚动,窄于容器时居中 */}
+              <div className="mt-5 text-[11px] text-content-muted">复习频率 · 近半年</div>
+              <div ref={heatScrollRef} className="mt-2 overflow-x-auto pb-1">
+                <div className="mx-auto flex w-max gap-[3px]">
+                  {/* 182 天按周列排:第一列补齐周一开头 */}
+                  {chunkHeatmapIntoWeeks(stats.heatmap).map((week, wi) => (
+                    <div key={wi} className="flex flex-col gap-[3px]">
+                      {week.map((d, di) => (
+                        <span
+                          key={di}
+                          title={d ? `${d.date} · 复习 ${d.count} 张` : undefined}
+                          className={cn('h-[13px] w-[13px] rounded-[3px]', d ? heatClass(d.count) : 'opacity-0')}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="mt-1.5 flex items-center justify-end gap-1 text-[10px] text-content-muted">
                 少
@@ -181,13 +190,13 @@ export function ReviewStatsDialog({
                       <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-content-primary">{t.topic}</span>
                       <span className="h-1.5 w-[72px] flex-none overflow-hidden rounded-full bg-surface-subtle">
                         <span
-                          className={cn('block h-full rounded-full', pct < 40 ? 'bg-destructive' : 'bg-accent')}
+                          className={cn('block h-full rounded-full', pct < 40 ? 'bg-danger' : 'bg-accent')}
                           style={{ width: `${pct}%` }}
                         />
                       </span>
                       <span className="w-9 flex-none text-right text-[11px] tabular-nums text-content-secondary">{pct}%</span>
                       {t.due > 0 ? (
-                        <span className="flex-none rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
+                        <span className="flex-none rounded-full bg-danger/10 px-2 py-0.5 text-[10px] font-medium text-danger">
                           到期 {t.due}
                         </span>
                       ) : (
@@ -221,7 +230,7 @@ export function ReviewStatsDialog({
   )
 }
 
-/** 84 天(旧→新)按周分列:首列按周一开头补 null 占位,让列对齐星期 */
+/** 182 天(旧→新)按周分列:首列按周一开头补 null 占位,让列对齐星期 */
 function chunkHeatmapIntoWeeks(heatmap: Array<{ date: string; count: number }>): Array<Array<{ date: string; count: number } | null>> {
   if (heatmap.length === 0) return []
   const firstDow = (new Date(heatmap[0].date + 'T00:00:00').getDay() + 6) % 7 // 0=周一

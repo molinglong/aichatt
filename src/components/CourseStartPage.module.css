@@ -1,0 +1,397 @@
+/* 课程窗口 · 启动首页(C 案 · 小鸡书房;2026-11-19 去背景小灰点) */
+
+.page {
+  --paper: #fffdf6;
+  --ink: #3d3830;
+  --ink2: #8a8375;
+  --ink3: #b3aa99;
+  --line: #e7dcc3;
+  --gold: #e8a23c;
+  --gold-deep: #d9962f;
+  --note: #ffefb0;
+  --note-line: #ecd889;
+  --note-ink: #6b5420;
+  --field: rgb(255 255 255 / 0.72);
+  --field-line: rgb(0 0 0 / 0.05);
+  --field-ph: #b0a079;
+  --pin: #ffe08a;
+  --pin-ink: #8a6a1a;
+  --muted: #f8f2e2;
+
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  scrollbar-width: none;
+  container-type: inline-size;
+  font: 14px/1.5 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+.page::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.page button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.page button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+:global(html.dark) .page {
+  --paper: #1c1a15;
+  --ink: #f2eada;
+  --ink2: #b8ae9a;
+  --ink3: #7d745f;
+  --line: #39332a;
+  --note: #3b331c;
+  --note-line: #5b4d29;
+  --note-ink: #ffd75e;
+  --field: rgb(0 0 0 / 0.22);
+  --field-line: rgb(255 255 255 / 0.07);
+  --field-ph: #8a7c5e;
+  --pin: #4b3f1e;
+  --pin-ink: #ffd75e;
+  --muted: #26231b;
+}
+
+.inner {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 22px 20px 18px;
+}
+
+/* ── 问候 + 小鸡 ───────────────────────────────────────────── */
+.hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+.heroText {
+  min-width: 0;
+}
+.hi {
+  font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif;
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+}
+.date {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--ink2);
+}
+.chickWrap {
+  position: relative;
+  flex: none;
+  margin: -2px 2px 0 0;
+}
+.chick {
+  width: 58px;
+  height: 58px;
+  display: block;
+}
+.bubble {
+  position: absolute;
+  right: 44px;
+  top: -4px;
+  white-space: nowrap;
+  background: #ffd75e;
+  color: #6b5420;
+  font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 9px;
+  box-shadow: 0 4px 10px rgb(61 56 48 / 0.14);
+}
+.bubble::after {
+  content: "";
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  margin-top: -5px;
+  border: 5px solid transparent;
+  border-left-color: #ffd75e;
+  border-right: 0;
+}
+
+/* ── 便签输入 ─────────────────────────────────────────────── */
+.noteWrap {
+  position: relative;
+  margin-top: 18px;
+}
+.tape {
+  position: absolute;
+  left: 50%;
+  top: -7px;
+  transform: translateX(-50%) rotate(-1.5deg);
+  width: 64px;
+  height: 15px;
+  background: rgb(255 255 255 / 0.55);
+  border: 1px solid rgb(0 0 0 / 0.05);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+}
+:global(html.dark) .tape {
+  background: rgb(255 255 255 / 0.16);
+}
+.note {
+  background: var(--note);
+  border: 1px solid var(--note-line);
+  border-radius: 12px;
+  padding: 14px 12px 11px;
+  transform: rotate(-0.5deg);
+  box-shadow: 0 2px 3px rgb(61 56 48 / 0.07), 0 10px 24px rgb(61 56 48 / 0.08);
+}
+:global(html.dark) .note {
+  box-shadow: 0 2px 3px rgb(0 0 0 / 0.3), 0 12px 26px rgb(0 0 0 / 0.3);
+}
+.noteLabel {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--note-ink);
+  letter-spacing: 0.03em;
+}
+.row {
+  display: flex;
+  gap: 7px;
+}
+.field {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--field-line);
+  color: var(--field-ph);
+  transition: box-shadow 0.15s;
+}
+.field:focus-within {
+  box-shadow: inset 0 0 0 1px var(--gold), 0 0 0 3px rgb(232 162 60 / 0.16);
+}
+.fieldIcon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+.field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.field input::placeholder {
+  color: var(--field-ph);
+}
+.open {
+  flex: none;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px solid var(--gold-deep);
+  background: #f0a83c;
+  color: #4a3a28;
+  font-size: 12.5px;
+  font-weight: 700;
+  transition: filter 0.15s, transform 0.1s;
+}
+.open:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.open:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.clip {
+  margin-top: 9px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px dashed #e2cf95;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 0.35);
+  font-size: 11px;
+  color: #8a7c5e;
+  text-align: left;
+}
+:global(html.dark) .clip {
+  border-color: #5b4d29;
+  background: rgb(0 0 0 / 0.12);
+  color: #b0a079;
+}
+.clip:hover {
+  border-color: var(--gold);
+}
+.clipLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clipGo {
+  flex: none;
+  color: #b9771c;
+  font-weight: 700;
+}
+:global(html.dark) .clipGo {
+  color: #ffc14d;
+}
+
+/* ── 最近打开 ─────────────────────────────────────────────── */
+.secHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 20px 2px 8px;
+}
+.secHead h3 {
+  margin: 0;
+  font-family: "Kaiti SC", "KaiTi", "STKaiti", "楷体", serif;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 8px;
+  border-bottom: 1px dashed var(--line);
+  border-radius: 9px;
+  text-align: left;
+}
+.list li:last-child .item {
+  border-bottom: 0;
+}
+.item:hover {
+  background: var(--muted);
+}
+.pin {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--pin);
+  color: var(--pin-ink);
+  transform: rotate(-4deg);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
+  display: grid;
+  place-items: center;
+}
+.itemText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.itemTitle {
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.itemMeta {
+  font-size: 9.5px;
+  color: var(--ink3);
+}
+.itemTime {
+  flex: none;
+  font-size: 10px;
+  color: var(--ink3);
+}
+
+.empty {
+  border: 1px dashed var(--line);
+  border-radius: 11px;
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--ink3);
+  background: rgb(255 255 255 / 0.3);
+}
+:global(html.dark) .empty {
+  background: rgb(0 0 0 / 0.12);
+}
+
+/* ── 快捷入口 ─────────────────────────────────────────────── */
+.quick {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+.chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 4px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  font-size: 11px;
+  color: var(--ink2);
+  transform: rotate(-0.6deg);
+}
+.chip:nth-child(2) {
+  transform: rotate(0.5deg);
+}
+.chip:nth-child(3) {
+  transform: rotate(-0.35deg);
+}
+.chip:hover:not(:disabled) {
+  border-color: var(--gold);
+  color: var(--ink);
+  background: var(--muted);
+}
+
+.foot {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--ink3);
+}
+
+/* 窄栏:气泡会压到问候语,收掉气泡只留小鸡(与挑稿页同口径) */
+@container (max-width: 380px) {
+  .bubble {
+    display: none;
+  }
+  .inner {
+    padding: 18px 16px 16px;
+  }
+}

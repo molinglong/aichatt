@@ -26,10 +26,12 @@ import { extractAndSaveMemories } from "@/lib/memory/extractor"
 import { getRelevantMemories } from "@/lib/memory/relevance"
 import {
   buildGatewayMemoryBlock,
+  buildGatewayScratchBlock,
   findLatestUserText,
   injectMemoryIntoBody,
   type AnthropicMessagesBody,
 } from "@/lib/memory/gateway-injection"
+import { listActiveScratchNotes } from "@/lib/memory/scratch"
 import {
   claimExtractionSlot,
   extractionFingerprint,
@@ -109,6 +111,17 @@ export async function POST(req: NextRequest) {
               injected: relevant.length,
             })
           }
+        }
+
+        // 短期记忆(进行中状态)注入:与长期记忆同通道逐请求追加(过期条目惰性过滤,
+        // 措辞中性——网关侧没有本站写入工具,只做读注入)
+        const scratchNotes = await listActiveScratchNotes(userId)
+        const scratchBlock = buildGatewayScratchBlock(scratchNotes)
+        if (scratchBlock && injectMemoryIntoBody(messagesBody, scratchBlock)) {
+          monitor("gateway.memory.scratch_injected", {
+            sessionId,
+            count: scratchNotes.length,
+          })
         }
 
         // 写提取:复用本请求同款模型,fire-and-forget 不阻塞转发与流式响应

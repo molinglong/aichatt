@@ -16,6 +16,8 @@ export async function GET(req: NextRequest) {
   const userId = await getUserId(req)
   if (!userId) return Response.json({ error: "unauthorized" }, { status: 401 })
   const subject = req.nextUrl.searchParams.get("subject") ?? ""
+  // 真卷限定:传 slug 时 poolStats 只统计该卷(组前预检口径与 restrictPaperSlug 组卷一致)
+  const restrictSlug = req.nextUrl.searchParams.get("restrictSlug") ?? ""
 
   const rows = await prisma.$queryRaw<
     Array<{
@@ -72,5 +74,18 @@ export async function GET(req: NextRequest) {
       groups: t.groups,
     }))
 
-  return Response.json({ templates })
+  // 池计数(组前预检覆盖率):与引擎 loadPool 同口径——有答案+未 flagged+官方答案,+真卷限定
+  const poolRows = await prisma.$queryRaw<Array<{ kind: string; score: number; n: number }>>(
+    Prisma.sql`
+    SELECT pq.kind, pq.score, count(*)::int AS n
+    FROM "PaperQuestion" pq
+    JOIN "Paper" p ON p.id = pq."paperId"
+    WHERE p."userId" IN (${Prisma.join(await libraryScopes(userId))}) AND p.subject = ${subject}
+      AND pq.answer IS NOT NULL AND NOT pq.flagged AND pq."answerSource" = 'official'
+      ${restrictSlug ? Prisma.sql`AND p.slug = ${restrictSlug}` : Prisma.empty}
+    GROUP BY pq.kind, pq.score
+  `
+  )
+
+  return Response.json({ templates, poolStats: poolRows.map((r) => ({ kind: r.kind, score: r.score, count: r.n })) })
 }

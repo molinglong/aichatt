@@ -179,6 +179,9 @@ export async function middleware(req: NextRequest) {
     pathname === "/api/watch/device/start" ||
     pathname === "/api/watch/device/poll" ||
     pathname.startsWith("/api/v1/") ||
+    // 桌面小鸡窗(Tauri pet 窗):无账也能站桌面,不依赖账号数据(蛋走本地 localStorage)
+    pathname === "/pet" ||
+    pathname.startsWith("/pet/") ||
     pathname === "/test-toast"
 
   if (isPublic) {

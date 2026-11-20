@@ -96,12 +96,16 @@ export default function RootLayout({
                   if (pal === 'wallpaper') {
                     // 壁纸主题: 明暗走自己的子档(light/dark/system,缺省跟随系统),
                     // 与 theme.ts 的 readStoredWallpaperScheme 一致。
+                    // 风格子档(photo=云照片/chick=小鸡天空)同场写入,与
+                    // theme.ts 的 readStoredWallpaperStyle 一致(未知值回落 photo)。
                     // data-wallpaper 是壁纸层显隐的唯一判据 —— 首帧不写会先闪一帧无壁纸。
                     var ws = localStorage.getItem('wallpaperScheme');
                     var wsDark = ws === 'dark'
                       || (ws !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
                     if (wsDark) document.documentElement.classList.add('dark');
                     document.documentElement.setAttribute('data-wallpaper', 'on');
+                    var wpst = localStorage.getItem('wallpaperStyle');
+                    document.documentElement.setAttribute('data-wallpaper-style', wpst === 'chick' ? 'chick' : 'photo');
                     pal = 'base';
                   } else if (pal === 'grid') {
                     // 四个光态里只有「晚上」是深底: 它是格子下唯一写 .dark 的态

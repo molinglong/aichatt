@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-go-back"
+description = "Enables the course_go_back command without any pre-configured scope."
+commands.allow = ["course_go_back"]
+
+[[permission]]
+identifier = "deny-course-go-back"
+description = "Denies the course_go_back command without any pre-configured scope."
+commands.deny = ["course_go_back"]

@@ -44,6 +44,8 @@ import {
 import { YELLOW_FISH_TOOL_NAME, type YellowFishToolOutput, type YellowFishItemBrief } from '@/lib/ai/yellow-fish-tool'
 import { YELLOW_FISH_LIVE_TOOL_NAME, type YellowFishLiveToolOutput } from '@/lib/ai/yellow-fish-live-tool'
 import { isYellowFishAutoFollowText } from './useYellowFishAutoFollow'
+import { parseExamAskCard } from '@/lib/chat/exam-ask'
+import { ExamAskCard } from './ExamAskCard'
 import { TurnFileSummary } from './TurnFileSummary'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
 import { useQueryClient } from '@tanstack/react-query'
@@ -414,6 +416,8 @@ function MessageBubbleInner({
   // Extract text from message parts
   const textParts = message.parts.filter((p) => p.type === 'text')
   const text = textParts.map((p) => p.text).join('')
+  // 估分报告「去问AI」深链消息:渲染成小卡片(正文照发给模型,闲鱼自动回报同配方)
+  const examAsk = isUser ? parseExamAskCard(text) : null
   const lastPart = textParts[textParts.length - 1] as { state?: string } | undefined
   const isCurrentlyStreaming = isStreaming && isAssistant && lastPart?.state === 'streaming'
   const isWaitingForReasoning = isStreaming && isAssistant && !reasoningText && !text
@@ -1387,6 +1391,9 @@ function MessageBubbleInner({
                 <Fish className="w-3.5 h-3.5 shrink-0" aria-hidden />
                 监控抓取完成 · 自动查询行情
               </div>
+            ) : isUser && examAsk ? (
+              // 估分报告「去问AI」深链消息:完整 prompt 在正文里(模型照收),气泡压缩成小卡片
+              <ExamAskCard card={examAsk} />
             ) : (
               <div className="user-bubble rounded-2xl bg-accent px-4 py-2.5">
                 <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.75] text-accent-foreground">{text}</p>

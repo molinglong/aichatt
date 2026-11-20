@@ -51,6 +51,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
+  const [justRegistered, setJustRegistered] = useState(false)
   const [loading, setLoading] = useState(false)
   const homeStarted = useRef(false)
 
@@ -61,6 +62,19 @@ export default function LoginPage() {
     const params = new URLSearchParams(window.location.search)
     const code = params.get("home_code")
     const homeError = params.get("home_error")
+
+    // 注册成功跳回(A4):渲染一次性成功条并预填注册邮箱,然后清掉参数防刷新复现
+    if (params.get("registered") === "1") {
+      setJustRegistered(true)
+      const regEmail = params.get("email")
+      if (regEmail && !email) setEmail(regEmail)
+      const cleaned = new URLSearchParams(window.location.search)
+      cleaned.delete("registered")
+      cleaned.delete("email")
+      const qs = cleaned.toString()
+      window.history.replaceState(null, "", "/login" + (qs ? `?${qs}` : ""))
+      return
+    }
 
     if (homeError) {
       homeStarted.current = true
@@ -113,11 +127,11 @@ export default function LoginPage() {
       return
     }
 
-    // 硬导航而非 router.push:未登录时 /chat 的 RSC 请求会被 middleware 307 回 /login,
+    // 硬导航而非 router.push:未登录时落地页(/study)的 RSC 请求会被 middleware 307 回 /login,
     // 这条脏跳转进 Next 14 router cache 后软导航会复用,表现为首点无反应、需点第二次。
     // 用 replace 不用 assign:assign 会把 /login 留在历史栈里,之后任何一次「返回」
     // (安卓壳返回键 = WebView goBack、手机手势返回、浏览器后退)都会掉回登录页。
-    window.location.replace("/chat")
+    window.location.replace("/study")
   }
 
   return (
@@ -128,6 +142,19 @@ export default function LoginPage() {
       <p className="auth-reveal auth-delay-2 mb-7 mt-2 text-[13.5px] text-content-secondary">
         登录以继续，也可以用 home 账号快捷进入
       </p>
+
+      {justRegistered && !error && (
+        <div
+          role="status"
+          className="mb-4 flex items-start gap-2 rounded-[10px] border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-[13px] text-content-primary"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="mt-0.5 flex-none text-emerald-600 dark:text-emerald-400">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="m8.5 12.2 2.4 2.4 4.8-5" />
+          </svg>
+          <span>注册成功，账号已建好——直接登录即可开始使用。</span>
+        </div>
+      )}
 
       {error && <ErrorBar message={error} />}
 

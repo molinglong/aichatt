@@ -16,6 +16,7 @@ import type { SearchStructured } from '@/components/explore/SearchResults'
 import type { ModelDefinition } from '@/lib/ai/types'
 import { queryKeys, STALE } from '@/lib/query/keys'
 import { fetchJson } from '@/lib/query/fetcher'
+import { useFocusLock } from '@/lib/focus-lock-store'
 
 // 辩题类型
 interface Topic {
@@ -116,20 +117,29 @@ export default function ExplorePage() {
 }
 
 function ExploreContent() {
-  // ── 全局共享的 model 缓存(与 chat /c/[id] 共享同一 key)──
-  // TopBar 已通过 hover/click prefetch;这里用 useSuspenseQuery 同步命中
-  const { data: builtinModels = [] } = useSuspenseQuery<ModelDefinition[]>({
-    queryKey: queryKeys.providers(),
+  // ── 探索页专用的「可用模型」缓存 ──
+  // 不能复用 queryKeys.providers():TopBar 预取写的是未过滤的原始列表,同 key 命中会
+  // 把没 Key 的 GPT-5.5 当默认值(2026-11-20 上线前测试实测)。独立 key 避免互相污染。
+  const { data: builtinModelsRaw = [] } = useSuspenseQuery<ModelDefinition[]>({
+    queryKey: [...queryKeys.providers(), 'available'],
     queryFn: async () => {
       const payload = await fetchJson<
-        | Array<{ effectiveModels: ModelDefinition[] }>
-        | { providers: Array<{ effectiveModels: ModelDefinition[] }> }
+        | Array<{ effectiveModels: Array<ModelDefinition & { hasKey?: boolean; publicPool?: boolean }>; hasKey?: boolean }>
+        | { providers: Array<{ effectiveModels: Array<ModelDefinition & { hasKey?: boolean; publicPool?: boolean }>; hasKey?: boolean }> }
       >('/api/providers')
       const list = Array.isArray(payload) ? payload : payload.providers ?? []
-      return list.flatMap((p) => p.effectiveModels || [])
+      // A15:只留「可用」模型——公共池门面(全员服务端出钱)或该 provider 配了 Key;
+      // 否则内置目录里没 Key 的 GPT-5.5 之类会被当默认值展示,选了必挂。
+      // publicPool 标志保留:ModelSelector 也靠它豁免「已配置 Key」过滤。
+      return list.flatMap((p) =>
+        (p.effectiveModels || [])
+          .filter((m) => m.publicPool || p.hasKey || m.hasKey)
+          .map((m) => ({ ...m, hasKey: undefined }))
+      )
     },
     staleTime: STALE.providers,
   })
+  const builtinModels = builtinModelsRaw
 
   const { data: customModels = [] } = useSuspenseQuery<ModelDefinition[]>({
     queryKey: queryKeys.customModels(),
@@ -142,8 +152,8 @@ function ExploreContent() {
     staleTime: STALE.customModels,
   })
 
-  const userModelFromList = builtinModels[0]?.id || customModels[0]?.id || 'gpt-5.4-mini'
-  const opponentModelFromList = builtinModels[1]?.id || customModels[0]?.id || 'claude-sonnet-4-6'
+  const userModelFromList = builtinModels[0]?.id || customModels[0]?.id || ''
+  const opponentModelFromList = builtinModels[1]?.id || builtinModels[0]?.id || customModels[0]?.id || ''
   const [userModel, setUserModel] = useState(userModelFromList)
   const [opponentModel, setOpponentModel] = useState(opponentModelFromList)
   const [assistantModel, setAssistantModel] = useState(userModelFromList)
@@ -154,13 +164,13 @@ function ExploreContent() {
     const all = [...builtinModels, ...customModels]
     if (all.length === 0) return
     if (!all.some((m) => m.id === userModel)) {
-      setUserModel(all[0]?.id ?? 'gpt-5.4-mini')
+      setUserModel(all[0]?.id ?? '')
     }
     if (!all.some((m) => m.id === opponentModel)) {
-      setOpponentModel(all[1]?.id ?? all[0]?.id ?? 'claude-sonnet-4-6')
+      setOpponentModel(all[1]?.id ?? all[0]?.id ?? '')
     }
     if (!all.some((m) => m.id === assistantModel)) {
-      setAssistantModel(all[0]?.id ?? 'gpt-5.4-mini')
+      setAssistantModel(all[0]?.id ?? '')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [builtinModels, customModels])
@@ -181,6 +191,10 @@ function ExploreContent() {
   const [evidenceResults, setEvidenceResults] = useState<string | null>(null)
   const [evidenceStructured, setEvidenceStructured] = useState<SearchStructured | null>(null)
   const [assistantAnalysis, setAssistantAnalysis] = useState<string | null>(null)
+
+  // 监管模式锁内门槛(2026-11-18 C 案挑稿,接 focus-lock-restrict R1):辩论锁内暂停。
+  // 放 hooks 尾部、条件 return 之前——组件不卸载,辩论 state 全保留,解锁原地恢复。
+  const { locked: focusLocked } = useFocusLock()
 
   const messageListRef = useRef<HTMLDivElement>(null)
 
@@ -448,6 +462,40 @@ function ExploreContent() {
   const handleNewTopic = useCallback(() => {
     handleReset()
   }, [handleReset])
+
+  // ── 监管模式锁内门槛:整页换黄油纸卡 + 小鸡(绘本主题与 FocusLock 同款色,
+  //    纸卡恒黄油色不随深浅翻转;正在进行的辩题回合解锁后原地恢复)──────────
+  if (focusLocked) {
+    return (
+      <div className="h-full flex items-center justify-center p-4">
+        <div className="relative w-full max-w-[400px] rounded-[18px] border-[2.5px] border-[#e8d98a] bg-[#fff6c9] px-7 pt-9 pb-6 text-center shadow-[0_10px_28px_rgba(120,90,10,0.18)]">
+          {/* 胶带 */}
+          <div
+            aria-hidden
+            className="absolute -top-3 left-1/2 h-[22px] w-[88px] -translate-x-1/2 -rotate-2 rounded-[3px] border border-dashed border-[#b4a050]/50 bg-white/55"
+          />
+          {/* 小鸡蹲守 + 铅笔虚线地平线 */}
+          <svg className="mx-auto" width="130" height="86" viewBox="0 0 130 86" aria-hidden>
+            <line x1="10" y1="74" x2="120" y2="74" stroke="#c9b96a" strokeWidth="2.6" strokeDasharray="8 7" strokeLinecap="round" />
+            <circle cx="66" cy="54" r="17" fill="#ffd75e" />
+            <path d="M66 33 q9 3 7 12" fill="none" stroke="#e0b83a" strokeWidth="2.4" strokeLinecap="round" />
+            <circle cx="60" cy="50" r="2.3" fill="#4a3f1e" />
+            <circle cx="71" cy="50" r="2.3" fill="#4a3f1e" />
+            <path d="M62 56 l4.5 3.4 4.5-3.4" fill="none" stroke="#e0862a" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M49 58 q-7 1 -8 6" fill="none" stroke="#e0b83a" strokeWidth="2.4" strokeLinecap="round" />
+            <path d="M60 71 l-2.5 5 M72 71 l2.5 5" stroke="#c9902a" strokeWidth="2.4" strokeLinecap="round" />
+          </svg>
+          <div className="text-[20px] font-extrabold tracking-wider text-[#4a3f1e]">专注锁定中</div>
+          <p className="mt-2 text-[13px] leading-7 text-[#6b5c2e]">
+            辩论先歇一歇,小鸡帮你看着时间 ——
+            <br />
+            到点就回来,辩题进度不会丢。
+          </p>
+          <div className="mt-3.5 text-[11.5px] text-[#8a7a44]">观点探索 · 锁定期间暂停</div>
+        </div>
+      </div>
+    )
+  }
 
   // 辩题选择界面
   if (showTopicSelector) {

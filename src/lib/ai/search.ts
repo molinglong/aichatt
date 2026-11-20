@@ -195,13 +195,17 @@ function imageNote(images: EmbeddableImage[]): string {
  * @param engine        搜索引擎 ID
  * @param apiKey        对应引擎的 API Key（解密后原文）
  * @param userPlatform  用户在输入区选定的平台口径，默认 'auto'（不干涉模型）
+ * @param opts.disableImages 监管模式锁定期禁搜图：不挑图、不发插图说明，
+ *        模型无从引用 [图N]（网页结果照常，只砍配图）
  * @returns AI SDK tool 对象
  */
 export function createWebSearchTool(
   engine: SearchEngineId,
   apiKey: string,
-  userPlatform: SearchPlatformId = "auto"
+  userPlatform: SearchPlatformId = "auto",
+  opts?: { disableImages?: boolean }
 ) {
+  const imagesDisabled = opts?.disableImages === true
   // 用户已定口径（含"全网"）→ 平台由服务端说了算，模型不参与
   const userDecided = userPlatform !== "auto"
   const platformMenu = UGC_PLATFORMS.map((p) => `${p.id}=${p.label}(${p.tip})`).join("、")
@@ -214,10 +218,11 @@ export function createWebSearchTool(
     { results: FormattedSearchResult[]; images: EmbeddableImage[] }
   >()
 
-  // 引擎名 + 配图声明:两个带图引擎(tavily/qianfan)都声明,deepseek 无图不声明
+  // 引擎名 + 配图声明:两个带图引擎(tavily/qianfan)都声明,deepseek 无图不声明;
+  // 监管模式锁定期禁搜图,声明一并摘掉(模型不知道有图,自然不会试图引用)
   const engineName = engine === "tavily" ? "Tavily" : engine === "deepseek" ? "DeepSeek" : "百度"
   const imageLine =
-    engine === "deepseek"
+    engine === "deepseek" || imagesDisabled
       ? ""
       : "\n结果可能附带已筛选的相关图片，按返回说明以 [图N] 占位符引用，不要自己编造图片链接。"
   const description = `联网搜索工具。当需要获取实时信息、最新新闻、当前事件、或用户明确要求搜索时使用。
@@ -303,8 +308,9 @@ export function createWebSearchTool(
           fellBack = true
         }
 
-        // 配图白名单：只在最终那一次搜索的结果上做（回退后用回退那轮的图）
-        const embeddable = await selectEmbeddableImages(rawImages)
+        // 配图白名单：只在最终那一次搜索的结果上做（回退后用回退那轮的图）；
+        // 监管模式锁定期禁搜图 → 直接跳过（引擎请求本身网页+图同响应,砍白名单层即可）
+        const embeddable = imagesDisabled ? [] : await selectEmbeddableImages(rawImages)
 
         console.log(
           `[search] ${engine} query="${query.slice(0, 40)}" platform=${effective} fellBack=${fellBack} n=${results.length} shell=${shellDropped} img=${embeddable.length}`

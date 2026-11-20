@@ -2,8 +2,17 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "默认权限:窗口控制命令;本地与远程(chat.yuban.icu)页面均生效",
-  "windows": ["main", "buddy", "settings"],
-  "remote": { "urls": ["https://chat.yuban.icu"] },
+  "windows": [
+    "main",
+    "buddy",
+    "settings",
+    "pet"
+  ],
+  "remote": {
+    "urls": [
+      "https://chat.yuban.icu"
+    ]
+  },
   "permissions": [
     "core:default",
     "core:window:allow-close",
@@ -47,6 +56,18 @@
     "allow-focus-main-window",
     "allow-get-buddy-position",
     "allow-set-buddy-position",
+    "allow-pet-probe",
+    "allow-pet-set-click-through",
+    "allow-pet-move-window",
+    "allow-pet-set-position",
+    "allow-pet-home-position",
+    "allow-pet-close",
+    "allow-pet-show",
+    "allow-open-main-path",
+    "allow-perf-probe",
+    "allow-perf-history",
+    "allow-perf-log-event",
+    "allow-deep-link-ask-take",
     "allow-lf-set-base",
     "allow-lf-get-base",
     "allow-lf-write-file",
@@ -65,6 +86,21 @@
     "allow-updater-check",
     "allow-updater-status",
     "allow-updater-download",
-    "allow-updater-install"
+    "allow-updater-install",
+    "allow-focus-lock-start",
+    "allow-focus-lock-status",
+    "allow-focus-lock-stop",
+    "allow-focus-lock-end",
+    "allow-course-panel-show",
+    "allow-course-panel-hide",
+    "allow-course-panel-resize",
+    "allow-course-navigate",
+    "allow-course-home",
+    "allow-course-go-back",
+    "allow-course-go-forward",
+    "allow-course-reload",
+    "allow-course-get-state",
+    "allow-course-screenshot",
+    "allow-course-set-veiled"
   ]
 }

@@ -79,12 +79,16 @@ export function StudyPanelDialog({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="错题回看 / 错题本 / 收藏"
       className={cn(
         'fixed inset-0 z-[200]',
         isMobile ? 'flex flex-col bg-surface' : 'flex items-start justify-center pt-[12vh] px-4'
       )}
     >
-      {/* 桌面:磨砂遮罩,点击空白关闭(与收藏浮层同配方) */}
+      {/* 桌面:磨砂遮罩,点击空白关闭(与收藏浮层同配方);遮罩不设 z,面板 z-10 显式压住,
+          防止内容点击被遮罩截胡(练它按钮吞点击的根因) */}
       {!isMobile && (
         <button
           type="button"
@@ -96,7 +100,7 @@ export function StudyPanelDialog({
 
       <div
         className={cn(
-          'relative flex flex-col overflow-hidden',
+          'relative z-10 flex flex-col overflow-hidden',
           isMobile
             ? 'h-full w-full bg-surface'
             : 'h-[70vh] w-full max-w-[680px] rounded-xl border border-line/60 bg-surface-glass glass-blur shadow-2xl enter-pop'

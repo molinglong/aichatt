@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pet-probe"
+description = "Enables the pet_probe command without any pre-configured scope."
+commands.allow = ["pet_probe"]
+
+[[permission]]
+identifier = "deny-pet-probe"
+description = "Denies the pet_probe command without any pre-configured scope."
+commands.deny = ["pet_probe"]

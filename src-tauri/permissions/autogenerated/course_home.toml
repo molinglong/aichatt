@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-home"
+description = "Enables the course_home command without any pre-configured scope."
+commands.allow = ["course_home"]
+
+[[permission]]
+identifier = "deny-course-home"
+description = "Denies the course_home command without any pre-configured scope."
+commands.deny = ["course_home"]

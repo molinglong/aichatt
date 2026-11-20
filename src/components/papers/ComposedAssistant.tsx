@@ -695,7 +695,7 @@ export function ComposedAssistant({
           type="button"
           onClick={() => setOpen(true)}
           title="卷面助手 · 想怎么改直接说"
-          className="paper-assistant-print-hide absolute bottom-5 right-5 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-[0_4px_16px_rgb(10_132_255/0.4)] transition-transform hover:scale-105"
+          className="paper-assistant-print-hide absolute bottom-5 right-5 z-30 flex h-12 w-12 items-center justify-center rounded-full border border-line-strong bg-surface text-content-secondary shadow-[0_4px_16px_rgb(var(--foreground)/0.14)] transition-transform hover:scale-105 hover:text-accent"
           aria-label="打开卷面助手"
         >
           <Sparkles className="h-5 w-5" />

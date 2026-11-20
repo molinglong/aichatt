@@ -154,6 +154,7 @@
     emptyRegionBtn: $("#emptyRegionBtn"),
     promptRow: $("#promptRow"),
     attachmentBar: $("#attachmentBar"),
+    clientBtn: $("#clientBtn"),
     attachmentThumb: $("#attachmentThumb"),
     attachmentThumbBtn: $("#attachmentThumbBtn"),
     attachmentTitle: $("#attachmentTitle"),
@@ -175,6 +176,8 @@
     moreMenu: $("#moreMenu"),
     moreFrameBtn: $("#moreFrameBtn"),
     moreRegionBtn: $("#moreRegionBtn"),
+    captureRegionBtn: $("#captureRegionBtn"),
+    captureFrameBtn: $("#captureFrameBtn"),
     moreDeepBtn: $("#moreDeepBtn"),
     moreSearchBtn: $("#moreSearchBtn"),
     sendBtn: $("#sendBtn"),
@@ -828,6 +831,8 @@
     if (els.emptyRegionBtn) els.emptyRegionBtn.disabled = busy;
     if (els.moreFrameBtn) els.moreFrameBtn.disabled = busy;
     if (els.moreRegionBtn) els.moreRegionBtn.disabled = busy;
+    if (els.captureRegionBtn) els.captureRegionBtn.disabled = busy;
+    if (els.captureFrameBtn) els.captureFrameBtn.disabled = busy;
   }
 
   async function ensureCapturePermission() {
@@ -2715,6 +2720,7 @@ ${message}`
   function renderAttachment() {
     if (!attachment) {
       els.attachmentBar.hidden = true;
+      if (els.clientBtn) els.clientBtn.hidden = true;
       if (els.promptRow) els.promptRow.hidden = true;
       updateSendState();
       return;
@@ -2725,6 +2731,7 @@ ${message}`
       attachment.time
     )} · ${attachment.width}×${attachment.height}`;
     els.attachmentBar.hidden = false;
+    if (els.clientBtn) els.clientBtn.hidden = false;
     if (els.promptRow) els.promptRow.hidden = false;
     updateSendState();
   }
@@ -2733,6 +2740,62 @@ ${message}`
     attachment = null;
     els.attachmentThumb.removeAttribute("src");
     renderAttachment();
+  }
+
+  // ── 发到客户端(桌面深链,方案 A:发送键旁) ─────────────
+  // 链路:截图复用 /api/upload 上传 → aichatt://ask 只带 /uploads 路径(图不过 URL)
+  // → 客户端(deep-link 插件)开新会话预填图+文本,不自动发送。
+  // 唤起失败无回执(外部协议是系统级弹窗),靠 toast 交代兜底口径;面板状态不动,
+  // 截图保留 —— 用户可在客户端问,也可回面板照旧问。
+  const DEEP_LINK_TEXT_MAX = 800;
+
+  async function sendToClient() {
+    if (!attachment) return;
+    if (!isExtension) {
+      toast("预览模式不支持唤起客户端");
+      return;
+    }
+    if (!requireToken()) return;
+    const server = normalizeServer(settings.server);
+    if (!server) {
+      toast("请先在设置里填写服务器地址");
+      return;
+    }
+
+    if (els.clientBtn) els.clientBtn.disabled = true;
+    try {
+      let uploaded;
+      try {
+        uploaded = await uploadScreenshot(attachment, undefined);
+      } catch (err) {
+        toast(err && err.message ? err.message : "截图上传失败,未唤起客户端", 5000);
+        return;
+      }
+
+      const params = new URLSearchParams();
+      params.set("img", uploaded.url);
+      params.set("server", server);
+      params.set("id", attachment.id || `${Date.now()}`);
+      if (attachment.kind) params.set("kind", attachment.kind);
+      const text = els.input.value.trim();
+      if (text) params.set("text", text.slice(0, DEEP_LINK_TEXT_MAX));
+
+      const url = `aichatt://ask?${params.toString()}`;
+      const tab = await getActiveTab();
+      if (tab && typeof tab.id === "number") {
+        try {
+          // 外部协议导航不会离开当前页面,只会弹系统的「打开 aichatt?」确认
+          await chrome.tabs.update(tab.id, { url });
+        } catch {
+          window.open(url, "_blank");
+        }
+      } else {
+        window.open(url, "_blank");
+      }
+      toast("已请求打开桌面客户端;没反应的话先安装/启动一次客户端", 5000);
+    } finally {
+      if (els.clientBtn) els.clientBtn.disabled = false;
+    }
   }
 
   // ── 渲染 ─────────────────────────────────────────────
@@ -3971,6 +4034,10 @@ ${message}`
       }
     });
     els.sendBtn.addEventListener("click", sendCurrent);
+    // 方案 A「发送键旁」: 有截图时才可见(panel.html hidden 初始),
+    // 只在带附件时唤起客户端 —— 纯文字提问仍走当前会话。
+    if (els.clientBtn)
+      els.clientBtn.addEventListener("click", sendToClient);
     els.closeShortcutBtn.addEventListener("click", () =>
       closeShortcut({ focus: true })
     );
@@ -4201,6 +4268,9 @@ ${message}`
     });
     els.moreFrameBtn.addEventListener("click", captureFullFrame);
     els.moreRegionBtn.addEventListener("click", startRegion);
+    // A 案主副键:主键直接框选,副键整帧(与 ⋯ 菜单/快捷键等价,只是更浅)
+    els.captureRegionBtn?.addEventListener("click", startRegion);
+    els.captureFrameBtn?.addEventListener("click", captureFullFrame);
     els.moreDeepBtn.addEventListener("click", () => {
       void setDeepThink(settings.deepThink === false);
     });

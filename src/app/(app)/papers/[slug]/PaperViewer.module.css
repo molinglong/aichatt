@@ -90,6 +90,16 @@
 .sheet :global(.answer:empty) {
   display: none;
 }
+/* 预览默认藏官方答案(避免先看答案再开考);顶栏「答案」开关打开后显示。
+   打印始终带答案——逐题核对 / 讲解用得上。 */
+.sheet.noAnswers :global(.answer) {
+  display: none;
+}
+@media print {
+  .sheet.noAnswers :global(.answer) {
+    display: block;
+  }
+}
 
 /* KaTeX 尺寸贴正文 */
 .sheet :global(.katex) {

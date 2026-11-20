@@ -357,6 +357,30 @@
           "markdownDescription": "Enables the toggle_maximize command without any pre-configured scope."
         },
         {
+          "description": "Enables the updater_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-updater-check",
+          "markdownDescription": "Enables the updater_check command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the updater_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-updater-download",
+          "markdownDescription": "Enables the updater_download command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the updater_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-updater-install",
+          "markdownDescription": "Enables the updater_install command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the updater_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-updater-status",
+          "markdownDescription": "Enables the updater_status command without any pre-configured scope."
+        },
+        {
           "description": "Denies the close_window command without any pre-configured scope.",
           "type": "string",
           "const": "deny-close-window",
@@ -537,6 +561,30 @@
           "markdownDescription": "Denies the toggle_maximize command without any pre-configured scope."
         },
         {
+          "description": "Denies the updater_check command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-updater-check",
+          "markdownDescription": "Denies the updater_check command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the updater_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-updater-download",
+          "markdownDescription": "Denies the updater_download command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the updater_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-updater-install",
+          "markdownDescription": "Denies the updater_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the updater_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-updater-status",
+          "markdownDescription": "Denies the updater_status command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",
@@ -571,6 +619,12 @@
           "type": "string",
           "const": "core:app:allow-default-window-icon",
           "markdownDescription": "Enables the default_window_icon command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:allow-exit",
+          "markdownDescription": "Enables the exit command without any pre-configured scope."
         },
         {
           "description": "Enables the fetch_data_store_identifiers command without any pre-configured scope.",
@@ -661,6 +715,12 @@
           "type": "string",
           "const": "core:app:deny-default-window-icon",
           "markdownDescription": "Denies the default_window_icon command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:deny-exit",
+          "markdownDescription": "Denies the exit command without any pre-configured scope."
         },
         {
           "description": "Denies the fetch_data_store_identifiers command without any pre-configured scope.",
@@ -1923,6 +1983,12 @@
           "markdownDescription": "Enables the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-set-fullscreen-on-monitor",
+          "markdownDescription": "Enables the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:allow-set-icon",
@@ -2391,6 +2457,12 @@
           "markdownDescription": "Denies the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-set-fullscreen-on-monitor",
+          "markdownDescription": "Denies the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:deny-set-icon",
@@ -2617,6 +2689,54 @@
           "type": "string",
           "const": "dialog:deny-save",
           "markdownDescription": "Denies the save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the impact_feedback command without any pre-configured scope.",
+          "type": "string",
+          "const": "haptics:allow-impact-feedback",
+          "markdownDescription": "Enables the impact_feedback command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the notification_feedback command without any pre-configured scope.",
+          "type": "string",
+          "const": "haptics:allow-notification-feedback",
+          "markdownDescription": "Enables the notification_feedback command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the selection_feedback command without any pre-configured scope.",
+          "type": "string",
+          "const": "haptics:allow-selection-feedback",
+          "markdownDescription": "Enables the selection_feedback command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vibrate command without any pre-configured scope.",
+          "type": "string",
+          "const": "haptics:allow-vibrate",
+          "markdownDescription": "Enables the vibrate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the impact_feedback command without any pre-configured scope.",
+          "type": "string",
+          "const": "haptics:deny-impact-feedback",
+          "markdownDescription": "Denies the impact_feedback command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the notification_feedback command without any pre-configured scope.",
+          "type": "string",
+          "const": "haptics:deny-notification-feedback",
+          "markdownDescription": "Denies the notification_feedback command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the selection_feedback command without any pre-configured scope.",
+          "type": "string",
+          "const": "haptics:deny-selection-feedback",
+          "markdownDescription": "Denies the selection_feedback command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vibrate command without any pre-configured scope.",
+          "type": "string",
+          "const": "haptics:deny-vibrate",
+          "markdownDescription": "Denies the vibrate command without any pre-configured scope."
         },
         {
           "description": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`",

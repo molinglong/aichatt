@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, KeyboardEvent, ChangeEvent } from 'react'
-import { Send, Square, X, Plus, AlertCircle, FileText, Play, ArrowUp, Columns2, Drama, Brain, Globe, Plug, Check, ChevronRight, ChevronLeft, ChevronDown, MoreHorizontal, Copy, ClipboardPaste, TextSelect, Eraser, Paperclip } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Send, Square, X, Plus, AlertCircle, Camera, FileText, Play, ArrowUp, Columns2, Drama, Brain, Globe, Plug, Check, ChevronRight, ChevronLeft, ChevronDown, MoreHorizontal, Copy, ClipboardPaste, TextSelect, Eraser, Paperclip, Shield } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
 import { useContextMenuStore, type ContextMenuItem } from '@/store/contextMenuStore'
@@ -23,14 +24,25 @@ import {
 import { ActivityHeatmap } from './ActivityHeatmap'
 import type { MaskDTO } from '@/lib/ai/mask-types'
 import type { BuiltinMask } from '@/lib/ai/builtin-masks'
+import { isMaskRestricted, isPlatformRestricted } from '@/lib/ai/focus-restrict'
+import { bumpFocusIntercept, useFocusLock } from '@/lib/focus-lock-store'
+import { toast } from '@/lib/toast'
 import { useSingleFlight } from '@/hooks/useSingleFlight'
 import { useMaskMenuMaxHeight } from '@/hooks/useMaskMenuMaxHeight'
 import { usePanelPresence } from '@/hooks/usePanelPresence'
 import { useIsMobileViewport } from '@/hooks/useIsMobileViewport'
 import { useChatStore } from '@/store/chat-store'
 import { draftKeyFor, setDraft as persistDraft } from '@/lib/draft-storage'
-import { INPUT_INSERT_EVENT } from '@/lib/input-bridge'
+import {
+  INPUT_INSERT_EVENT,
+  EXT_ASK_EVENT,
+  EXT_ASK_STORAGE_KEY,
+  takePendingExtAsk,
+  type ExtAskDetail,
+} from '@/lib/input-bridge'
 import type { ModelDefinition } from '@/lib/ai/types'
+import { useIsTauri } from '@/lib/tauri'
+import { COURSE_SHELL_OPEN_EVENT, courseShellOpenNow, courseScreenshotAsk } from '@/lib/course-shot'
 import { useComposerShortcuts } from './useComposerShortcuts'
 import { normalizeReferences, prependConversationReferences, type ConversationReference } from '@/lib/chat-shortcuts'
 
@@ -214,6 +226,11 @@ export function ChatInput({
   const replyingTo = useChatStore((s) => s.replyingTo)
   const setReplyingTo = useChatStore((s) => s.setReplyingTo)
 
+  // ── 监管模式锁定期限制(focus-lock-restrict-plan.md §3.2/§3.4) ────────────
+  // 受限会话(游戏/闲聊向面具):输入整体停用 + 停用横幅;发送守卫双保险
+  const { locked: focusLocked } = useFocusLock()
+  const focusSessionRestricted = focusLocked && isMaskRestricted(mask)
+
   // ── 草稿自动保存 ──────────────────────────────────────────────────────────
   // 用 store 里的 currentConversationId 作为 key 维度;空会话用 '__new__'
   const currentConversationId = useChatStore((s) => s.currentConversationId)
@@ -293,6 +310,48 @@ export function ChatInput({
     }
     window.addEventListener(INPUT_INSERT_EVENT, onInsert)
     return () => window.removeEventListener(INPUT_INSERT_EVENT, onInsert)
+  }, [])
+
+  // 浏览器扩展深链带图提问(桌面壳 deeplink://ask → DeepLinkBridge 校验转发):
+  // 文本追加进输入框、截图(/uploads 已上传件)直接进附件,不自动发送。
+  // 幂等:实时分发成功后清掉 sessionStorage 兜底;挂载补领拿到即删,两条路不重复。
+  useEffect(() => {
+    function apply(detail: ExtAskDetail) {
+      if (!detail || !detail.id) return
+      // 单件(扩展深链/课堂截图)与多件(学习页带附件提问)合一个去重入口
+      const incoming = [
+        ...(detail.attachment ? [detail.attachment] : []),
+        ...(detail.attachments ?? []),
+      ]
+      if (incoming.length) {
+        setAttachments((prev) => {
+          const have = new Set(prev.map((a) => a.url))
+          const add = incoming.filter((a) => !have.has(a.url))
+          return add.length ? [...prev, ...add] : prev
+        })
+      }
+      if (detail.text) {
+        setInput((prev) => (prev ? `${prev}\n\n${detail.text}` : detail.text!))
+      }
+      requestAnimationFrame(() => textareaRef.current?.focus())
+    }
+    function onExtAsk(e: Event) {
+      const detail = (e as CustomEvent<ExtAskDetail>).detail
+      if (!detail || !detail.id) return
+      apply(detail)
+      try {
+        const raw = sessionStorage.getItem(EXT_ASK_STORAGE_KEY)
+        if (raw && JSON.parse(raw)?.id === detail.id) {
+          sessionStorage.removeItem(EXT_ASK_STORAGE_KEY)
+        }
+      } catch {
+        // 存储不可读不影响实时分发
+      }
+    }
+    window.addEventListener(EXT_ASK_EVENT, onExtAsk)
+    const pending = takePendingExtAsk()
+    if (pending) apply(pending)
+    return () => window.removeEventListener(EXT_ASK_EVENT, onExtAsk)
   }, [])
 
   // Auto-resize textarea (standard/welcome 自适应卡片共用)
@@ -465,6 +524,12 @@ export function ChatInput({
   function handleSendInternal() {
     const trimmed = input.trim()
     if (!hasSendContent || isLoading || shortcuts.isPending()) return
+    // 发送守卫:锁定期受限会话一律拦截(置灰/键盘/IME 等遗漏路径的双保险)
+    if (focusSessionRestricted) {
+      bumpFocusIntercept()
+      toast.warning('监管模式锁定中 · 游戏会话已暂停，到点自动恢复', { title: '监管模式' })
+      return
+    }
 
     // 图片附件需要视觉模型:拦截不支持视觉的模型,给出明确指引
     if (attachments.some((a) => a.type.startsWith('image/'))) {
@@ -658,11 +723,17 @@ export function ChatInput({
                 <div className="grid grid-cols-3 gap-1.5">
                   {SEARCH_PLATFORMS.map((p) => {
                     const on = p.id === searchPlatform
+                    const platRestricted = focusLocked && isPlatformRestricted(p.id)
                     return (
                       <button
                         key={p.id}
                         type="button"
                         onClick={() => {
+                          if (platRestricted) {
+                            bumpFocusIntercept()
+                            toast.warning(`监管模式锁定中 ·「${p.label}」档不可用，到点自动恢复`, { title: '监管模式' })
+                            return
+                          }
                           onSearchPlatformChange?.(p.id)
                           setMoreMenuOpen(false)
                           setPlatformGridOpen(false)
@@ -671,11 +742,13 @@ export function ChatInput({
                           'flex items-center justify-center gap-1 h-9 rounded-lg text-xs transition-colors',
                           on
                             ? 'bg-accent text-accent-foreground'
-                            : 'bg-surface-muted hover:bg-surface-subtle text-content-secondary'
+                            : 'bg-surface-muted hover:bg-surface-subtle text-content-secondary',
+                          platRestricted && 'opacity-40 cursor-not-allowed hover:bg-surface-muted'
                         )}
                       >
                         {p.label}
                         {on && <Check className="w-3 h-3" />}
+                        {platRestricted && <Shield className="w-3 h-3" aria-label="监管模式锁定中不可用" />}
                       </button>
                     )
                   })}
@@ -766,8 +839,13 @@ export function ChatInput({
                     focus-visible:ring-2 focus-visible:ring-accent/40"
                 >
                   {SEARCH_PLATFORMS.map((p) => (
-                    <option key={p.id} value={p.id}>
+                    <option
+                      key={p.id}
+                      value={p.id}
+                      disabled={focusLocked && isPlatformRestricted(p.id)}
+                    >
                       {p.label}
+                      {focusLocked && isPlatformRestricted(p.id) ? '（锁定中不可用）' : ''}
                     </option>
                   ))}
                 </select>
@@ -883,6 +961,27 @@ export function ChatInput({
       />
     ) : null
 
+  // ── 课堂截图提问(2026-11-19 A 案 ghost 图标钮):仅 Tauri 桌面 + 课程面板开着时
+  //    显示(CourseBrowser 开合广播跟变)。点击走 lib/course-shot.ts 共享管道
+  //    (截屏→/api/upload→EXT_ASK 预填新会话,不自动发送);会话页点击先跳回 /chat。
+  //    hooks 必须无条件挂载,按钮仅在条件成立时渲染 ──
+  const router = useRouter()
+  const inTauriShot = useIsTauri()
+  const { locked: flLocked } = useFocusLock()
+  const [courseShellOpen, setCourseShellOpen] = useState(courseShellOpenNow)
+  useEffect(() => {
+    // 订阅时先同步一次当前态:挂载顺序不可控,CourseBrowser 可能已先广播过
+    // (错过事件就读 body 属性兜底),两种顺序都收敛到正确值
+    setCourseShellOpen(courseShellOpenNow())
+    const sync = (e: Event) =>
+      setCourseShellOpen(!!(e as CustomEvent<{ open?: boolean }>).detail?.open)
+    window.addEventListener(COURSE_SHELL_OPEN_EVENT, sync)
+    return () => window.removeEventListener(COURSE_SHELL_OPEN_EVENT, sync)
+  }, [])
+  const handleCourseShot = useCallback(() => {
+    void courseScreenshotAsk({ navigate: (p) => router.push(p) })
+  }, [router])
+
   const toolPills = (
     <>
             {/* 附件钮:桌面外显;手机端撤掉(胶囊只留 ⋯ + 发送),入口改由 ⋯「添加附件」触发 */}
@@ -934,6 +1033,19 @@ export function ChatInput({
                   onClose={() => setMcpMenuOpen(false)}
                 />
               </div>
+            )}
+            {/* 课堂截图提问(ghost 图标钮,A 案):Tauri 桌面 + 课程面板开着才显示;
+                监管锁定期隐藏(锁内无聊天通道,动作会全部发生在锁层后面) */}
+            {inTauriShot && courseShellOpen && !isMobileViewport && !flLocked && (
+              <button
+                onClick={handleCourseShot}
+                disabled={isLoading}
+                className={cn(iconBtnBase, pillIdle, 'hidden sm:flex')}
+                title="课堂截图提问 —— 截取课程窗口画面(含视频帧),预填新会话"
+                aria-label="课堂截图提问"
+              >
+                <Camera className="w-3.5 h-3.5" />
+              </button>
             )}
             {/* 智能搜索开关(图标钮): 联网搜索不可用时隐藏(与模型选择器菜单逻辑一致) */}
             {webSearchAvailable && onWebSearchChange && (
@@ -1071,6 +1183,7 @@ export function ChatInput({
               selectedModel={modelId}
               onModelChange={(id) => handleCompareModelChange(index, id)}
               compact
+              triggerClassName="fl-pill"
             />
             {compareModels.length > 2 && (
               <button
@@ -1101,11 +1214,7 @@ export function ChatInput({
   // ============= WELCOME VARIANT =============
   if (variant === 'welcome') {
     return (
-      // data-tauri-drag-region:新对话页除中间输入卡片外整片都是空白(装饰层已
-      // pointer-events:none),客户端下正是最顺手的抓窗区;只挂属性、不写
-      // -webkit-app-region,子元素不继承拖拽区,卡片内控件点击/选词照旧。
       <div
-        data-tauri-drag-region=""
         className={cn('relative flex-1 w-full flex flex-col justify-center max-md:justify-start px-4 max-md:px-6', className)}
         style={{
           // 键盘弹出时让内容贴底(否则依旧被键盘遮住);
@@ -1203,6 +1312,16 @@ export function ChatInput({
             </div>
           )}
 
+          {/* 监管模式停用横幅:锁定期受限会话(游戏/闲聊向)输入整体停用 */}
+          {focusSessionRestricted && !sendError && (
+            <div className="flex items-center gap-1.5 mb-2 mx-2 px-2.5 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25">
+              <Shield className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" aria-hidden />
+              <p className="text-[11px] leading-relaxed text-amber-600 dark:text-amber-400 flex-1 min-w-0">
+                监管模式锁定中 · 游戏会话已暂停，到点自动恢复。可以先去学习会话做别的，解锁后回来继续。
+              </p>
+            </div>
+          )}
+
           {welcomeBanner}
           {!shortcuts.open && shortcuts.feedback}
 
@@ -1267,9 +1386,9 @@ export function ChatInput({
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               onContextMenu={handleInputContextMenu}
-              placeholder="输入问题..."
+              placeholder={focusSessionRestricted ? '监管模式锁定中 · 游戏会话已暂停' : '输入问题...'}
               rows={1}
-              disabled={isLoading}
+              disabled={isLoading || focusSessionRestricted}
               className={cn(
                 'block w-full bg-transparent text-base sm:text-sm text-content-primary placeholder:text-content-muted',
                 'resize-none focus:outline-none border-0 m-0 px-4 pt-3 pb-1 overflow-y-auto disabled:opacity-50',
@@ -1304,6 +1423,7 @@ export function ChatInput({
                       selectedModel={selectedModel}
                       onModelChange={onModelChange}
                       compact
+                      triggerClassName="fl-pill"
                     />
                   </div>
                 )}
@@ -1494,6 +1614,16 @@ export function ChatInput({
             </div>
           )}
 
+          {/* 监管模式停用横幅:锁定期受限会话(游戏/闲聊向)输入整体停用 */}
+          {focusSessionRestricted && !sendError && (
+            <div className="flex items-center gap-1.5 px-4 pt-2 max-md:w-full max-md:px-1">
+              <Shield className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" aria-hidden />
+              <p className="text-[11px] leading-relaxed text-amber-600 dark:text-amber-400 flex-1 min-w-0">
+                监管模式锁定中 · 游戏会话已暂停，到点自动恢复。可以先去学习会话做别的，解锁后回来继续。
+              </p>
+            </div>
+          )}
+
           {/* 草稿已恢复提示 —— 进入会话时短暂浮现,可手动关闭 */}
           {draftRestored && (input.trim() || references.length > 0) && (
             <div className="flex items-center gap-1.5 px-4 pt-2 text-content-muted max-md:w-full max-md:px-1">
@@ -1523,8 +1653,8 @@ export function ChatInput({
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               onContextMenu={handleInputContextMenu}
-              placeholder="输入消息..."
-              disabled={isLoading}
+              placeholder={focusSessionRestricted ? '监管模式锁定中 · 游戏会话已暂停' : '输入消息...'}
+              disabled={isLoading || focusSessionRestricted}
               rows={1}
               className={cn(
                 'w-full resize-none bg-transparent text-base sm:text-sm',
@@ -1562,6 +1692,7 @@ export function ChatInput({
                     selectedModel={selectedModel}
                     onModelChange={onModelChange}
                     compact
+                    triggerClassName="fl-pill"
                   />
                 </div>
               )}

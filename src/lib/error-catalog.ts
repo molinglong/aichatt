@@ -192,6 +192,9 @@ const MATCHERS: Array<{ code: UpstreamErrorCode; test: (text: string, status?: n
       status === 429 ||
       t.includes('rate limit') ||
       t.includes('rate_limit') ||
+      t.includes('rate-limit') ||
+      t.includes('ratelimit') ||
+      t.includes('request limit') ||
       t.includes('too many requests') ||
       t.includes('requests per minute') ||
       t.includes('tokens per minute') ||

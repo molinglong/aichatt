@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db'
 import { libraryScopes } from '@/lib/library-scope'
 import { planDeterministically, planWithAI, type PlannerTopic } from '@/lib/study/plan-planner.server'
 import { NOTE_SUBJECTS } from '@/lib/study/tagging'
+import { getExamLossTopics } from '@/lib/exam/analysis.server'
 
 /**
  * GET  /api/study/plan - 当前生效(active)的冲刺计划 + 按日任务;无则 { plan: null }
@@ -100,6 +101,23 @@ export async function POST(req: NextRequest) {
     const topics = await collectTopics(userId, subject)
     if (topics.length === 0) {
       return NextResponse.json({ error: '错题本里还没有带考点标签的卡,先学几道题再来排冲刺计划' }, { status: 400 })
+    }
+
+    // 考场丢分加权(闭环②):学校考试勾错题聚合出的丢分 TOP 考点,若错题本里有同名考点卡,
+    // 把 masteryAvg 视为减半再递减(丢分越多压越低)——AI 排期与确定性摊排(按 masteryAvg 升序
+    // 轮转)都会把这些考点提前。无卡的丢分考点排不进计划(任务需要卡),由成绩分析弹层的
+    // 考点诊断引导用户先学。失败只跳过加权,不阻塞排期。
+    try {
+      const lossTopics = await getExamLossTopics(userId, subject ?? undefined, 10)
+      if (lossTopics.length > 0) {
+        const rank = new Map(lossTopics.map((t, i) => [t, i]))
+        for (const t of topics) {
+          const i = rank.get(t.topic)
+          if (i != null) t.masteryAvg = Math.max(0, t.masteryAvg * (0.5 - i * 0.03))
+        }
+      }
+    } catch (err) {
+      console.error('[study/plan POST] exam-loss boost skipped:', err)
     }
 
     // AI 优先(方案A);失败/欠费/JSON 不合法 → 确定性兜底,功能永不阻塞

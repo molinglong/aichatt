@@ -15,6 +15,7 @@ import { prisma } from '@/lib/db'
 import { libraryScopes } from '@/lib/library-scope'
 import { Prisma } from '@/generated/prisma/client'
 import { generateFillQuestions, topicTokens, type FillContext } from '@/lib/ai/paper-question-generator'
+import { slotHintsFor } from '@/lib/papers/slot-hints'
 import { decrypt } from '@/lib/crypto'
 
 /** 学科中文标签（卷面标题用；与 Note 学科枚举对齐） */
@@ -84,15 +85,16 @@ interface PoolItem {
 }
 
 /** 加载候选池：有答案 + 未 flagged + 结构自检通过，按学科过滤。
- *  allowAi=false 只取官方答案（answerSource=official）；true 放行 AI 参考答案题 */
-async function loadPool(userId: string, subject: string, allowAi = false): Promise<PoolItem[]> {
+ *  allowAi=false 只取官方答案（answerSource=official）；true 放行 AI 参考答案题。
+ *  restrictSlug=真卷限定：只用该卷的题（同卷仿真模拟）。试装 dry-run 亦复用 */
+export async function loadPool(userId: string, subject: string, allowAi = false, restrictSlug?: string): Promise<PoolItem[]> {
   const rows = await prisma.paperQuestion.findMany({
     where: {
       userId: { in: await libraryScopes(userId) },
       answer: { not: null },
       flagged: false,
       ...(allowAi ? {} : { answerSource: 'official' }),
-      paper: { subject },
+      paper: { subject, ...(restrictSlug ? { slug: restrictSlug } : {}) },
     },
     select: {
       id: true, number: true, section: true, kind: true, score: true,
@@ -309,6 +311,8 @@ export interface ComposeInput {
   allowAiAnswers?: boolean
   /** 大纲组卷模式:结构来自用户大纲的槽位定义,不再依赖底卷 */
   slotDefs?: OutlineSlotDef[]
+  /** 真卷限定:只用该卷(slug)的题——套用某张真题结构后勾「只用这张卷的题」时传;缺省全池 */
+  restrictPaperSlug?: string
   /** 自定义卷名(大纲模式生效;不传自动命名) */
   title?: string
   /** 针对我复习:按这些考点词匹配真题填充(题干/选项关键词命中打分,优先命中题;命中不足如实缺口,不用无关题凑)。与 slotDefs 同传=模板结构+针对我内容 */
@@ -345,6 +349,8 @@ export interface ComposeResult {
   shortages?: Array<{ kind: string; score: number; requested: number; filled: number }>
   /** 针对我复习:真题不够时用内联题补齐的数量(卷面按来源标注) */
   filledInline?: { textbook: number; aiVariant: number }
+  /** 换题防重复:因「避开最近 3 张组过的卷」而改抽别的题的数量(0=没有触发避让) */
+  avoidedRecent?: number
 }
 
 /**
@@ -353,6 +359,95 @@ export interface ComposeResult {
  * 生成失败降级为缺口如实带出(shortages)。fill 缺省时保持旧口径:零拟题,池空直接 no_pool。
  * baseSlug 置空:无底卷,整卷重摇不可用(卷面页对大纲卷隐藏重摇按钮)。
  */
+/** 试装/组卷共用的抽题结果:q=null=该槽缺口(池不够);hintTopic=AI 补题考点口径 */
+export interface DryPick {
+  section: string | null
+  kind: string
+  score: number
+  q: Pick<PoolItem, 'id' | 'number' | 'stem' | 'options' | 'topics' | 'kind' | 'score' | 'paperTitle' | 'paperSlug'> | null
+  hintTopic: string
+}
+
+/** 按大纲槽位定义从池内抽题(组卷与试装 dry-run 共用的纯函数):
+ *  桶=题型+分值;针对我模式按考点相关度;槽位考点提示优先、不足退随机;
+ *  recentIds=换题防重复软避让(不够回退复用)。相邻同 def 的缺口归入同一条 shortage。 */
+export function pickSlotsForDefs(
+  pool: PoolItem[],
+  subject: string,
+  slotDefs: OutlineSlotDef[],
+  tokens: string[] | null,
+  recentIds: Set<string> = new Set()
+): {
+  groups: Array<{
+    def: OutlineSlotDef
+    section: string | null
+    picks: DryPick[]
+    shortage: { kind: string; score: number; requested: number; filled: number } | null
+  }>
+  avoidedRecent: number
+} {
+  const defs = slotDefs
+    .filter((d) => d.count > 0 && d.score > 0 && (d.kind === 'choice' || d.kind === 'answer'))
+    .slice(0, 12)
+  const used = new Set<string>()
+  const groups: Array<{
+    def: OutlineSlotDef
+    section: string | null
+    picks: DryPick[]
+    shortage: { kind: string; score: number; requested: number; filled: number } | null
+  }> = []
+  let avoidedRecent = 0
+  for (const def of defs) {
+    const section = def.section?.trim() || null
+    const bucket = pool.filter((q) => q.kind === def.kind && q.score === def.score && !used.has(q.id))
+    let picked: PoolItem[]
+    if (tokens) {
+      // 针对我模式:桶内按考点相关度取;命中不足不再拿无关题凑 → 如实缺口
+      picked = bucket
+        .map((q) => ({ q, r: relevanceOf(q, tokens) }))
+        .filter((x) => x.r > 0)
+        .sort((a, b) => b.r - a.r)
+        .slice(0, def.count)
+        .map((x) => x.q)
+    } else {
+      picked = []
+      for (let n = 0; n < def.count && bucket.length > 0; n++) {
+        // 槽位考点提示:优先抽常考考点命中的真题,命中不足退随机(与针对我模式不同,不产生缺口)
+        const hint = slotHintsFor(subject, section, def.kind, def.score)[n] ?? null
+        const hits = hint
+          ? bucket.filter((q) => q.topics.some((tp) => hint.tags.some((tg) => tp.includes(tg))))
+          : []
+        // 换题防重复:候选里先避开最近 3 张卷用过的题,不够再复用旧题(不因避让产生缺口)
+        const src0 = hits.length > 0 ? hits : bucket
+        const fresh = src0.filter((q) => !recentIds.has(q.id))
+        const src = fresh.length > 0 ? fresh : src0
+        if (fresh.length > 0 && src0.length > fresh.length) avoidedRecent++
+        const pick = src[Math.floor(Math.random() * src.length)]
+        bucket.splice(bucket.indexOf(pick), 1)
+        picked.push(pick)
+      }
+    }
+    const picks: DryPick[] = picked.map((pick) => ({
+      section,
+      kind: def.kind,
+      score: def.score,
+      q: { id: pick.id, number: pick.number, stem: pick.stem, options: pick.options, topics: pick.topics, kind: pick.kind, score: pick.score, paperTitle: pick.paperTitle, paperSlug: pick.paperSlug },
+      hintTopic: '',
+    }))
+    let shortage: { kind: string; score: number; requested: number; filled: number } | null = null
+    if (picked.length < def.count) {
+      shortage = { kind: def.kind, score: def.score, requested: def.count, filled: picked.length }
+      // AI 补题考点:槽位提示优先(如「立体几何」),大题名清洗仅兜底(「解答与证明题」对检索无效)
+      const hintTopic = slotHintsFor(subject, section, def.kind, def.score)[picked.length]?.topic ?? ''
+      for (let n = picked.length; n < def.count; n++) {
+        picks.push({ section, kind: def.kind, score: def.score, q: null, hintTopic: hintTopic || sectionToTopic(section) })
+      }
+    }
+    groups.push({ def, section, picks, shortage })
+  }
+  return { groups, avoidedRecent }
+}
+
 async function composeFromOutline(
   userId: string,
   subject: string,
@@ -361,51 +456,55 @@ async function composeFromOutline(
   allowAi = false,
   focusTopics?: string[],
   fill?: InlineFillOpts | null,
-  note?: string
+  note?: string,
+  restrictSlug?: string
 ): Promise<ComposeResult> {
   const defs = slotDefs
     .filter((d) => d.count > 0 && d.score > 0 && (d.kind === 'choice' || d.kind === 'answer'))
     .slice(0, 12)
   if (!defs.length) return { ok: false, reason: 'bad_outline' }
 
-  const pool = await loadPool(userId, subject, allowAi)
+  const pool = await loadPool(userId, subject, allowAi, restrictSlug)
   if (!pool.length && !fill) return { ok: false, reason: 'no_pool' }
 
+  // 换题防重复:收集最近 3 张组过的卷里用过的真题 id(软避让——池不够时回退复用,不产生缺口)
+  const recentComposed = await prisma.composedPaper.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+    take: 3,
+    select: { slots: { select: { paperQuestionId: true, historyIds: true } } },
+  })
+  const recentIds = new Set<string>()
+  for (const cp of recentComposed) {
+    for (const s of cp.slots) {
+      if (s.paperQuestionId) recentIds.add(s.paperQuestionId)
+      for (const h of s.historyIds) recentIds.add(h)
+    }
+  }
+  let avoidedRecent = 0
+
   const tokens = focusTopics?.length ? topicTokens(focusTopics) : null
-  const used = new Set<string>()
   const slots: SlotDraft[] = []
   const shortages: NonNullable<ComposeResult['shortages']> = []
   const fillTasks: FillTask[] = []
-  for (const def of defs) {
-    const section = def.section?.trim() || null
-    // 桶 = 题型+分值(大纲的大题名是用户自定义标签,不参与抽题)
-    const bucket = pool.filter((q) => q.kind === def.kind && q.score === def.score && !used.has(q.id))
-    let picks: PoolItem[]
-    if (tokens) {
-      // 针对我模式:桶内按考点相关度取;命中不足不再拿无关题凑 → 如实缺口
-      picks = bucket
-        .map((q) => ({ q, r: relevanceOf(q, tokens) }))
-        .filter((x) => x.r > 0)
-        .sort((a, b) => b.r - a.r)
-        .slice(0, def.count)
-        .map((x) => x.q)
-    } else {
-      picks = []
-      for (let n = 0; n < def.count && bucket.length > 0; n++) {
-        const idx = Math.floor(Math.random() * bucket.length)
-        const [pick] = bucket.splice(idx, 1)
-        picks.push(pick)
+  const { groups, avoidedRecent: avoided } = pickSlotsForDefs(pool, subject, defs, tokens, recentIds)
+  avoidedRecent = avoided
+  for (const g of groups) {
+    let filled = 0
+    for (const pick of g.picks) {
+      if (pick.q) {
+        slots.push({ section: pick.section, kind: pick.kind, score: pick.score, paperQuestionId: pick.q.id, historyIds: [pick.q.id] })
+        filled++
       }
     }
-    let filled = 0
-    for (const pick of picks) {
-      used.add(pick.id)
-      slots.push({ section, kind: def.kind, score: def.score, paperQuestionId: pick.id, historyIds: [pick.id] })
-      filled++
-    }
-    if (filled < def.count) {
-      shortages.push({ kind: def.kind, score: def.score, requested: def.count, filled })
-      fillTasks.push({ section, topic: sectionToTopic(section), kind: def.kind, score: def.score, need: def.count - filled, sh: shortages[shortages.length - 1] })
+    if (g.shortage) {
+      shortages.push(g.shortage)
+      for (const pick of g.picks) {
+        if (!pick.q) {
+          // AI 补题考点:槽位提示优先(如「立体几何」),大题名清洗仅兜底(「解答与证明题」对检索无效)
+          fillTasks.push({ section: pick.section, topic: pick.hintTopic, kind: pick.kind as 'choice' | 'answer', score: pick.score, need: 1, sh: g.shortage })
+        }
+      }
     }
   }
   // 缺口内联补齐:整卷 AI 兜底(池空全靠它)/真题不够配比补齐,共用同一管线
@@ -427,7 +526,7 @@ async function composeFromOutline(
     },
     select: { id: true },
   })
-  return { ok: true, composedId: composed.id, title, shortages: shortages.length ? shortages : undefined, filledInline }
+  return { ok: true, composedId: composed.id, title, shortages: shortages.length ? shortages : undefined, filledInline, avoidedRecent: avoidedRecent || undefined }
 }
 
 /**
@@ -525,7 +624,7 @@ export async function composePaper(userId: string, input: ComposeInput): Promise
   // 补齐预算(aiFillAll 整卷兜底 / 针对我配比补齐)统一在此归一:无模型 → 不补(保持零拟题口径)
   const fill = resolveFillOpts(input)
   // 传了 slotDefs(即使过滤后为空)即大纲模式:空/无效定义走 bad_outline,绝不静默回退底卷模式
-  if (input.slotDefs) return composeFromOutline(userId, input.subject, input.slotDefs, input.title, !!input.allowAiAnswers, input.focusTopics, fill, input.note)
+  if (input.slotDefs) return composeFromOutline(userId, input.subject, input.slotDefs, input.title, !!input.allowAiAnswers, input.focusTopics, fill, input.note, input.restrictPaperSlug)
   // 针对我复习(无结构):按薄弱考点逐组匹配,大题名 = 考点名;extraRandom>0 时卷尾补随机巩固节
   if (input.focusTopics?.length)
     return composeForReview(userId, input.subject, input.focusTopics, input.perTopic ?? 2, input.title, !!input.allowAiAnswers, input.extraRandom ?? 0, fill, input.note)
@@ -958,6 +1057,8 @@ export interface ComposedPaperFull {
     inlineSource: string | null
     /** 非真题槽溯源 */
     sourceRef: string | null
+    /** 真题槽的 PaperQuestion id(今晚测验对答错题出变式用);内联槽为 null */
+    paperQuestionId: string | null
   }>
   /** 当前在卷题目的来源卷名清单（答案页来源声明用，按卷名字典序） */
   sources: string[]
@@ -1004,6 +1105,7 @@ export async function getComposedPaper(userId: string, composedId: string): Prom
       sourceNumber: inline ? null : s.paperQuestion!.number,
       sourceRef: inline ? s.sourceRef ?? null : null,
       inlineSource: inline ? s.source ?? 'ai-variant' : null,
+      paperQuestionId: inline ? null : s.paperQuestionId,
     }
   })
   const sources = Array.from(new Set(slots.map((s) => s.sourceTitle).filter((t): t is string => !!t))).sort()

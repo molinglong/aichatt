@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useState } from 'react'
-import { BookOpen, BookX, Brain, Calculator, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Fish, Globe, Link2, ListTodo, Loader2, Plug, ScrollText, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
+import { BookOpen, BookX, Brain, Calculator, CalendarDays, Check, ChevronDown, ClipboardCheck, Clock, Dumbbell, Fish, Globe, Link2, ListTodo, Loader2, Notebook, NotebookPen, Plug, ScrollText, Search, Settings2, TriangleAlert, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UIMessage } from 'ai'
 import { ClarifyCard } from './ClarifyCard'
@@ -14,7 +14,7 @@ import { TripMapCard } from './TripMapCard'
 import { ProviderModelCard } from './ProviderModelCard'
 import { AddCustomModelCard } from './AddCustomModelCard'
 import { DeleteCustomModelCard } from './DeleteCustomModelCard'
-import { CLARIFY_TOOL_NAME } from '@/lib/ai/clarify'
+import { CLARIFY_TOOL_NAME, toClarifyQuestions } from '@/lib/ai/clarify'
 import { LOCAL_FILE_TOOL_NAME } from '@/lib/ai/local-file-tool'
 import { MASK_TOOL_NAME } from '@/lib/ai/mask-tool'
 import { WRITE_DOC_TOOL_NAME } from '@/lib/ai/write-doc-tool'
@@ -38,7 +38,9 @@ import { PRACTICE_TOOL_NAME, RECORD_TOOL_NAME, type PracticeToolOutput } from '@
 import { PAPER_SEARCH_TOOL_NAME, PAPER_ANALYZE_TOOL_NAME, COMPOSE_PAPER_TOOL_NAME, type PaperSearchOutput, type PaperAnalyzeOutput, type ComposePaperOutput } from '@/lib/ai/paper-tool'
 import { KnowledgeDetail, OutlineDetail, PracticeDetail, CalcDetail, PaperDetail, PaperAnalysisDetail, ComposeDetail } from './ToolDetailBlocks'
 import { TODO_TOOL_NAME, type TodoToolOutput } from '@/lib/ai/todo-tool'
+import { PLAN_TOOL_NAME, type PlanToolOutput } from '@/lib/ai/plan-tool'
 import { SAVE_WRONG_QUESTION_TOOL_NAME, type SaveWrongQuestionToolOutput } from '@/lib/ai/wrong-question-tool'
+import { RECORD_STUDY_EVENT_TOOL_NAME, QUERY_STUDY_EVENTS_TOOL_NAME, type RecordStudyEventToolOutput, type QueryStudyEventsToolOutput } from '@/lib/ai/study-event-tool'
 import { URL_READER_TOOL_NAME, type UrlReaderOutput } from '@/lib/ai/url-reader'
 import { CALC_TOOL_NAME, type CalcOutput } from '@/lib/ai/calc-tool'
 import { TIME_TOOL_NAME, type TimeToolOutput } from '@/lib/ai/time-tool'
@@ -95,6 +97,24 @@ interface ToolCallsMetadata {
 }
 
 /**
+ * 澄清卡去重:同一条消息里内容相同的 ask_clarification 只保留首份。
+ * 背景:修复前 stopWhen 不拦澄清工具,多步循环把悬空 tool-call 回灌,模型原样再问,
+ * 一条消息最多落了 5 份重复调用进 metadata.toolCalls;根因已在 route.ts stopWhen 堵住,
+ * 这里兜存量(已落库的重复)与将来其他 provider 的同类行为。key 用题干集合而非整包
+ * JSON——模型复述参数时措辞可能有细微漂移,题干一致即视为同一轮提问。
+ */
+function dedupeClarifyViews(views: ToolCallView[]): ToolCallView[] {
+  let seenClarifyKey: string | null = null
+  return views.filter((v) => {
+    if (v.tool !== CLARIFY_TOOL_NAME) return true
+    const key = toClarifyQuestions(v.input).map((q) => q.question).join('|')
+    if (seenClarifyKey !== null && key === seenClarifyKey) return false
+    seenClarifyKey = key
+    return true
+  })
+}
+
+/**
  * 从 UIMessage 提取工具调用视图,流式 parts 优先,历史 metadata 兜底。
  * 两来源互斥(当轮消息 parts 必有数据;历史消息 parts 无 tool part 才读 metadata),不会重复渲染。
  */
@@ -113,11 +133,11 @@ export function extractToolCallViews(message: UIMessage): ToolCallView[] {
       errorText: (p as { errorText?: string }).errorText,
     })
   }
-  if (partViews.length > 0) return partViews
+  if (partViews.length > 0) return dedupeClarifyViews(partViews)
   // 来源 B: 历史消息(metadata.toolCalls,由 chat route onFinish 写入)
   const meta = (message as { metadata?: unknown }).metadata as ToolCallsMetadata | undefined
   if (meta?.kind === 'tool_calls' && Array.isArray(meta.toolCalls)) {
-    return meta.toolCalls.map((c, i) => {
+    return dedupeClarifyViews(meta.toolCalls.map((c, i) => {
       const out = c.output as { error?: string } | undefined
       return {
         tool: c.tool ?? 'unknown',
@@ -126,7 +146,7 @@ export function extractToolCallViews(message: UIMessage): ToolCallView[] {
         input: c.input ?? null,
         output: c.output ?? null,
       }
-    })
+    }))
   }
   return []
 }
@@ -624,6 +644,68 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
     return <ToolRow icon={<ListTodo className="w-3.5 h-3.5" />} text={text} streaming={view.state === 'input-streaming'} failed={failed} />
   }
 
+  // 今日计划:一行式卡片,按操作类型展示;服务端写库(PlanItem/PlanMemo),这里只展示
+  if (view.tool === PLAN_TOOL_NAME) {
+    const input = view.input as
+      | {
+          operation?: string
+          items?: Array<{ title?: string; startMin?: string }>
+          match?: string
+          memoContent?: string
+        }
+      | undefined
+    const out = view.output as PlanToolOutput | undefined
+    const failed = view.state === 'output-error' || out?.ok === false
+    const op = out?.operation ?? input?.operation
+    const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+    let text: string
+    if (view.state === 'input-streaming') {
+      const preview = input?.items?.map((t) => t.title ?? '').filter(Boolean).join('；')
+      text = preview
+        ? `正在记入「${preview}」…`
+        : input?.memoContent
+          ? '正在存备忘…'
+          : input?.match
+            ? `正在操作「${input.match}」…`
+            : op === 'schedule'
+              ? '正在排今天…'
+              : '正在操作今日计划…'
+    } else if (out?.candidates?.length) {
+      text = `匹配到多条：${out.candidates.join('；')}`
+    } else if (out?.ok === false && out.message) {
+      text = `未生效：${out.message}`
+    } else if (op === 'add' && out?.added?.length) {
+      text = `已记入：${out.added.map((t) => `${t.title}${t.time ? `(${t.time})` : ''}`).join('；')}`
+    } else if (op === 'complete' && out?.completed?.length) {
+      text = `已完成：${out.completed.join('；')}`
+    } else if (op === 'move' && out?.moved?.length) {
+      text = out.moved.join('；')
+    } else if (op === 'delete' && out?.deleted?.length) {
+      text = `已删除：${out.deleted.join('；')}`
+    } else if (op === 'schedule') {
+      const sc = out?.scheduled
+      text = sc
+        ? sc.added > 0
+          ? `AI 排入 ${sc.added} 项${sc.source === 'local' ? '（空档顺排）' : ''}`
+          : sc.note ?? '没有可排的待安排'
+        : '正在排今天…'
+    } else if (op === 'today' && out?.blocks) {
+      const next = out.blocks.find((b) => !b.done)
+      text = out.blocks.length
+        ? next
+          ? `查看今日计划 · ${out.blocks.length} 项已排,下一件 ${fmt(next.startMin)}「${next.title}」`
+          : `查看今日计划 · ${out.blocks.length} 项全部完成`
+        : '查看今日计划 · 今天还是空的'
+    } else if (op === 'memo_save' && out?.memo) {
+      text = `已存备忘「${out.memo.title || out.memo.content.slice(0, 20)}」`
+    } else if (op === 'memo_search') {
+      text = out?.memos?.length ? `搜到 ${out.memos.length} 条备忘` : '没有匹配的备忘'
+    } else {
+      text = failed ? '今日计划操作未生效' : '今日计划操作'
+    }
+    return <ToolRow icon={<CalendarDays className="w-3.5 h-3.5" />} text={text} streaming={view.state === 'input-streaming'} failed={failed} />
+  }
+
   // 错题本存入:一行式卡片;服务端写库(captureStudyNote 幂等),这里只展示
   if (view.tool === SAVE_WRONG_QUESTION_TOOL_NAME) {
     const wOut = view.output as SaveWrongQuestionToolOutput | undefined
@@ -637,6 +719,43 @@ function ToolCallCardInner({ view, clarifyAnswered, onClarifySubmit, onLocalFile
           ? `已存入错题本「${wOut.title || '题目'}」，进入今日复习队列`
           : '该题此前已存入错题本'
     return <ToolRow icon={<BookX className="w-3.5 h-3.5" />} text={wText} streaming={wPending} failed={wFailed} />
+  }
+
+  // 学习事件记录:一行式卡片;服务端写库(同日同文字去重),这里只展示
+  if (view.tool === RECORD_STUDY_EVENT_TOOL_NAME) {
+    const eIn = view.input as { events?: Array<{ text?: string }> } | undefined
+    const eOut = view.output as RecordStudyEventToolOutput | undefined
+    const eFailed = view.state === 'output-error' || eOut?.ok === false || !!eOut?.error
+    const ePending = view.state === 'input-streaming' || view.state === 'input-available'
+    const ePreview = eIn?.events?.map((e) => e.text ?? '').filter(Boolean).join('；')
+    const eText = ePending
+      ? ePreview
+        ? `正在记下「${ePreview}」…`
+        : '正在记一笔…'
+      : eFailed
+        ? '记一笔未生效'
+        : [
+            eOut?.saved?.length ? `已记下 ${eOut.saved.length} 条` : '',
+            eOut?.duplicates?.length ? `${eOut.duplicates.length} 条今天已记过` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || '已处理学习记录'
+    return <ToolRow icon={<NotebookPen className="w-3.5 h-3.5" />} text={eText} streaming={ePending} failed={eFailed} />
+  }
+
+  // 学习记录查询:一行式卡片;只读聚合,完成后显示天数与条数
+  if (view.tool === QUERY_STUDY_EVENTS_TOOL_NAME) {
+    const qOut = view.output as QueryStudyEventsToolOutput | undefined
+    const qFailed = view.state === 'output-error' || qOut?.ok === false || !!qOut?.error
+    const qPending = view.state === 'input-streaming' || view.state === 'input-available'
+    const qText = qPending
+      ? '正在翻学习记录…'
+      : qFailed
+        ? '查学习记录未生效'
+        : qOut?.total
+          ? `查学习记录 · 最近 ${qOut.days} 天 ${qOut.total} 条`
+          : `查学习记录 · 最近 ${qOut?.days ?? 7} 天暂无记录`
+    return <ToolRow icon={<Notebook className="w-3.5 h-3.5" />} text={qText} streaming={qPending} failed={qFailed} />
   }
 
   // 课本目录:一行式卡片;完成后显示“几本 / 几个框题”,展开看章-节-框题树

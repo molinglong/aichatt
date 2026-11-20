@@ -14,9 +14,14 @@ import { ChevronDown } from 'lucide-react'
 import { useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
 import { StudyPanelDialog } from '@/components/study/StudyPanelDialog'
-import { StudyHome, type StudySessionListItem, type ComposedPaperListItem, type StudyPlanSummary } from '@/components/study/StudyHome'
+import { StudyHome, type StudySessionListItem, type ComposedPaperListItem, type StudyPlanSummary, type ExamRecordListItem, type LibraryPaperItem } from '@/components/study/StudyHome'
 import { ReviewStatsDialog, type StudyStats } from '@/components/study/ReviewStatsDialog'
+import { ExamRecordsDialog } from '@/components/study/ExamRecordsDialog'
 import { PlanDialog, type StudyPlan } from '@/components/study/PlanDialog'
+import { TodayTasksDialog } from '@/components/study/TodayTasksDialog'
+import { StudyEventsDialog, useStudyEventsRecent } from '@/components/study/StudyEventsDialog'
+import { ExamRecordDialog } from '@/components/study/ExamRecordDialog'
+import { chickPlay, chickToday, readStartupFlag, writeStartupFlag } from '@/lib/chick/reactions'
 import { StudyWorkspace } from '@/components/study/StudyWorkspace'
 import { FileUpload } from '@/components/chat/FileUpload'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
@@ -242,7 +247,14 @@ function StudyContent() {
   const [drawerTopic, setDrawerTopic] = useState<string | null>(null)
   const [statsOpen, setStatsOpen] = useState(false)
   const [planOpen, setPlanOpen] = useState(false)
+  // 今日任务弹窗(2026-11-16 方案A「今日清单」;入口挂 StudyHome「今天」区块行)
+  const [tasksOpen, setTasksOpen] = useState(false)
+  const [eventsOpen, setEventsOpen] = useState(false)
   const [creatingPlan, setCreatingPlan] = useState(false)
+  // 学校考试:记录卡就地展开(方案D) + 全部成绩弹层;examFormSlug 来自试卷页深链
+  const [examFormOpen, setExamFormOpen] = useState(false)
+  const [examFormSlug, setExamFormSlug] = useState<string | null>(null)
+  const [examRecordsOpen, setExamRecordsOpen] = useState(false)
 
   // 视图状态:学习台 / 学新题 / 会话中(本地状态;刷新回学习台,继续上次一键回)
   const [view, setView] = useState<{ kind: 'home' } | { kind: 'setup'; draft?: string } | { kind: 'session'; id: string }>({ kind: 'home' })
@@ -328,8 +340,11 @@ function StudyContent() {
         totalDone: plan.items.filter((i) => i.done).length,
       }
     : null
+  // 今日任务弹窗数据:计划今日项(PlanDialog 同源,item.date 已归一为 YYYY-MM-DD)
+  const todayPlanItems = plan ? plan.items.filter((i) => i.date === todayIso) : []
+  const inProgressSessions = sessions.filter((s) => s.status === 'explaining')
   const router = useRouter()
-  const { data: kbDocs, isPending: kbPending } = useQuery({
+  const { data: kbDocs, isPending: kbPending, isError: kbError } = useQuery({
     queryKey: queryKeys.kb.docs(),
     queryFn: ({ signal }) => fetchJson<Array<{ id: string }>>('/api/kb/docs', { signal }),
     staleTime: 60_000,
@@ -342,6 +357,23 @@ function StudyContent() {
     staleTime: 30_000,
   })
   const composedPapers = composedList?.papers ?? []
+  // 卷库列表(学校考试记录卡关联卷选择器;GET /api/papers,公共库合并只读)
+  const { data: libraryPapersData, isPending: libraryPapersPending, isError: libraryPapersError, refetch: refetchLibraryPapers } = useQuery({
+    queryKey: queryKeys.papers.list(),
+    queryFn: ({ signal }) => fetchJson<{ papers: LibraryPaperItem[] }>('/api/papers', { signal }),
+    staleTime: 60_000,
+  })
+  const libraryPapers = libraryPapersData?.papers ?? []
+  // 学校考试成绩台账(学习台区块 + 全部成绩弹层共用;GET /api/exam-records)
+  const { data: examRecordsData, isPending: examRecordsPending } = useQuery({
+    queryKey: queryKeys.examRecords.list(),
+    queryFn: ({ signal }) => fetchJson<{ records: ExamRecordListItem[] }>('/api/exam-records', { signal }),
+    staleTime: 30_000,
+  })
+  const examRecords = examRecordsData?.records ?? []
+  // 学习记录流水(GET /api/study/events 最近 30 天;贴纸与弹层共用同一 query key,
+  // 弹层记/删后 invalidate 即同步;不计入 booting,贴纸首取中显示 — 不闪假 0)
+  const { data: recentEvents } = useStudyEventsRecent(true)
   // 首屏数据未齐 → 学习台整页骨架屏(方案A):任一首取未完成就不渲染零值空态;
   // 有缓存时 isPending 直接为 false,回访不闪骨架
   const booting =
@@ -350,7 +382,26 @@ function StudyContent() {
     notesPending ||
     favoritesPending ||
     kbPending ||
-    composedPending
+    composedPending ||
+    libraryPapersPending ||
+    examRecordsPending
+
+  // 骨架屏兜底:请求批量超时/重试会把 isPending 拖到几十秒;20s 仍未齐就露「加载较慢」重试口,
+  // 免得用户面对一块永远不动的骨架。
+  const [slowLoad, setSlowLoad] = useState(false)
+  useEffect(() => {
+    if (!booting) {
+      setSlowLoad(false)
+      return
+    }
+    const t = setTimeout(() => setSlowLoad(true), 20_000)
+    return () => clearTimeout(t)
+  }, [booting])
+
+  /** 成绩台账刷新(记录卡保存/弹层删除后) */
+  const refreshExamRecords = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.examRecords.list() })
+  }
 
   const refreshAll = () => {
     void queryClient.invalidateQueries({ queryKey: ['study', 'sessions'] })
@@ -379,12 +430,33 @@ function StudyContent() {
     }).catch(() => {})
   }, [meta])
 
+  // 连续打卡每满 7 天 → 小鸡报里程碑(当日只报一次)
+  useEffect(() => {
+    const n = stats?.streakDays ?? 0
+    if (n <= 0 || n % 7 !== 0) return
+    const today = chickToday()
+    const flag = readStartupFlag()
+    if (flag.fired.streakDay === today) return
+    flag.fired.streakDay = today
+    writeStartupFlag(flag)
+    chickPlay('streakDay', { days: n })
+  }, [stats])
+
   // 扩展等外部入口直落抽屉:/study?panel=notes
   useEffect(() => {
     const panel = searchParams.get('panel')
     if (panel === 'notes' || panel === 'review' || panel === 'favorites') {
       setDrawerTab(panel)
       setDrawerOpen(true)
+    }
+  }, [searchParams])
+
+  // 试卷页「记一次成绩」深链:/study?recordExam=<slug> 就地展开记录卡并预选卷子
+  useEffect(() => {
+    const slug = searchParams.get('recordExam')
+    if (slug) {
+      setExamFormSlug(slug)
+      setExamFormOpen(true)
     }
   }, [searchParams])
 
@@ -429,6 +501,13 @@ function StudyContent() {
         body: JSON.stringify({ itemId, done }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // 今日项全勾销 → 小鸡报喜(任务状态组,每日上限防刷)
+      if (done && plan) {
+        const todayItems = plan.items.filter((i) => i.date === todayIso)
+        if (todayItems.length > 0 && todayItems.every((i) => (i.id === itemId ? true : i.done))) {
+          chickPlay('planDone')
+        }
+      }
       refreshPlan()
     } catch (err) {
       console.error('[study] toggle plan item failed:', err)
@@ -525,18 +604,26 @@ function StudyContent() {
     <div className="flex h-full flex-col overflow-hidden">
       <div className="relative min-h-0 flex-1">
         {view.kind === 'home' && (
-          <StudyHome
-            sessions={sessions}
+          <>
+            <StudyHome
+              sessions={sessions}
             dueCount={dueCount}
             dueRedoCount={dueRedoCount}
             noteCount={noteCount}
             favoriteCount={favoriteCount}
             kbCount={kbCount}
+            kbUnavailable={kbError}
             masteryAvg={masteryAvg}
             streakDays={statsPending ? null : stats?.streakDays ?? null}
             totalSessions={totalSessions}
             activePlan={activePlan}
             papers={composedPapers}
+            examRecords={examRecords}
+            onRecordExam={() => {
+              setExamFormSlug(null)
+              setExamFormOpen(true)
+            }}
+            onOpenExamRecords={() => setExamRecordsOpen(true)}
             loading={listQuery.isLoading}
             booting={booting}
             onResume={openSession}
@@ -549,7 +636,23 @@ function StudyContent() {
             }}
             onOpenStats={() => setStatsOpen(true)}
             onOpenPlan={() => setPlanOpen(true)}
-          />
+            onOpenTasks={() => setTasksOpen(true)}
+            events={recentEvents}
+            onOpenEvents={() => setEventsOpen(true)}
+            />
+            {booting && slowLoad && (
+              <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-line-strong bg-surface px-3.5 py-2 text-[12px] text-content-secondary shadow-lg">
+                加载较慢…
+                <button
+                  type="button"
+                  onClick={() => void queryClient.invalidateQueries()}
+                  className="font-semibold text-accent hover:underline"
+                >
+                  重试
+                </button>
+              </div>
+            )}
+          </>
         )}
 
         {view.kind === 'setup' && (
@@ -632,6 +735,13 @@ function StudyContent() {
           onClearTopic={() => setDrawerTopic(null)}
         />
 
+        {/* 学习记录弹层(便利贴风:手动补一条+时间线;与聊天快记 record_study_event 共用 StudyEvent 表) */}
+        <StudyEventsDialog
+          open={eventsOpen}
+          onClose={() => setEventsOpen(false)}
+          onChanged={() => void queryClient.invalidateQueries({ queryKey: ['study', 'events-recent'] })}
+        />
+
         {/* 复习统计弹层(阶段三方案B:小组件/统计 chip 进入) */}
         <ReviewStatsDialog
           open={statsOpen}
@@ -655,6 +765,61 @@ function StudyContent() {
           onToggleItem={(id, done) => void handleToggleItem(id, done)}
           onCreate={handleCreatePlan}
           onEndPlan={() => void handleEndPlan()}
+        />
+
+        {/* 今日任务弹窗(2026-11-16 方案A「今日清单」:计划今日项+常驻三件;入口挂「今天」区块行) */}
+        <TodayTasksDialog
+          open={tasksOpen}
+          onClose={() => setTasksOpen(false)}
+          planTitle={plan?.title ?? null}
+          planToday={todayPlanItems}
+          onToggleItem={(id, done) => void handleToggleItem(id, done)}
+          onOpenPlan={() => {
+            setTasksOpen(false)
+            setPlanOpen(true)
+          }}
+          dueCount={dueCount}
+          dueRedoCount={dueRedoCount}
+          inProgress={inProgressSessions}
+          onResume={(id) => {
+            setTasksOpen(false)
+            openSession(id)
+          }}
+          onOpenReview={(mode) => {
+            setTasksOpen(false)
+            setDrawerTab('review')
+            setDrawerMode(mode)
+            setDrawerOpen(true)
+          }}
+          onOpenStats={() => {
+            setTasksOpen(false)
+            setStatsOpen(true)
+          }}
+          masteryAvg={masteryAvg}
+          streakDays={statsPending ? null : stats?.streakDays ?? null}
+          totalSessions={totalSessions}
+          noteCount={noteCount}
+        />
+
+        {/* 记一次学校考试弹窗(2026-11-16:原方案D 就地展开改弹窗;?recordExam= 深链带 initialSlug) */}
+        <ExamRecordDialog
+          open={examFormOpen}
+          onClose={() => setExamFormOpen(false)}
+          papers={libraryPapers}
+          papersError={libraryPapersError}
+          onRetryPapers={() => void refetchLibraryPapers()}
+          initialSlug={examFormSlug}
+          onDone={() => {
+            refreshExamRecords()
+            setExamFormOpen(false)
+          }}
+        />
+
+        {/* 学校考试 · 全部成绩弹层(方案D 消费端:按科目分组 + 删除) */}        <ExamRecordsDialog
+          open={examRecordsOpen}
+          onClose={() => setExamRecordsOpen(false)}
+          records={examRecords}
+          loading={examRecordsPending}
         />
       </div>
     </div>

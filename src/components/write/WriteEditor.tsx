@@ -170,6 +170,23 @@ export function WriteEditor({
     setInternalModel(localStorage.getItem('aichatt-write-model') || '')
   }, [embedded])
 
+  // 页模式:模型列表到齐后校正本地偏好 —— 跨账号残留(如 gpt-5.5)或已下架模型会让
+  // 划词生成直接报「未配置 key」;不在当前列表里就回落到公共池档,无 key 账号也能用。
+  useEffect(() => {
+    if (embedded || models.length === 0) return
+    if (internalModel && models.some((m) => m.id === internalModel)) return
+    const fallback = models.find((m) => m.publicPool)?.id ?? models[0].id
+    setInternalModel(fallback)
+    localStorage.setItem('aichatt-write-model', fallback)
+  }, [embedded, models, internalModel])
+
+  /** 实际下发的模型:页模式下校验本地偏好是否可用,不可用则回落公共池/首个 */
+  const effectiveModel = embedded
+    ? model
+    : models.some((m) => m.id === model)
+      ? model
+      : (models.find((m) => m.publicPool)?.id ?? models[0]?.id ?? '')
+
   useEffect(() => {
     latestRef.current = { docId, title, content }
   }, [docId, title, content])
@@ -311,7 +328,7 @@ export function WriteEditor({
         const res = await fetch('/api/write/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...body, model: model || undefined }),
+          body: JSON.stringify({ ...body, model: effectiveModel || undefined }),
           signal: controller.signal,
         })
         if (!res.ok || !res.body) {
@@ -353,7 +370,7 @@ export function WriteEditor({
         setGenerating(false)
       }
     },
-    [model]
+    [effectiveModel]
   )
 
   /** 划词 → AI 改写(流式进预览面板) */
@@ -672,7 +689,7 @@ export function WriteEditor({
           </span>
           <ModelSelector
             models={models}
-            value={model || models[0]?.id || ''}
+            value={effectiveModel || models[0]?.id || ''}
             onChange={setModel}
             compact
           />

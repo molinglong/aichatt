@@ -1597,6 +1597,44 @@ svg {
   cursor: default;
 }
 
+/* 方案 A(design/preview-extension-send-to-client.html 定稿):
+   发送键旁的次级目标钮 —— 把当前截图发到桌面客户端开新会话提问。
+   描边款与实心发送键区分主次,复用 34px 圆钮语法;仅截图存在时显形 */
+.client-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 160ms var(--ease), border-color 160ms var(--ease),
+    transform 120ms var(--ease), opacity 160ms var(--ease);
+}
+
+.client-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.client-btn:hover:not(:disabled) {
+  background: var(--bg-mute);
+}
+
+.client-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.client-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .composer-hint {
   display: flex;
   align-items: center;
@@ -2724,6 +2762,101 @@ svg {
 .composer.composer-command .composer-more-btn svg {
   width: 15px;
   height: 15px;
+}
+
+/* ── 截图入口(A 案 2026-11-20):主键 = 框选,副键 = 整帧 ─────────────
+   实底主键与「发送」同语汇,一眼看出这是主动作;整帧收成透明小图标键。
+   窄面板(<372px)只留图标,避免把输入行挤扁。 */
+.composer.composer-command .composer-capture {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  /* 与 ⋯ 同组排左侧(order -1),不要掉到发送键旁边:
+     否则两枚深色实底钮挨在一起,主次难分(A 案原型口径) */
+  order: -1;
+}
+
+.composer.composer-command .capture-main {
+  height: 27px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--pill-text);
+  color: var(--pill-bg);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: opacity 160ms var(--ease), transform 120ms var(--ease);
+}
+
+.composer.composer-command .capture-main:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.composer.composer-command .capture-main:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.composer.composer-command .capture-main:disabled,
+.composer.composer-command .capture-frame:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.composer.composer-command .capture-main svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.composer.composer-command .capture-frame {
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--pill-muted);
+  cursor: pointer;
+  transition: background 160ms var(--ease), color 160ms var(--ease);
+}
+
+.composer.composer-command .capture-frame:hover:not(:disabled) {
+  background: var(--pill-hover);
+  color: var(--pill-text);
+}
+
+.composer.composer-command .capture-frame svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (max-width: 372px) {
+  .composer.composer-command .capture-main {
+    padding: 0 8px;
+  }
+  .composer.composer-command .capture-main span {
+    display: none;
+  }
 }
 
 .composer.composer-command:not(.is-multiline) .composer-toolbar {

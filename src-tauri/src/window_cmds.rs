@@ -4,24 +4,39 @@
 use super::*;
 
 /// 当前窗口是否为最大化(全屏)状态,前端用于红绿灯"绿色按钮"图标切换。
+/// 参数用 Webview 而非 WebviewWindow:cb_demote_main 把主 webview 降级为
+/// child 后,窗口级 WebviewWindow 参数注入会报 "current webview is not a
+/// WebviewWindow",多 webview 窗口下必须走当前 webview → window() 链。
 #[derive(Serialize)]
-struct WindowState {
+pub struct WindowState {
     maximized: bool,
     fullscreen: bool,
 }
 
 #[tauri::command]
-fn get_window_state(window: WebviewWindow) -> WindowState {
+pub fn get_window_state(webview: tauri::Webview) -> WindowState {
+    let window = webview.window();
     WindowState {
         maximized: window.is_maximized().unwrap_or(false),
         fullscreen: window.is_fullscreen().unwrap_or(false),
     }
 }
 
+/// 锁定期窗口操作统一拒绝口(监管模式 focus_lock)。
+fn fl_guard() -> Result<(), String> {
+    if super::focus_lock::fl_is_locked() {
+        Err("监管模式锁定中,窗口操作已被拦截".into())
+    } else {
+        Ok(())
+    }
+}
+
 /// macOS 风格:绿色按钮 = 进入/退出全屏(不是 Windows 的"最大化")。
 /// 在 Windows 上行为对齐 macOS:点一次进全屏,再点一次退出。
 #[tauri::command]
-fn toggle_fullscreen(window: WebviewWindow) -> Result<(), String> {
+pub fn toggle_fullscreen(webview: tauri::Webview) -> Result<(), String> {
+    fl_guard()?;
+    let window = webview.window();
     let is_fs = window.is_fullscreen().unwrap_or(false);
     window
         .set_fullscreen(!is_fs)
@@ -30,20 +45,24 @@ fn toggle_fullscreen(window: WebviewWindow) -> Result<(), String> {
 
 /// 最小化窗口(对应 macOS 黄色按钮)。
 #[tauri::command]
-fn minimize_window(window: WebviewWindow) -> Result<(), String> {
-    window.minimize().map_err(|e| e.to_string())
+pub fn minimize_window(webview: tauri::Webview) -> Result<(), String> {
+    fl_guard()?;
+    webview.window().minimize().map_err(|e| e.to_string())
 }
 
 /// 关闭窗口(对应 macOS 红色按钮)。
 /// 桌面客户端体验:可以配置成"关闭到托盘",但首版先直接退出。
 #[tauri::command]
-fn close_window(window: WebviewWindow) -> Result<(), String> {
-    window.close().map_err(|e| e.to_string())
+pub fn close_window(webview: tauri::Webview) -> Result<(), String> {
+    fl_guard()?;
+    webview.window().close().map_err(|e| e.to_string())
 }
 
 /// 双击标题栏切换最大化(Windows 习惯,补充 macOS 红绿灯没有的行为)。
 #[tauri::command]
-fn toggle_maximize(window: WebviewWindow) -> Result<(), String> {
+pub fn toggle_maximize(webview: tauri::Webview) -> Result<(), String> {
+    fl_guard()?;
+    let window = webview.window();
     let is_max = window.is_maximized().unwrap_or(false);
     if is_max {
         window.unmaximize().map_err(|e| e.to_string())
@@ -61,7 +80,9 @@ fn toggle_maximize(window: WebviewWindow) -> Result<(), String> {
 /// eval 拉回,保证弹出的永远是设置页。JS 侧无法跨 WebView 读 URL/导航(权限
 /// 表未提供),故此逻辑收口在 Rust。
 #[tauri::command]
-fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+pub fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    // 监管模式锁定期禁止打开设置(设置里也没有解锁入口,藏起防混淆)
+    fl_guard()?;
     let win = app
         .get_webview_window("settings")
         .ok_or("settings 窗口不存在")?;
@@ -79,7 +100,7 @@ fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 显示搭子窗口
 #[tauri::command]
-fn show_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
+pub fn show_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
     // 如果窗口不存在,先创建
     if app.get_webview_window("buddy").is_none() {
         let _window = tauri::WebviewWindowBuilder::new(
@@ -111,7 +132,7 @@ fn show_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 隐藏搭子窗口
 #[tauri::command]
-fn hide_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
+pub fn hide_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(buddy) = app.get_webview_window("buddy") {
         buddy.hide().map_err(|e| e.to_string())?;
     }
@@ -120,7 +141,7 @@ fn hide_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 切换搭子窗口显示/隐藏
 #[tauri::command]
-fn toggle_buddy_window(app: tauri::AppHandle) -> Result<bool, String> {
+pub fn toggle_buddy_window(app: tauri::AppHandle) -> Result<bool, String> {
     // 如果窗口不存在,创建并显示
     if app.get_webview_window("buddy").is_none() {
         let _window = tauri::WebviewWindowBuilder::new(
@@ -156,7 +177,7 @@ fn toggle_buddy_window(app: tauri::AppHandle) -> Result<bool, String> {
 
 /// 设置搭子窗口位置
 #[tauri::command]
-fn set_buddy_position(app: tauri::AppHandle, x: i32, y: i32) -> Result<(), String> {
+pub fn set_buddy_position(app: tauri::AppHandle, x: i32, y: i32) -> Result<(), String> {
     if let Some(buddy) = app.get_webview_window("buddy") {
         buddy
             .set_position(PhysicalPosition::new(x, y))
@@ -167,7 +188,7 @@ fn set_buddy_position(app: tauri::AppHandle, x: i32, y: i32) -> Result<(), Strin
 
 /// 获取搭子窗口位置
 #[tauri::command]
-fn get_buddy_position(app: tauri::AppHandle) -> Result<Option<(i32, i32)>, String> {
+pub fn get_buddy_position(app: tauri::AppHandle) -> Result<Option<(i32, i32)>, String> {
     if let Some(buddy) = app.get_webview_window("buddy") {
         let pos = buddy.outer_position().map_err(|e| e.to_string())?;
         Ok(Some((pos.x, pos.y)))
@@ -178,7 +199,7 @@ fn get_buddy_position(app: tauri::AppHandle) -> Result<Option<(i32, i32)>, Strin
 
 /// 获取屏幕尺寸
 #[tauri::command]
-fn get_screen_size(app: tauri::AppHandle) -> Result<Option<(u32, u32)>, String> {
+pub fn get_screen_size(app: tauri::AppHandle) -> Result<Option<(u32, u32)>, String> {
     if let Some(buddy) = app.get_webview_window("buddy") {
         if let Some(monitor) = buddy.current_monitor().map_err(|e| e.to_string())? {
             let size = monitor.size();
@@ -193,7 +214,7 @@ fn get_screen_size(app: tauri::AppHandle) -> Result<Option<(u32, u32)>, String> 
 
 /// 创建搭子窗口（如果不存在）
 #[tauri::command]
-async fn create_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn create_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
     // 检查是否已存在
     if app.get_webview_window("buddy").is_some() {
         return Ok(());
@@ -224,7 +245,7 @@ async fn create_buddy_window(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 移动搭子窗口（相对于当前位置的偏移）
 #[tauri::command]
-fn move_buddy_window(app: tauri::AppHandle, delta_x: i32, delta_y: i32) -> Result<(), String> {
+pub fn move_buddy_window(app: tauri::AppHandle, delta_x: i32, delta_y: i32) -> Result<(), String> {
     if let Some(buddy) = app.get_webview_window("buddy") {
         let pos = buddy.outer_position().map_err(|e| e.to_string())?;
         buddy
@@ -236,8 +257,8 @@ fn move_buddy_window(app: tauri::AppHandle, delta_x: i32, delta_y: i32) -> Resul
 
 /// 聚焦主窗口
 #[tauri::command]
-fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(main) = app.get_webview_window("main") {
+pub fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(main) = app.get_window("main") {
         main.show().map_err(|e| e.to_string())?;
         main.unminimize().map_err(|e| e.to_string())?;
         main.set_focus().map_err(|e| e.to_string())?;

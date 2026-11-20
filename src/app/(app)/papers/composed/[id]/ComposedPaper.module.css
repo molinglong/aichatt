@@ -39,6 +39,7 @@
 .sheet {
   width: 210mm;
   margin: 0 auto;
+  position: relative; /* 品牌钤印 PaperBrandSeal 的定位锚 */
   background: #ffffff;
   color: #000000;
   padding: 14mm 15mm;

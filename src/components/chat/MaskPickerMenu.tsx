@@ -1,10 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Search, ChevronDown, Settings as SettingsIcon } from 'lucide-react'
+import { Search, ChevronDown, Settings as SettingsIcon, Shield } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toast } from '@/lib/toast'
 import { BUILTIN_MASKS } from '@/lib/ai/builtin-masks'
 import { BUILTIN_GAMES } from '@/lib/ai/builtin-games'
+import { isMaskRestricted } from '@/lib/ai/focus-restrict'
+import { bumpFocusIntercept, useFocusLock } from '@/lib/focus-lock-store'
 import type { MaskDTO } from '@/lib/ai/mask-types'
 import { SheetRow } from '@/components/ui/MobileSheet'
 
@@ -44,34 +47,51 @@ function MaskItem({
   active,
   onSelect,
   variant,
+  restricted,
 }: {
   mask: MaskRow
   active: boolean
   onSelect: (id: string) => void
   variant: 'menu' | 'sheet'
+  restricted?: boolean
 }) {
+  const pick = () => {
+    if (restricted) {
+      bumpFocusIntercept()
+      toast.warning(`监管模式锁定中 ·「${mask.name}」不可用，到点自动恢复`, { title: '监管模式' })
+      return
+    }
+    onSelect(mask.id)
+  }
+  const shield = (
+    <Shield className="w-3 h-3 shrink-0 text-amber-500/80" aria-label="监管模式锁定中不可用" />
+  )
   if (variant === 'sheet') {
     return (
       <SheetRow
         title={mask.name}
         subtitle={mask.description}
         selected={active}
-        onClick={() => onSelect(mask.id)}
+        onClick={pick}
         lead={
           <span className="text-[18px] leading-none" aria-hidden>
             {mask.avatar}
           </span>
         }
+        trailing={restricted ? shield : undefined}
+        className={cn(restricted && 'opacity-40')}
       />
     )
   }
   return (
     <button
-      onClick={() => onSelect(mask.id)}
+      onClick={pick}
       role="menuitem"
+      aria-disabled={restricted || undefined}
       className={cn(
         'w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors',
-        active ? 'bg-surface-muted' : 'hover:bg-surface-subtle'
+        active ? 'bg-surface-muted' : 'hover:bg-surface-subtle',
+        restricted && 'opacity-40 cursor-not-allowed hover:bg-transparent'
       )}
     >
       <span className="text-base leading-5 shrink-0" aria-hidden>{mask.avatar}</span>
@@ -79,6 +99,7 @@ function MaskItem({
         <span className="block text-xs font-medium text-content-primary">{mask.name}</span>
         <span className="block text-[11px] text-content-muted truncate">{mask.description}</span>
       </span>
+      {restricted && <span className="self-center shrink-0">{shield}</span>}
     </button>
   )
 }
@@ -103,6 +124,8 @@ export function MaskPickerMenu({
   variant = 'menu',
 }: MaskPickerMenuProps) {
   const [query, setQuery] = useState('')
+  // 监管模式锁定中:受限面具(游戏/闲聊向)置灰拦截,见 focus-restrict.ts 清单
+  const { locked: focusLocked } = useFocusLock()
   // 用户折叠意图;搜索期间强制展开(否则折叠组里的命中看不见),不回写此状态
   const [collapsed, setCollapsed] = useState<Record<GroupKey, boolean>>({
     mine: false,
@@ -205,9 +228,13 @@ export function MaskPickerMenu({
                   'w-full flex items-center transition-colors',
                   isSheet
                     ? 'gap-1.5 px-4 pb-1.5 pt-3.5 text-[11px] font-semibold tracking-[0.08em] text-content-muted active:text-content-secondary'
-                    : 'gap-1.5 px-2 py-1 text-[11px] font-semibold tracking-wide text-content-muted hover:text-content-secondary'
+                    : 'gap-1.5 px-2 py-1 text-[11px] font-semibold tracking-wide text-content-muted hover:text-content-secondary',
+                  focusLocked && g.key === 'game' && 'text-amber-600 dark:text-amber-400'
                 )}
               >
+                {focusLocked && g.key === 'game' && (
+                  <Shield className="w-3 h-3 shrink-0" aria-label="监管模式锁定中不可用" />
+                )}
                 <ChevronDown
                   className={cn('w-3 h-3 shrink-0 transition-transform', isCollapsed && '-rotate-90')}
                   aria-hidden
@@ -225,6 +252,7 @@ export function MaskPickerMenu({
                     active={m.id === activeMaskId}
                     onSelect={onSelect}
                     variant={variant}
+                    restricted={focusLocked && isMaskRestricted(m)}
                   />
                 ))}
             </div>

@@ -65,6 +65,8 @@ interface QuickChatBody {
   model?: unknown
   /** 浏览器扩展截图:仅本轮附带,不写入任何会话/磁盘 */
   image?: QuickChatImage
+  /** 监管模式锁定期标记:桌面锁定中随请求上报,注入监工段(缺字段按无锁处理) */
+  focusLock?: { endsAtMs?: number }
 }
 
 const MAX_MESSAGES = 16
@@ -376,6 +378,17 @@ export async function POST(req: Request) {
           })
         : null
 
+    // 监管模式监工段(focus-lock-restrict-plan.md §3.3):与 /api/chat 同口径——
+    // 桌面锁定期间浏览器侧边栏快答也是一条闲聊通路,一并约束。已过期/缺字段不注入。
+    const quickFocusEndsAtMs =
+      typeof body.focusLock?.endsAtMs === "number" && Number.isFinite(body.focusLock.endsAtMs)
+        ? body.focusLock.endsAtMs
+        : null
+    const focusSupervisorPrompt =
+      quickFocusEndsAtMs !== null && quickFocusEndsAtMs > Date.now()
+        ? `\n\n## 监管模式·专注锁定时段\n当前处于监管模式专注锁定中。你是学习监督者：纯闲聊、娱乐话题不接茬、不展开，用一两句话自然拉回学习任务；学习类问题正常全力回答，质量不打折。不说教、不重复提醒、语气自然。`
+        : ""
+
     const result = streamText({
       model,
       // 快答挂 manage_todo 与 get_current_time（与 /api/chat 同一份实现）：
@@ -386,7 +399,7 @@ export async function POST(req: Request) {
         knowledgeTool
           ? `\n- 用户问课本概念/公式/定理/史实，或说「翻书」「课本里怎么讲」时，先调用 ${KNOWLEDGE_TOOL_NAME} 查原文；回答 1-3 句并标注来源（书名·章节），查不到再说明是凭已有知识回答`
           : ""
-      }`,
+      }${focusSupervisorPrompt}`,
       messages,
       tools: {
         [TODO_TOOL_NAME]: todoTool,

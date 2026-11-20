@@ -6,6 +6,7 @@ import { DefaultChatTransport } from 'ai'
 import type { UIMessage } from 'ai'
 import { MessageSquarePlus, RotateCw, ThumbsUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { bumpFocusMsgCount, getFocusLockState } from '@/lib/focus-lock-store'
 import { ChatErrorBanner } from './ChatErrorBanner'
 import { MessageList } from './MessageList'
 import { pinScrollToBottom } from './chat-list-bridge'
@@ -114,10 +115,18 @@ export function CompareLane({
           get attachments() {
             return transportAttachmentsRef.current
           },
+          // 监管模式锁定期标记:服务端据此注入监工段(与 ChatPanel 同口径);
+          // countUp=正计时档(endsAtMs 恒 0,服务端按标记注入不带剩余时间的监工文案)
+          get focusLock() {
+            const fl = getFocusLockState()
+            return fl.locked ? { endsAtMs: fl.endsAtMs, countUp: fl.countUp } : undefined
+          },
         },
         // 兜底: 若客户端预创建会话失败,以服务端返回头为准
         fetch: async (url, options) => {
           const response = await fetch(url, options)
+          // 锁中发送成功计数(R5 解锁回执数据源;非锁定期空操作)
+          if (getFocusLockState().locked && response.ok) bumpFocusMsgCount()
           const newConvId = response.headers.get('X-Conversation-Id')
           const newConvTitle = response.headers.get('X-Conversation-Title')
           if (newConvId) {

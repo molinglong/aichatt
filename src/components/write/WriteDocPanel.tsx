@@ -28,9 +28,7 @@ import {
 import { useChatStore } from '@/store/chat-store'
 import { WriteEditor, type WriteEditorMeta } from './WriteEditor'
 import { WritePanelComposer } from './WritePanelComposer'
-import { getIsTauri } from '@/lib/tauri'
-import { getWorkspaceDir, pickWorkspaceDir, writeFile, sanitizeFileName } from '@/lib/tauri-files'
-import { toast } from '@/lib/toast'
+import { exportToWorkspaceFile } from '@/lib/workspace/export-to-workspace'
 import { cn } from '@/lib/utils'
 
 /** 与 transition-duration 保持一致;关闭后延迟此时长再卸载编辑器 */
@@ -202,42 +200,23 @@ export function WriteDocPanel() {
     router.push(id ? `/write?doc=${id}` : '/write')
   }
 
-  // 一键导出到本地工作区(桌面端):拉 DB 最新内容 → 授权工作区(未设置则先弹目录选择)
-  // → 写入 <标题>.md。编辑器内容自动保存有秒级 debounce,此处取 DB 真源,滞后可忽略
+  // 一键导出到本地工作区(桌面端):走共享导出流(exportToWorkspaceFile:桌面检查 →
+  // 授权工作区 → 写入 <标题>.md → 成功/失败提示)。编辑器内容自动保存有秒级 debounce,
+  // 此处取 DB 真源,滞后可忽略
   const [exporting, setExporting] = useState(false)
   async function exportToWorkspace() {
     const docId = renderDocId
     if (!docId || exporting) return
-    if (!getIsTauri()) {
-      toast.error('导出到本地文件仅桌面客户端可用')
-      return
-    }
     setExporting(true)
     try {
-      let base = await getWorkspaceDir()
-      if (!base) {
-        // 未授权引导流:直接弹目录选择,选完即授权并继续导出
-        const pick = await pickWorkspaceDir()
-        if (pick.cancelled) return
-        if (!pick.ok || !pick.base) {
-          toast.error(pick.error || '选择工作区失败')
-          return
-        }
-        base = pick.base
-      }
-      const res = await fetch(`/api/write/docs/${docId}`)
-      if (!res.ok) {
-        toast.error('读取文档失败，请重试')
-        return
-      }
-      const doc = (await res.json()) as { title?: string; content?: string }
-      const fileName = `${sanitizeFileName(doc.title || '')}.md`
-      const w = await writeFile(fileName, doc.content ?? '')
-      if (w.ok) {
-        toast.success(`已导出到工作区: ${fileName}`, { title: '本地文件' })
-      } else {
-        toast.error(w.error || '导出失败')
-      }
+      await exportToWorkspaceFile({
+        load: async () => {
+          const res = await fetch(`/api/write/docs/${docId}`)
+          if (!res.ok) throw new Error('读取文档失败，请重试')
+          const doc = (await res.json()) as { title?: string; content?: string }
+          return { fileNameBase: doc.title || '', content: doc.content ?? '', ext: 'md' }
+        },
+      })
     } finally {
       setExporting(false)
     }

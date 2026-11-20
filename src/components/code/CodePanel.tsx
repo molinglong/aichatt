@@ -18,9 +18,7 @@ import { CodeEditor } from './CodeEditor'
 import { CodeDocList } from './CodeDocList'
 import { fetchJson } from '@/lib/query/fetcher'
 import { queryKeys } from '@/lib/query/keys'
-import { getIsTauri } from '@/lib/tauri'
-import { getWorkspaceDir, pickWorkspaceDir, writeFile, sanitizeFileName } from '@/lib/tauri-files'
-import { toast } from '@/lib/toast'
+import { exportToWorkspaceFile } from '@/lib/workspace/export-to-workspace'
 import type { CodeDocSummary } from './types'
 
 /** 与 transition-duration 保持一致;关闭后延迟此时长再卸载编辑器 */
@@ -87,40 +85,26 @@ export function CodePanel({ embedded = false }: { embedded?: boolean }) {
     else closeCodePanel()
   }
 
-  // 导出到本地工作区(桌面端):取 DB 全文 → 授权工作区 → 写入 <标题>.<ext>
+  // 导出到本地工作区(桌面端):取 DB 全文后走共享导出流(exportToWorkspaceFile:
+  // 桌面检查 → 授权工作区 → 写入 <标题>.<ext> → 成功/失败提示)
   const [exporting, setExporting] = useState(false)
   async function exportToWorkspace() {
     const docId = renderDocId
     if (!docId || exporting) return
-    if (!getIsTauri()) {
-      toast.error('导出到本地文件仅桌面客户端可用')
-      return
-    }
     setExporting(true)
     try {
-      let base = await getWorkspaceDir()
-      if (!base) {
-        const pick = await pickWorkspaceDir()
-        if (pick.cancelled) return
-        if (!pick.ok || !pick.base) {
-          toast.error(pick.error || '选择工作区失败')
-          return
-        }
-        base = pick.base
-      }
-      const doc = await fetchJson<{ title?: string; content?: string; language?: string }>(
-        `/api/code/docs/${docId}`
-      )
-      const ext = LANG_EXT[doc.language ?? ''] ?? 'txt'
-      const fileName = `${sanitizeFileName(doc.title || '未命名')}.${ext}`
-      const w = await writeFile(fileName, doc.content ?? '')
-      if (w.ok) {
-        toast.success(`已导出到工作区: ${fileName}`, { title: '本地文件' })
-      } else {
-        toast.error(w.error || '导出失败')
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '导出失败')
+      await exportToWorkspaceFile({
+        load: async () => {
+          const doc = await fetchJson<{ title?: string; content?: string; language?: string }>(
+            `/api/code/docs/${docId}`
+          )
+          return {
+            fileNameBase: doc.title || '未命名',
+            content: doc.content ?? '',
+            ext: LANG_EXT[doc.language ?? ''] ?? 'txt',
+          }
+        },
+      })
     } finally {
       setExporting(false)
     }

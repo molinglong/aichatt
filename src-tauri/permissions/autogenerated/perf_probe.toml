@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-perf-probe"
+description = "Enables the perf_probe command without any pre-configured scope."
+commands.allow = ["perf_probe"]
+
+[[permission]]
+identifier = "deny-perf-probe"
+description = "Denies the perf_probe command without any pre-configured scope."
+commands.deny = ["perf_probe"]

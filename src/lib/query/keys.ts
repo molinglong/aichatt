@@ -105,6 +105,30 @@ export const queryKeys = {
     composed: (id: string) => [...queryKeys.all, 'papers', 'composed', id] as const,
     /** 本用户拟卷列表(学习台拟卷区块 + /papers/composed 列表页共用) */
     composedList: () => [...queryKeys.all, 'papers', 'composed-list'] as const,
+    /** 可读卷库列表(学校考试记录卡的关联卷选择器;/study 页面级拉取) */
+    list: () => [...queryKeys.all, 'papers', 'list'] as const,
+    /** 单卷逐题投影(题号/大题/分值/考点;勾错题板) */
+    questions: (slug: string) => [...queryKeys.all, 'papers', 'questions', slug] as const,
+    /** PDF 录题作业(审核台;候选清单状态翻转换视图) */
+    pdfImport: (id: string) => [...queryKeys.all, 'papers', 'pdf-import', id] as const,
+    /** 在线做题考试场(考试页 + 交卷后报告页共用同一 query,状态翻转换视图) */
+    attempt: (id: string) => [...queryKeys.all, 'papers', 'attempt', id] as const,
+    /** 卷详情页入口状态(进行中考试 + 最近估分概要) */
+    attemptEntry: (slug: string) => [...queryKeys.all, 'papers', 'attempt-entry', slug] as const,
+  },
+  examRecords: {
+    /** 本用户全部成绩(学习台「学校考试」区块 + 全部成绩弹层共用) */
+    list: () => [...queryKeys.all, 'exam-records', 'list'] as const,
+    /** 单卷历次成绩(附考点丢分;试卷页历史卡,按 slug 键) */
+    byPaper: (slug: string) => [...queryKeys.all, 'exam-records', 'paper', slug] as const,
+    /** 成绩分析聚合(分析弹层 + 组卷针对我复习第二信号源共用) */
+    analysis: () => [...queryKeys.all, 'exam-records', 'analysis'] as const,
+    /** AI 成绩报告列表(落库回看) */
+    reports: () => [...queryKeys.all, 'exam-records', 'reports'] as const,
+  },
+  study: {
+    /** 打印足迹聚合(拟卷页足迹卡;今日口径与今晚测验同源=客户端本地零点 since) */
+    printSummary: () => [...queryKeys.all, 'study', 'print-summary'] as const,
   },
   yellowFish: {
     /** 商品收藏列表(实时价卡片星标 + 设置节收藏池共享同一份缓存) */

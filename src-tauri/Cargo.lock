@@ -29,12 +29,14 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-deep-link",
  "tauri-plugin-dialog",
  "tauri-plugin-haptics",
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
  "trash",
  "ureq",
+ "windows 0.61.3",
 ]
 
 [[package]]

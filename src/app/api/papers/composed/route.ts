@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   const userId = await getUserId(req)
   if (!userId) return Response.json({ error: "unauthorized" }, { status: 401 })
 
-  let body: { subject?: string; baseSlug?: string; onlyChoice?: boolean; allowAiAnswers?: boolean; slotDefs?: unknown; focusTopics?: unknown; perTopic?: unknown; extraRandom?: unknown; fillInline?: { textbook?: number; aiVariant?: number }; modelId?: string; title?: string; note?: string; aiFillAll?: boolean }
+  let body: { subject?: string; baseSlug?: string; onlyChoice?: boolean; allowAiAnswers?: boolean; slotDefs?: unknown; focusTopics?: unknown; perTopic?: unknown; extraRandom?: unknown; fillInline?: { textbook?: number; aiVariant?: number }; modelId?: string; title?: string; note?: string; aiFillAll?: boolean; restrictPaperSlug?: string }
   try {
     body = await req.json()
   } catch {
@@ -105,6 +105,7 @@ export async function POST(req: NextRequest) {
     extraRandom,
     note,
     title: typeof body.title === "string" ? body.title.slice(0, 60) : undefined,
+    restrictPaperSlug: typeof body.restrictPaperSlug === "string" && body.restrictPaperSlug.trim() ? body.restrictPaperSlug.trim().slice(0, 60) : undefined,
   })
   if (!result.ok) {
     // no_pool=该科没有带官方答案的题且未走 AI 兜底(422,业务现实);no_base=底卷定位失败;bad_outline=大纲槽位无效
@@ -115,5 +116,6 @@ export async function POST(req: NextRequest) {
     title: result.title,
     shortages: result.shortages ?? [],
     filledInline: result.filledInline ?? { textbook: 0, aiVariant: 0 },
+    avoidedRecent: result.avoidedRecent ?? 0,
   })
 }

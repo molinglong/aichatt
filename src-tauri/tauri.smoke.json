@@ -1,0 +1,5 @@
+{
+  "build": {
+    "beforeDevCommand": "node -e \"0\""
+  }
+}

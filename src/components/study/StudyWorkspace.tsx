@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { INPUT_SEND_EVENT } from '@/lib/input-bridge'
+import { decodeUpstreamError } from '@/lib/error-catalog'
 import type { StudyAction, StudyPostOpts, StudyRef, StudySessionView, StudyStepView } from '@/hooks/useStudyStream'
 import { cn, expandSingleNewlines } from '@/lib/utils'
 
@@ -297,11 +298,20 @@ export function StudyWorkspace({ session, steps, busy, streamError, archivedNote
             />
           ))}
 
-          {streamError && (
-            <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-[13px] text-destructive">
-              {streamError}
-            </div>
-          )}
+          {streamError && (() => {
+            // A10:上游错误是 ERR|code|status|detail|raw 信封,直接上屏会把裸管道串
+            // 印给用户;走 error-catalog 解码出中文标题+说明,原文折叠成小字。
+            const info = decodeUpstreamError(streamError)
+            return (
+              <div className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-[13px] text-destructive">
+                <p className="font-semibold">{info.title}</p>
+                <p className="opacity-90">{info.detail}</p>
+                {info.raw && (
+                  <p className="break-all text-[11px] leading-[1.5] opacity-55">{info.raw}</p>
+                )}
+              </div>
+            )
+          })()}
 
           {completed && (
             <div className="rounded-[14px] border border-line bg-surface p-5 text-center">

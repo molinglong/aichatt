@@ -15,6 +15,7 @@ import { RefreshCw, Trash2, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import { SUBJECT_LABELS } from '@/lib/study/subject-labels'
+import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { confirmDialog } from '@/components/ui/ConfirmDialog'
 
 interface QueueItem {
@@ -430,7 +431,8 @@ export function ReviewCard({ onChanged, onRestudy, onDrill, mode = 'flip', topic
   /* ── 变式题渲染(盖在错题卡之上,判完回到队列) ── */
   if (variant) {
     return (
-      <div className="min-h-full flex flex-col max-w-2xl w-full mx-auto">
+      /* h-full 封顶:同主卡,min-h-full 随内容长高会裁掉尾部且不可滚 */
+      <div className="h-full flex flex-col max-w-2xl w-full mx-auto">
         <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-line/60">
           <span className="text-xs text-content-muted">{index + 1} / {queue.length}</span>
           <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-accent">变式 · 题库同考点</span>
@@ -445,7 +447,7 @@ export function ReviewCard({ onChanged, onRestudy, onDrill, mode = 'flip', topic
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3.5 py-3.5">
+        <div className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3.5">
           <div className="rounded-2xl border border-line bg-surface p-4 shadow-sm space-y-3">
             <div className="flex items-center gap-1.5 flex-wrap">
               {variant.topic && <span className="px-1.5 py-0.5 rounded bg-accent/10 text-[10px] text-accent">{variant.topic}</span>}
@@ -554,7 +556,8 @@ export function ReviewCard({ onChanged, onRestudy, onDrill, mode = 'flip', topic
   const showRedo = canRedo && !!parsed && !!answerLetter
 
   return (
-    <div className="min-h-full flex flex-col max-w-2xl w-full mx-auto">
+    /* h-full 封顶给卡体让出滚动条件(min-h-full 会随内容长高,长解析被 overflow-hidden 裁掉且不可滚) */
+    <div className="h-full flex flex-col max-w-2xl w-full mx-auto">
       {/* 头部:进度 + 模式/考点筛选 + 刷新 + 删除 */}
       <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-line/60">
         <span className="text-xs text-content-muted">
@@ -595,8 +598,8 @@ export function ReviewCard({ onChanged, onRestudy, onDrill, mode = 'flip', topic
         </button>
       </div>
 
-      {/* 卡片主体 */}
-      <div className="flex-1 overflow-y-auto px-3.5 py-3.5">
+      {/* 卡片主体(唯一滚动层;min-h-0 必须有,flex 子项默认 min-height:auto 会顶爆滚动) */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3.5">
         <div className="rounded-2xl border border-line bg-surface p-4 shadow-sm space-y-3">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="px-1.5 py-0.5 rounded bg-surface-subtle text-[10px] text-content-secondary">{subjectLabel}</span>
@@ -839,7 +842,9 @@ export function ReviewCard({ onChanged, onRestudy, onDrill, mode = 'flip', topic
               )}
               {analysisParsed.body && (
                 <div className="text-[13px] leading-[1.7] text-content-secondary">
-                  <MathText text={analysisParsed.body} />
+                  {/* 解析正文是学新讲义同源的 markdown+$$ 文本,MathText 只认 \( \) LaTeX,
+                      加粗/标题等 markdown 标记会裸穿(A14),走聊天侧富渲染 */}
+                  <MarkdownRenderer content={analysisParsed.body} rich />
                 </div>
               )}
               {analysisParsed.source && (
@@ -854,7 +859,8 @@ export function ReviewCard({ onChanged, onRestudy, onDrill, mode = 'flip', topic
           「想起来了」走核对式——先展开解析对照,再诚实评级 */}
       {(mode === 'flip' || !showRedo) &&
         (verifying ? (
-          <div className="shrink-0 sticky bottom-0 z-10 border-t border-line/60 bg-[linear-gradient(to_top,rgba(0,122,255,.10),rgba(0,122,255,.03))] p-3 space-y-2.5">
+          // 实底垫 bg-surface,防长解析从半透明条下穿出;蓝染走 accent token(裸 rgba 会深色串色)
+          <div className="shrink-0 sticky bottom-0 z-10 border-t border-line/60 bg-surface bg-[linear-gradient(to_top,rgb(var(--accent)/0.10),rgb(var(--accent)/0.03))] p-3 space-y-2.5">
             <div className="text-center text-[13px] text-content-primary">
               对照解析——刚才是<b className="font-semibold">真想起来了</b>,还是只是<b className="font-semibold">眼熟</b>?
             </div>

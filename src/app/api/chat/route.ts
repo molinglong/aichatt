@@ -27,6 +27,7 @@ import { buildGeneralProfileSection } from "@/lib/profile/injection"
 import { loadGeneralProfile } from "@/lib/profile/load"
 import { generateImage, extractImagePrompts, IMG_MARKER_REGEX } from "@/lib/ai/image"
 import { generateConversationTitle } from "@/lib/ai/title-generator"
+import { examAskFallbackTitle } from "@/lib/chat/exam-ask"
 import { getStylePromptFromPreset, STYLE_PRESETS, presetFromOffset } from "@/lib/ai/style"
 import { getReplyLengthPrompt, REPLY_LENGTH_LEVELS, DEFAULT_REPLY_LENGTH } from "@/lib/ai/reply-length"
 import { getMaskById } from '@/lib/ai/mask-resolve'
@@ -53,6 +54,14 @@ import {
   SAVE_WRONG_QUESTION_DISABLED_PROMPT,
 } from "@/lib/ai/wrong-question-tool"
 import { createSaveWrongQuestionTool } from "@/lib/ai/wrong-question-tool.server"
+import {
+  RECORD_STUDY_EVENT_TOOL_NAME,
+  QUERY_STUDY_EVENTS_TOOL_NAME,
+  RECORD_STUDY_EVENT_TOOL_PROMPT,
+  QUERY_STUDY_EVENTS_TOOL_PROMPT,
+  RECORD_STUDY_EVENT_DISABLED_PROMPT,
+} from "@/lib/ai/study-event-tool"
+import { createRecordStudyEventTool, createQueryStudyEventsTool } from "@/lib/ai/study-event-tool.server"
 import { STUDY_COMPLETE_MARKER, getStudyAction, isStudyComplete, stripStudyMarker } from "@/lib/study/lesson-flow"
 import { archiveStudyLesson, resolveStudySourceMessageId } from "@/lib/study/archive-lesson"
 import { CLARIFY_TOOL_NAME, CLARIFY_TOOL_PROMPT, createClarifyTool } from "@/lib/ai/clarify"
@@ -109,6 +118,20 @@ import {
   TODO_DISABLED_PROMPT,
 } from "@/lib/ai/todo-tool"
 import { createTodoTool } from "@/lib/ai/todo-tool.server"
+import { PLAN_TOOL_NAME, PLAN_TOOL_PROMPT } from "@/lib/ai/plan-tool"
+import { createPlanTool } from "@/lib/ai/plan-tool.server"
+import {
+  SCRATCH_TOOL_NAME,
+  SCRATCH_TOOL_PROMPT,
+  SCRATCH_DISABLED_PROMPT,
+} from "@/lib/ai/scratch-tool"
+import { createScratchTool } from "@/lib/ai/scratch-tool.server"
+import {
+  STUDY_PROGRESS_TOOL_NAME,
+  STUDY_PROGRESS_TOOL_PROMPT,
+} from "@/lib/ai/study-progress-tool"
+import { createStudyProgressTool } from "@/lib/ai/study-progress-tool.server"
+import { listActiveScratchNotes, buildScratchMemoryPrompt } from "@/lib/memory/scratch"
 import { buildTimeAnchorPrompt } from "@/lib/ai/time-anchor"
 import {
   MASK_TOOL_NAME,
@@ -140,6 +163,10 @@ import { CALC_TOOL_NAME, CALC_TOOL_PROMPT } from "@/lib/ai/calc-tool"
 import { createCalcTool } from "@/lib/ai/calc-tool.server"
 import { TIME_TOOL_NAME, TIME_TOOL_PROMPT } from "@/lib/ai/time-tool"
 import { createTimeTool } from "@/lib/ai/time-tool.server"
+import { EXAM_RECORD_TOOL_NAME, EXAM_RECORD_TOOL_PROMPT } from "@/lib/ai/exam-record-tool"
+import { createExamRecordTool } from "@/lib/ai/exam-record-tool.server"
+import { VAULT_TOOL_NAME, VAULT_TOOL_PROMPT } from "@/lib/ai/vault-tool"
+import { createVaultTool } from "@/lib/ai/vault-tool.server"
 import { YELLOW_FISH_TOOL_NAME, YELLOW_FISH_TOOL_PROMPT, YELLOW_FISH_WATCH_TOOL_NAME, YELLOW_FISH_WATCH_PROMPT } from "@/lib/ai/yellow-fish-tool"
 import { YELLOW_FISH_LIVE_TOOL_NAME, YELLOW_FISH_LIVE_PROMPT } from "@/lib/ai/yellow-fish-live-tool"
 import { createYellowFishTool } from "@/lib/ai/yellow-fish-tool.server"
@@ -197,6 +224,10 @@ interface ChatRequestBody {
    *  user 文本相关的意图强制(第 0 步检索等),直接按消息数组里已有的工具结果续答。
    *  仅已有会话的单聊生效(新会话/临时/对比泳道一律视为普通请求)。 */
   continueRound?: boolean
+  /** 监管模式锁定期标记(focus-lock-restrict-plan.md §3.3):Tauri 客户端锁定中上报,
+   *  服务端据此注入监工段;字段缺失(旧客户端/被剥)按无锁处理,向后兼容。
+   *  countUp=正计时档(D13):无截止时刻,恒注入,不显示「约剩 N 分钟」。 */
+  focusLock?: { endsAtMs?: number; countUp?: boolean }
 }
 
 /** 客户端传入的消息（UIMessage 格式的结构化子集）*/
@@ -856,7 +887,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // 池空与个人超限都回 429,错误体走 error-catalog envelope,客户端按码出中文提示
   let quotaBaseLimit: number | null = null // 结算处判定附加余额扣减用
   if (usesServerBilledKey) {
-    const check = await checkQuota(userId, isEphemeral)
+    const check = await checkQuota(userId, isEphemeral, { modelId })
     if (check.baseLimit) quotaBaseLimit = check.baseLimit
     if (!check.ok) {
       console.warn(`[chat] QUOTA_DENIED: reason=${check.reason}, user=${userId}, model=${modelId}`)
@@ -1097,6 +1128,14 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     }
   }
 
+  // 短期记忆(进行中状态)注入:与长期记忆同闸门(injectMemory)。量小全量注入(上限截断),
+  // 过期条目由 listActiveScratchNotes 惰性过滤;注入块不提具体工具名(与 ACode 网关共用)。
+  let scratchMemoryPrompt = ""
+  if (injectMemory) {
+    const scratchNotes = await listActiveScratchNotes(userId)
+    scratchMemoryPrompt = buildScratchMemoryPrompt(scratchNotes)
+  }
+
   // 澄清提问:告诉模型何时调用 ask_clarification 工具(工具本体随下方 tools 注入)。
   // 升级自旧版自助反问"纯文本反问",现在以结构化卡片呈现,用户点选回答。
   const clarifySystemPrompt = CLARIFY_TOOL_PROMPT
@@ -1120,6 +1159,7 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   let model = provider(realModelId)
   const baseModel = model // 保留原始模型引用，用于标题生成等后台任务
   if (memorySystemPrompt) systemParts.push(memorySystemPrompt)
+  if (scratchMemoryPrompt) systemParts.push(scratchMemoryPrompt)
   if (generalProfilePrompt) {
     systemParts.push(generalProfilePrompt)
     console.log(`[chat] profile injected (${generalProfilePrompt.length} chars, user ${userId})`)
@@ -1158,8 +1198,12 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   if (!isGameMask) {
     if (memoryEnabled && !isEphemeral && !groupId) {
       systemParts.push(MEMORY_TOOL_PROMPT)
+      // 短期记忆(进行中状态)写入规则:与 add_memory 同闸门同降级——自动判记进度,
+      // 同 topic 覆盖更新;长期事实与结构化进度(用 study_progress 查)不写这里。
+      systemParts.push(SCRATCH_TOOL_PROMPT)
     } else if (!groupId) {
       systemParts.push(MEMORY_DISABLED_PROMPT)
+      systemParts.push(SCRATCH_DISABLED_PROMPT)
     }
   }
 
@@ -1245,6 +1289,12 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     systemParts.push(TODO_DISABLED_PROMPT)
   }
 
+  // 学习进度查询:与 manage_todo 同闸门(读学习数据而非记忆,不随记忆开关关停;
+  // 临时模式禁读防借号套数据)。模型问进度先查再答,别拿短期记忆文字快照编数字。
+  if (!isEphemeral && !groupId && !isGameMask) {
+    systemParts.push(STUDY_PROGRESS_TOOL_PROMPT)
+  }
+
   // 错题本存入:非临时非对比模式注入 save_wrong_question 工具+规则。
   // 学习模式会话同样可用(幂等键映射到首条用户消息,与结课归档共卡);
   // 临时模式不注入(错题属长期数据),注入降级提示防虚构;游戏回合同样不注入。
@@ -1252,6 +1302,15 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     systemParts.push(SAVE_WRONG_QUESTION_TOOL_PROMPT)
   } else if (!groupId && !isGameMask) {
     systemParts.push(SAVE_WRONG_QUESTION_DISABLED_PROMPT)
+  }
+
+  // 学习事件记录:与待办/错题本同闸门(一句话流水属长期数据,临时模式不注入;
+  // 记/查两个规则段一起注入,「考考我这周记的单词」才能先查后答)。
+  if (!isEphemeral && !groupId && !isGameMask) {
+    systemParts.push(RECORD_STUDY_EVENT_TOOL_PROMPT)
+    systemParts.push(QUERY_STUDY_EVENTS_TOOL_PROMPT)
+  } else if (!groupId && !isGameMask) {
+    systemParts.push(RECORD_STUDY_EVENT_DISABLED_PROMPT)
   }
 
   // Style prompt - 按 preset 渲染(新版)
@@ -1324,6 +1383,17 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     '- 数值不确定就不要画，宁可只写公式。块内不能写注释或多余字段，解析失败时界面会原样显示 JSON',
   ].join('\n'))
 
+  // 监管模式锁定期判定(focus-lock-restrict-plan.md §3.3 信号源,客户端锁定中上报
+  // focusLock.endsAtMs):先于搜索工具构造算好——§3.4 锁内禁搜图 + 文末监工段共用,
+  // 已过期的 endsAt 按无锁处理(客户端状态同步滞后的兜底);正计时档(D13)恒视为锁定中。
+  const focusLockEndsAtMs =
+    typeof body.focusLock?.endsAtMs === "number" && Number.isFinite(body.focusLock.endsAtMs)
+      ? body.focusLock.endsAtMs
+      : null
+  const focusLockCountUp = body.focusLock?.countUp === true
+  const focusLockActive =
+    focusLockCountUp || (focusLockEndsAtMs !== null && focusLockEndsAtMs > Date.now())
+
   // 联网搜索能力(仅在用户配置了联网搜索 Key 且本次请求主动开启了 webSearch 时才挂上工具)
   // - webSearchEnabled: 客户端本次是否主动开启,默认 false,避免模型无脑触发搜索消耗额度。
   // - 引擎: 客户端通过 searchEngine 指定(qianfan | tavily | deepseek)，由 Settings 选择器控制
@@ -1343,11 +1413,14 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
       })
       if (searchKeyRecord) {
         searchApiKey = decrypt(searchKeyRecord.encryptedKey)
-        searchTool = createWebSearchTool(engine, searchApiKey, searchPlatform)
+        // 监管模式锁定期禁搜图(§3.4):网页结果照常,配图层整段跳过
+        searchTool = createWebSearchTool(engine, searchApiKey, searchPlatform, {
+          disableImages: focusLockActive,
+        })
         console.log(
           `[chat] Using search engine: ${engine}, platform: ${searchPlatform}${
             searchPlatform !== "auto" ? `(${getSearchPlatform(searchPlatform).label})` : ""
-          }`
+          }${focusLockActive ? ", focusLock images disabled" : ""}`
         )
       }
     } catch (err) {
@@ -1390,6 +1463,32 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   const yellowFishTool = !isGameMask ? createYellowFishTool() : null
   if (yellowFishTool) {
     systemParts.push(YELLOW_FISH_TOOL_PROMPT)
+  }
+
+  // 学校考试成绩台账(exam_records):只读查询用户手动记录的学校考试成绩/趋势/考点丢分;
+  // 闸门与 calculate/time 一致(临时/对比模式安全,游戏回合不注入)。台账为空时工具照常挂载,
+  // execute 返回空态 note 引导用户去学习台「学校考试」区块记录。
+  const examRecordTool = !isGameMask ? createExamRecordTool(userId) : null
+  if (examRecordTool) {
+    systemParts.push(EXAM_RECORD_TOOL_PROMPT)
+  }
+
+  // 个人笔记库(vault):服务端直接读写 VAULT_DIR 本地 Markdown 文件夹(Obsidian 兼容)。
+  // 写工具有真实落盘副作用,闸门比 exam_records 收紧一档:临时区/群聊/游戏回合不注入;
+  // 写保护在工具内(overwrite/append 仅限 aichatt/ 命名空间,用户手写笔记不可改)。
+  const vaultTool = !isGameMask && !isEphemeral && !groupId ? createVaultTool() : null
+  if (vaultTool) {
+    systemParts.push(VAULT_TOOL_PROMPT)
+    console.log(`[chat] vault tool attached (user ${userId})`)
+  }
+
+  // 今日计划(manage_plan):plan 应用并入后,AI 可直接读写今天的时间轴/待安排与备忘录,
+  // 并触发排程(「帮我排一下今天」)。写工具,闸门与 vault 同档(临时区/群聊/游戏回合不注入);
+  // 数据落 PlanItem/PlanMemo,与今日计划弹窗、学习台贴纸同一份数据。
+  const planTool = !isGameMask && !isEphemeral && !groupId ? createPlanTool(userId) : null
+  if (planTool) {
+    systemParts.push(PLAN_TOOL_PROMPT)
+    console.log(`[chat] plan tool attached (user ${userId})`)
   }
 
   // 闲鱼建监控闭环(add_yellow_fish_watch):写工具(自动建 keyword 任务+开爬+等数据,内置查重护栏),
@@ -1439,6 +1538,12 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   const deleteCustomModelTool =
     aiControlEnabled && !isEphemeral && !groupId && !isGameMask ? createDeleteCustomModelTool() : null
   const memoryTool = memoryEnabled && !isEphemeral && !groupId && !isGameMask ? createMemoryTool(userId) : null
+  // 短期记忆写入(write_scratch_memory):与 add_memory 同闸门——记忆开关+临时/对比/游戏全禁
+  const scratchTool =
+    memoryEnabled && !isEphemeral && !groupId && !isGameMask ? createScratchTool(userId) : null
+  // 学习进度查询(study_progress):与 manage_todo 同闸门——读学习数据而非记忆,不随记忆开关关停
+  const studyProgressTool =
+    !isEphemeral && !groupId && !isGameMask ? createStudyProgressTool(userId) : null
   const maskGeneratorTool =
     !isEphemeral && !groupId && !isGameMask ? createMaskGeneratorTool() : null
   const todoTool =
@@ -1457,6 +1562,12 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
           }
         })
       : null
+  // 学习事件记录/查询:与错题本同闸门;记(写)与查(读)分开挂,查询本身也只在该
+  // 闸门内可用(读流水同样是长期数据,临时模式禁读防借号套数据)。
+  const studyEventRecordTool =
+    !isEphemeral && !groupId && !isGameMask ? createRecordStudyEventTool(userId) : null
+  const studyEventQueryTool =
+    !isEphemeral && !groupId && !isGameMask ? createQueryStudyEventsTool(userId) : null
   const writeDocTool =
     !isEphemeral && !groupId && !isGameMask ? createWriteDocTool(userId) : null
   // 代码文档落库需要 conversationId,但新对话的 convId 在下方才解析:
@@ -2005,11 +2116,13 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
     console.warn(`[chat] Conversation ${conversationId} not owned by user ${userId}; creating a new conversation instead`)
   }
   if (!convId || !conversationOwned) {
+    // 估分报告深链:首条消息带标签+JSON 头,直接截前 40 字会把裸 JSON 当标题(A7),
+    // 先换成人话,AI 标题生成后照常覆盖。
     const conv = await prisma.conversation.create({
       data: {
         userId,
         isEphemeral,
-        title: userContent.slice(0, 40) || "新对话",
+        title: examAskFallbackTitle(userContent) || userContent.slice(0, 40) || "新对话",
         model: modelId,
         stylePreset: effectiveStylePreset,
         ...(effectiveMaskId ? { maskId: effectiveMaskId } : {}),
@@ -2238,6 +2351,29 @@ const requestedMask = await getMaskById(body.maskId ?? null, userId)
   // 游戏回合自管世界时间，注入真实日期会与设定冲突，故跳过。
   if (!isGameMask) systemParts.push(buildTimeAnchorPrompt())
 
+  // 监管模式监工段(focus-lock-restrict-plan.md §3.3):客户端锁定中随请求上报
+  // focusLock.endsAtMs,注入监督者约束——纯闲聊不接茬、拉回学习,学习问题质量不打折。
+  // 放在面具人格之后(systemParts 末尾附近):监工约束 > 面具人设。
+  // endsAtMs/countUp/focusLockActive 已在搜索工具构造前解析(锁内禁搜图共用同一判定)。
+  if (focusLockActive) {
+    systemParts.push(
+      focusLockCountUp
+        ? [
+            '## 监管模式·专注锁定时段',
+            '当前处于监管模式正计时专注锁定中(无固定截止,学完手动结束)。你是学习监督者：纯闲聊、娱乐话题不接茬、不展开，用一两句话自然拉回学习任务；学习类问题正常全力回答，质量不打折。不说教、不重复提醒、语气自然。',
+          ].join('\n')
+        : [
+            '## 监管模式·专注锁定时段',
+            `当前处于监管模式专注锁定中(约剩 ${Math.max(1, Math.ceil(((focusLockEndsAtMs as number) - Date.now()) / 60000))} 分钟)。你是学习监督者：纯闲聊、娱乐话题不接茬、不展开，用一两句话自然拉回学习任务；学习类问题正常全力回答，质量不打折。不说教、不重复提醒、语气自然。`,
+          ].join('\n')
+    )
+    console.log(
+      focusLockCountUp
+        ? '[chat] focus-lock supervisor prompt injected (count-up)'
+        : `[chat] focus-lock supervisor prompt injected (remain ~${Math.max(1, Math.ceil(((focusLockEndsAtMs as number) - Date.now()) / 60000))} min)`
+    )
+  }
+
   // systemParts 可能被上面 unshift 过,重新 join
   const finalSystem = systemParts.length > 0 ? systemParts.join('\n\n') : undefined
 
@@ -2343,7 +2479,7 @@ const result = streamText({
     (cmSupportsReasoning || /dashscope\.aliyuncs\.com/i.test(cmBaseURL))
       ? { providerOptions: { openai: { reasoningEffort: "medium" } } }
       : {}),
-    ...((searchTool || urlReaderTool || calcTool || timeTool || yellowFishTool || yellowFishWatchTool || yellowFishLiveTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || paperSearchTool || paperAnalyzeTool || composePaperTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
+    ...((searchTool || urlReaderTool || calcTool || timeTool || examRecordTool || vaultTool || planTool || yellowFishTool || yellowFishWatchTool || yellowFishLiveTool || clarifyTool || settingsTool || providerModelTool || customModelTool || deleteCustomModelTool || memoryTool || scratchTool || studyProgressTool || studyEventRecordTool || studyEventQueryTool || maskGeneratorTool || knowledgeTool || knowledgeOutlineTool || paperSearchTool || paperAnalyzeTool || composePaperTool || practiceTool || todoTool || writeDocTool || writeCodeTool || tripTool || localFileTool || mcpToolCount > 0)
       ? {
           tools: {
             ...(searchTool ? { web_search: searchTool } : {}),
@@ -2351,6 +2487,9 @@ const result = streamText({
             ...(urlReaderTool ? { [URL_READER_TOOL_NAME]: urlReaderTool } : {}),
             ...(calcTool ? { [CALC_TOOL_NAME]: calcTool } : {}),
             ...(timeTool ? { [TIME_TOOL_NAME]: timeTool } : {}),
+            ...(examRecordTool ? { [EXAM_RECORD_TOOL_NAME]: examRecordTool } : {}),
+            ...(vaultTool ? { [VAULT_TOOL_NAME]: vaultTool } : {}),
+            ...(planTool ? { [PLAN_TOOL_NAME]: planTool } : {}),
             ...(yellowFishTool ? { [YELLOW_FISH_TOOL_NAME]: yellowFishTool } : {}),
             ...(yellowFishWatchTool ? { [YELLOW_FISH_WATCH_TOOL_NAME]: yellowFishWatchTool } : {}),
             ...(yellowFishLiveTool ? { [YELLOW_FISH_LIVE_TOOL_NAME]: yellowFishLiveTool } : {}),
@@ -2369,10 +2508,20 @@ const result = streamText({
               ? { [DELETE_CUSTOM_MODEL_TOOL_NAME]: deleteCustomModelTool }
               : {}),
             ...(memoryTool ? { [MEMORY_TOOL_NAME]: memoryTool } : {}),
+            ...(scratchTool ? { [SCRATCH_TOOL_NAME]: scratchTool } : {}),
+            ...(studyProgressTool
+              ? { [STUDY_PROGRESS_TOOL_NAME]: studyProgressTool }
+              : {}),
             ...(maskGeneratorTool ? { [MASK_TOOL_NAME]: maskGeneratorTool } : {}),
             ...(todoTool ? { [TODO_TOOL_NAME]: todoTool } : {}),
             ...(saveWrongQuestionTool
               ? { [SAVE_WRONG_QUESTION_TOOL_NAME]: saveWrongQuestionTool }
+              : {}),
+            ...(studyEventRecordTool
+              ? { [RECORD_STUDY_EVENT_TOOL_NAME]: studyEventRecordTool }
+              : {}),
+            ...(studyEventQueryTool
+              ? { [QUERY_STUDY_EVENTS_TOOL_NAME]: studyEventQueryTool }
               : {}),
             ...(writeDocTool ? { [WRITE_DOC_TOOL_NAME]: writeDocTool } : {}),
             ...(writeCodeTool ? { [WRITE_CODE_TOOL_NAME]: writeCodeTool() } : {}),
@@ -2462,10 +2611,15 @@ const result = streamText({
     // 用户本地机器 / Diff 审查与预览验证在前端):本步一旦发出任一调用立即停步,等前端
     // 执行回填后经 sendAutomaticallyWhen 续跑;否则多步循环会带着"悬空 tool-call"继续
     // 步进——模型拿不到结果就给出半截正文,前端回填后续跑判据又被正文挡住,流程死停。
+    // ask_clarification 同为无 execute 工具,但等的是"用户回答"(新一轮 user 消息),
+    // 不是前端回填续跑;同样必须立即停步——否则循环回灌悬空 tool-call,模型拿不到
+    // 结果就原样再问一遍,用户看到两张一模一样的澄清卡(2026-11-18 实锤),还会循环到
+    // 步数耗尽被误判 continuePending 挂出「继续处理」条。pausedForHostTool 顺带把
+    // 澄清轮从"预算耗尽"与无工具补答里豁免,三个消费点语义均成立。
     // 步数预算见上方的 stepBudget(ZCode 经验:隔离边界给硬上限,主链路预算从宽)。
     stopWhen: ({ steps }) => {
       const last = steps[steps.length - 1]
-      // 客户端工具需前端回填后另起一轮：先判它，保证 onFinish 能区分"等前端"与"预算耗尽"
+      // 客户端工具需前端回填后另起一轮 / 澄清工具等用户回答：先判它，保证 onFinish 能区分"等外部输入"与"预算耗尽"
       const hostToolPause = !!last?.content?.some(
         (p) =>
           (p as { type?: string; toolName?: string }).type === "tool-call" &&
@@ -2474,6 +2628,7 @@ const result = streamText({
             CODE_EDIT_TOOL_NAME,
             PREVIEW_CHECK_TOOL_NAME,
             PROJECT_CHECK_TOOL_NAME,
+            CLARIFY_TOOL_NAME,
           ].includes((p as { toolName?: string }).toolName as string)
       )
       if (hostToolPause) {
@@ -2602,8 +2757,11 @@ const result = streamText({
       // responseMessages 里那条泄漏的 assistant 文本丢弃(它就是标记本身),其余
       // tool_calls / tool 结果原样带上,模型不必重跑搜索即可作答。
       // 客户端工具轮不算(那一轮的"内容"是前端卡片,不是回答)。
+      // 澄清轮同豁免:ask_clarification 无 execute,正文为空是正常形态,补答会凭空
+      // 生成一段正文盖过澄清卡片的语义(该轮要的是用户回答,不是 AI 作答)。
+      const clarifyPaused = collectedToolCalls.some((c) => c.tool === CLARIFY_TOOL_NAME)
       let recoveryUsage: { input: number; output: number } | null = null
-      if (markupLeaked && !content.trim() && !pausedForHostTool && !req.signal.aborted) {
+      if (markupLeaked && !content.trim() && !pausedForHostTool && !clarifyPaused && !req.signal.aborted) {
         try {
           const keepForRecovery = (responseMessages ?? []).filter((m) => {
             if (m.role !== "assistant") return true
@@ -2662,7 +2820,13 @@ const result = streamText({
       // 尾部追加"回复继续"死文本(污染历史),改为在 metadata 打 continuePending 标记:
       // 前端据此在消息下方渲染「继续处理」按钮(点它 = 不发用户消息直接续跑一轮),
       // 见 ChatPanel onFinish 的 continuePending 分支与下方 toolCallsMetadata 组装处。
-      const stepBudgetExhausted = finishReason === 'tool-calls' && !pausedForHostTool
+      // 澄清轮必须豁免(2026-11-18 实锤):ask_clarification 无 execute,SDK 发出 tool-call
+      // 后本就停步,finishReason 同为 'tool-calls',但它在等的是用户回答而非续跑——
+      // 误打 continuePending 会挂出「继续处理」条,用户一点,续跑轮面对悬空的 clarify
+      // 调用原样再问一遍,聊天流里出现两份一字不差的澄清卡。判定不能依赖
+      // pausedForHostTool(SDK 内建停步时 stopWhen 可能未执行),直接查工具明细
+      // (clarifyPaused 在上方 recovery 分支前已判定)。
+      const stepBudgetExhausted = finishReason === 'tool-calls' && !pausedForHostTool && !clarifyPaused
       if (stepBudgetExhausted) {
         console.warn(`[chat] STEP_BUDGET_EXHAUSTED: model=${modelId}, textLen=${content.length}`)
       }

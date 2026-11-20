@@ -15,7 +15,6 @@ import { loadStudyLesson, patchStudyLesson } from '@/lib/study/lesson-session'
 import { HeroModelChip } from './HeroModelChip'
 import { ModelSelector } from './ModelSelector'
 import { ChatInput } from './ChatInput'
-import { WelcomeEntryCards } from './WelcomeEntryCards'
 import { GoogleMobileNav } from '@/components/mobile/GoogleMobileNav'
 import { ProfileProbe } from './ProfileProbe'
 import { ComparePanel } from './ComparePanel'
@@ -42,6 +41,7 @@ import { isModelAvailable, providerKeysStatusQuery } from '@/lib/query/providers
 import { fetchJson } from '@/lib/query/fetcher'
 import type { ModelDefinition } from '@/lib/ai/types'
 import { getBuiltinMask } from '@/lib/ai/builtin-masks'
+import { bumpFocusMsgCount, getFocusLockState, useFocusLock } from '@/lib/focus-lock-store'
 import type { MaskDTO } from '@/lib/ai/mask-types'
 import type { Attachment } from './FileUpload'
 import {
@@ -402,6 +402,11 @@ export function ChatPanel({
   // Auto-enable deepThink for reasoning models (like DeepSeek-R1), but allow user to toggle off
   const shouldAutoEnableDeepThink = initialModel && allModels.find(m => m.id === initialModel)?.supportsReasoning
   const [deepThink, setDeepThink] = useState(shouldAutoEnableDeepThink || false)
+  // 监管模式锁定跃迁(R8):锁定开始时深度思考默认开——增益不强制,此后用户仍可手动关
+  const focusLocked = useFocusLock().locked
+  useEffect(() => {
+    if (focusLocked) setDeepThink(true)
+  }, [focusLocked])
   // Track if user manually changed deepThink to prevent auto-re-enabling
   const userToggledDeepThink = useRef(false)
   // Keep stable ref to allModels so we can read it inside effects without causing re-runs.
@@ -764,10 +769,18 @@ export function ChatPanel({
           get attachments() {
             return attachmentsRef.current
           },
+          // 监管模式锁定期标记:服务端据此注入监工段(focus-lock-restrict-plan.md §3.3);
+          // countUp=正计时档(endsAtMs 恒 0,服务端按标记注入不带剩余时间的监工文案)
+          get focusLock() {
+            const fl = getFocusLockState()
+            return fl.locked ? { endsAtMs: fl.endsAtMs, countUp: fl.countUp } : undefined
+          },
         },
         // Intercept response to capture conversation ID from header
         fetch: async (url, options) => {
           const response = await fetch(url, options)
+          // 锁中发送成功计数(R5 解锁回执数据源;非锁定期空操作)
+          if (getFocusLockState().locked && response.ok) bumpFocusMsgCount()
           const newConvId = response.headers.get('X-Conversation-Id')
           const newConvTitle = response.headers.get('X-Conversation-Title')
           // 库行 id 认亲:本地流消息 id 是 AI SDK 临时 id,与库行 cuid 永不相等。
@@ -2460,8 +2473,6 @@ export function ChatPanel({
                   <HeroModelChip models={mergedModels} selectedModel={currentModel} onModelChange={handleModelChange} />
                 </span>
               </p>
-              {/* 定位改版(2026-11-15):生活能力露出面——出行/闲鱼问句深链,其余直跳;临时聊天不渲染 */}
-              <WelcomeEntryCards />
             </div>
           )}
         />
@@ -2476,12 +2487,8 @@ export function ChatPanel({
           <div className="relative flex-1 min-h-0">
             {/* md:pt-12: 桌面端浮动工具簇无底板悬在内容区右上,首条消息(含右对齐用户气泡)须从其下方起排;
                 padding 放在滚动容器内,滚动时随内容移出 —— 顶部裁切线保持 y=0,TopFade 渐隐行为不变 */}
-            {/* data-tauri-drag-region:容器自身的 md:pt-12 留白带(滚到顶时的顶部 48px)
-                即客户端窗口拖动区,滚动后留白移出、拖动随之失效,不挡消息点击与选词。
-                只挂属性不写 -webkit-app-region:子元素不继承拖拽区,正文选择/按钮不受影响 */}
             <div
               ref={setMessagesScrollEl}
-              data-tauri-drag-region=""
               className="h-full overflow-y-auto overflow-x-hidden scroll-contain md:pt-12 max-md:pt-[var(--m-chat-pad-top)] chat-scroll-fade [scroll-behavior:auto]"
             >
               {/* error 时给内容尾部留出一张卡片的高度：浮层会压住正文下缘，

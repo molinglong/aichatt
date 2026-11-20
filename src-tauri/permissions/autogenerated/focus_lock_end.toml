@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-focus-lock-end"
+description = "Enables the focus_lock_end command without any pre-configured scope."
+commands.allow = ["focus_lock_end"]
+
+[[permission]]
+identifier = "deny-focus-lock-end"
+description = "Denies the focus_lock_end command without any pre-configured scope."
+commands.deny = ["focus_lock_end"]

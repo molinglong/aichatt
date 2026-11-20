@@ -28,9 +28,12 @@ import katex from 'katex'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
 import { ClientOnly } from '@/components/ClientOnly'
 import { ComposedAssistant } from '@/components/papers/ComposedAssistant'
+import { PaperBrandSeal } from '@/components/papers/PaperBrandSeal'
 import { confirmDialog } from '@/components/ui/ConfirmDialog'
 import { fetchJson } from '@/lib/query/fetcher'
 import { queryKeys } from '@/lib/query/keys'
+import { PRINT_BASE_CSS, PRINT_SHELL_UNCHAIN_CSS, printPageCss } from '@/lib/print/print-css'
+import { usePrintEvent } from '@/hooks/usePrintEvent'
 import { providersModelsQuery, isModelAvailable, providerKeysStatusQuery } from '@/lib/query/providers'
 import { toast } from '@/lib/toast'
 import styles from './ComposedPaper.module.css'
@@ -59,6 +62,8 @@ interface ComposedSlotView {
   /** 非真题槽来源:textbook/ai-variant(真题槽 null) */
   inlineSource: string | null
   sourceRef: string | null
+  /** 真题槽的 PaperQuestion id(今晚测验对答错题出变式用);内联槽/旧缓存为 undefined */
+  paperQuestionId?: string | null
 }
 
 interface ComposedPaperView {
@@ -159,27 +164,17 @@ function stripOwnNumber(answer: string, number: number): string {
 }
 
 /**
- * 打印全局规则(随本页挂载生效,离开页面即失效):
- * 解除「根布局 app-viewport/app-viewport-body → (app) shell 的 app-frame/app-shell/
- * app-shell-column/app-main」这条 h-screen + overflow-hidden 裁剪链、隐藏侧栏/顶栏/
- * 悬浮钮等导航装饰,让浏览器原生分页只输出卷面。
- * (2026-11-11 修「只能打印一张」:根布局两层壳不在旧名单里,内容被钉在一屏高度,
- * 分页只算出一页 —— 名单必须与根布局/壳结构同步维护。)
+ * 打印全局规则(随本页挂载生效,离开页面即失效):解除壳裁剪链、隐藏装饰层,
+ * 让浏览器原生分页只输出卷面。公共骨架(@page/html,body 解锁/壳豁免链)收敛在
+ * @/lib/print/print-css,纪律与坑清单见其文件头;名单必须与根布局/壳结构同步维护
+ * (2026-11-11 修「只能打印一张」:根布局两层壳不在旧名单里,内容被钉在一屏高度)。
  * 这些选择器是全局类,不能进 CSS 模块(purity 检查要求选择器带本地类),用 <style> 注入。
  */
 const PRINT_GLOBAL_CSS = `
 @media print {
-  /* 页边距必须在 @page 上:卷面自身的 padding 只会落在第一页顶/最后一页底,
-     中间页会顶到纸边(2026-11-12 修「分页奇怪」之一)。14mm 15mm = 原 sheet padding。 */
-  @page { size: A4; margin: 14mm 15mm; }
-  html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
-  .app-viewport, .app-viewport-body, .app-frame, .app-shell, .app-shell-column, .app-main {
-    height: auto !important; max-height: none !important; overflow: visible !important;
-    background: #fff !important; border: none !important; box-shadow: none !important;
-    border-radius: 0 !important; padding: 0 !important; margin: 0 !important;
-  }
-  .app-shell > *:not(.app-shell-column) { display: none !important; }
-  .app-shell-column > *:not(.app-main) { display: none !important; }
+  ${printPageCss()}
+  ${PRINT_BASE_CSS}
+  ${PRINT_SHELL_UNCHAIN_CSS}
   /* AI 助手(悬浮球/停靠列/浮卡)整层不进打印 */
   .paper-assistant-print-hide { display: none !important; }
 }
@@ -911,10 +906,36 @@ function ComposedContent() {
   } | null>(null)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
+  /** 组卷时的真题缺口(组卷页写入 sessionStorage;卷面页一次性提示,关掉即清) */
+  const [gapNote, setGapNote] = useState<{ missing: number; score: number } | null>(null)
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(`composed-gap:${id}`)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as { missing?: number; score?: number }
+      if (parsed?.missing) setGapNote({ missing: parsed.missing, score: parsed.score ?? 0 })
+    } catch {
+      // 忽略损坏的暂存
+    }
+  }, [id])
+
+  const dismissGapNote = useCallback(() => {
+    setGapNote(null)
+    try {
+      sessionStorage.removeItem(`composed-gap:${id}`)
+    } catch {
+      // ignore
+    }
+  }, [id])
 
   useEffect(() => {
     if (containerRef.current) renderTexIn(containerRef.current)
   }, [paper])
+
+  // 打印监察:打印对话框真实弹出(beforeprint,打印按钮/Ctrl+P 皆覆盖)即上报一次,
+  // 「今晚测验」队列据此判定今天打印过哪张卷。hook 内失败静默,绝不影响打印本身。
+  usePrintEvent('composed', id)
 
   const doPatch = useCallback(
     async (body: Record<string, unknown>, key: string): Promise<boolean> => {
@@ -1194,8 +1215,36 @@ function ComposedContent() {
                 <span>全部题目与答案出自原卷 · 改动实时保存</span>
               </div>
 
+              {/* 真题缺口提示(组卷页写入、卷面页一次性展示):别让缺题静默消失 */}
+              {gapNote && (
+                <div
+                  role="status"
+                  className={`flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-[12px] border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11.5px] text-content-secondary ${styles.printHide}`}
+                >
+                  <span>
+                    按大纲还缺 {gapNote.missing} 道
+                    {gapNote.score > 0 ? ` · ${gapNote.score} 分` : ''}（该档真题不足，有多少放多少）
+                  </span>
+                  <a
+                    href="/papers/composed?compose=1"
+                    className="font-semibold text-accent underline-offset-2 hover:underline"
+                  >
+                    回表单补题 / 改用 AI 补题
+                  </a>
+                  <button
+                    type="button"
+                    onClick={dismissGapNote}
+                    aria-label="关闭缺口提示"
+                    className="ml-auto rounded-md px-1.5 py-0.5 text-content-muted transition-colors hover:bg-surface-subtle hover:text-content-primary"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
               {/* 卷面条 */}
               <div className={styles.sheet}>
+                <PaperBrandSeal />
                 <div className={styles.paperHead}>
                   <div className={styles.examTag}>{SUBJECT_LABELS[paper.subject] ?? paper.subject} · 真题重组 · {hasInline ? "部分题目为课本/AI 补充（已标注）" : "全部题目与答案出自原卷"}</div>
                   <div className={styles.paperTitle}>{paper.title}</div>

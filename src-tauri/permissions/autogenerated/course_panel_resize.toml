@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-panel-resize"
+description = "Enables the course_panel_resize command without any pre-configured scope."
+commands.allow = ["course_panel_resize"]
+
+[[permission]]
+identifier = "deny-course-panel-resize"
+description = "Denies the course_panel_resize command without any pre-configured scope."
+commands.deny = ["course_panel_resize"]

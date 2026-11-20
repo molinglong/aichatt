@@ -480,7 +480,7 @@ function ConversationItemInner({ id, title, isMain, mode, maskAvatar, maskName, 
       style={{ animationDelay: `${staggerDelay}ms` }}
       onContextMenu={handleContextMenu}
       className={cn(
-        'sidebar-item-enter group flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm transition-colors',
+        'sidebar-item-enter fl-line group flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm transition-colors',
         isMain
           ? // 主对话:常驻蓝色识别态(管家通道),与普通会话一眼区分
             'bg-accent-soft text-accent font-medium hover:bg-accent-soft hover:text-accent'

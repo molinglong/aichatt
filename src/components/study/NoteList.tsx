@@ -202,8 +202,9 @@ export function NoteList({ onChanged, wide = false }: { onChanged?: () => void; 
                       />
                     </a>
                   )}
-                  <div className="text-xs text-content-secondary whitespace-pre-wrap break-words leading-relaxed">
-                    {n.content}
+                  {/* 题干走与 AI 解析同一条富渲染管线:$...$ LaTeX 才能出 KaTeX(纯文本直出会裸穿) */}
+                  <div className="[&_.rich-md]:text-[13px] [&_.rich-md]:leading-[1.7] [&_.rich-md_p]:mb-2 [&_.rich-md]:text-content-secondary">
+                    <MarkdownRenderer content={expandSingleNewlines(n.content)} messageId={`study-q-${n.id}`} rich />
                   </div>
                   {n.analysis && (
                     <div className="rounded-lg bg-surface-subtle/50 p-2.5">

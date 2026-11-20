@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-focus-lock-start"
+description = "Enables the focus_lock_start command without any pre-configured scope."
+commands.allow = ["focus_lock_start"]
+
+[[permission]]
+identifier = "deny-focus-lock-start"
+description = "Denies the focus_lock_start command without any pre-configured scope."
+commands.deny = ["focus_lock_start"]

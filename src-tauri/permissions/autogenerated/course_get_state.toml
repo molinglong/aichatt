@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-get-state"
+description = "Enables the course_get_state command without any pre-configured scope."
+commands.allow = ["course_get_state"]
+
+[[permission]]
+identifier = "deny-course-get-state"
+description = "Denies the course_get_state command without any pre-configured scope."
+commands.deny = ["course_get_state"]

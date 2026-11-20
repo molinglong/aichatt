@@ -14,6 +14,8 @@ export interface CaptureStudyNoteInput {
   userId: string
   sourceMessageId?: string | null
   sourceQuestionId?: string | null
+  /** 建卡来源标记,写入 StudyNote.origin;缺省 manual */
+  origin?: string
   /** 题干正文(必填语义:空则用占位文案) */
   question: string
   analysis?: string | null
@@ -55,6 +57,7 @@ export async function captureStudyNote(input: CaptureStudyNoteInput): Promise<Ca
         userId: input.userId,
         sourceMessageId,
         sourceQuestionId: input.sourceQuestionId?.trim() || null,
+        origin: input.origin ?? 'manual',
         // 打标前保持 null:前端显示「未标注」,而不是把失败伪装成「其他」
         subject: input.subject ?? null,
         topic: input.topic ?? null,

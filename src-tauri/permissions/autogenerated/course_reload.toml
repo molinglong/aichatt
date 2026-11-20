@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-reload"
+description = "Enables the course_reload command without any pre-configured scope."
+commands.allow = ["course_reload"]
+
+[[permission]]
+identifier = "deny-course-reload"
+description = "Denies the course_reload command without any pre-configured scope."
+commands.deny = ["course_reload"]

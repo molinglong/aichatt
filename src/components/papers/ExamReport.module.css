@@ -1,0 +1,528 @@
+/* 估分报告 · 整页版(design/preview-online-exam.html 方案一 定稿)。
+   chrome 层走全局 token 随深浅;数字一律 tabular-nums。 */
+.page {
+  position: relative;
+  height: 100%;
+  background: rgb(var(--surface-subtle) / .4);
+  overflow: hidden;
+}
+.topbar {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 6px 10px;
+  background: rgb(var(--surface) / .95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgb(var(--line) / .6);
+}
+.topbar .title {
+  min-width: 0;
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(var(--content-primary));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.backBtn {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: rgb(var(--content-secondary));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.backBtn:hover {
+  background: rgb(var(--surface-subtle));
+  color: rgb(var(--content-primary));
+}
+.backBtn svg {
+  width: 18px;
+  height: 18px;
+}
+.scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 62px 14px 56px;
+}
+.inner {
+  max-width: 780px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 总分区 */
+.head {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--line) / .6);
+  border-radius: 14px;
+  padding: 15px 17px;
+}
+.big {
+  display: flex;
+  align-items: baseline;
+}
+.big .v {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.5px;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--content-primary));
+}
+.big .v i {
+  font-style: normal;
+  font-size: 22px;
+  color: rgb(var(--content-muted));
+  padding: 0 2px;
+}
+.big .m {
+  font-size: 11px;
+  color: rgb(var(--content-muted));
+  margin-left: 8px;
+}
+.comp {
+  font-size: 12px;
+  color: rgb(var(--content-secondary));
+  line-height: 1.7;
+  min-width: 0;
+}
+.comp b {
+  color: rgb(var(--content-primary));
+  font-variant-numeric: tabular-nums;
+}
+.meta {
+  font-size: 11px;
+  color: rgb(var(--content-muted));
+  font-variant-numeric: tabular-nums;
+}
+.pendingBadge {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: rgb(var(--accent));
+  background: rgb(var(--accent) / .1);
+  border-radius: 999px;
+  padding: 2px 9px;
+  margin-left: 6px;
+}
+
+.card {
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--line) / .6);
+  border-radius: 14px;
+  padding: 13px 16px 15px;
+}
+.secT {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(var(--content-secondary));
+  margin-bottom: 8px;
+}
+.secT .hint {
+  font-weight: 400;
+  font-size: 10.5px;
+  color: rgb(var(--content-muted));
+  margin-left: 6px;
+}
+
+/* 大题得分 · 圆环 */
+.ringGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.ringCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.ringWrap {
+  position: relative;
+  width: 72px;
+  height: 72px;
+}
+.ringSvg {
+  width: 72px;
+  height: 72px;
+  display: block;
+}
+.ringTrack {
+  stroke: rgb(var(--surface-subtle));
+}
+.ringSoft {
+  stroke: rgb(var(--accent) / .22);
+}
+.ringFill {
+  stroke: rgb(var(--accent));
+  transition: stroke-dasharray .4s var(--ease, ease);
+}
+.ringCenter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  pointer-events: none;
+}
+.ringGot {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--content-primary));
+}
+.ringGot {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--content-primary));
+}
+/* 待评环心是「got~max」区间串,字号收敛防溢出 */
+.ringGot.ringPend {
+  font-size: 12px;
+  letter-spacing: -.2px;
+}
+.ringMax {
+  font-size: 9.5px;
+  color: rgb(var(--content-muted));
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.ringName {
+  max-width: 100%;
+  font-size: 11px;
+  color: rgb(var(--content-secondary));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 560px) {
+  .ringGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px 10px;
+  }
+  .ringWrap {
+    width: 84px;
+    height: 84px;
+  }
+  .ringSvg {
+    width: 84px;
+    height: 84px;
+  }
+}
+
+/* 考点丢分 chips */
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tchip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgb(var(--danger) / .09);
+  color: rgb(var(--danger));
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tchip .n {
+  font-weight: 400;
+  opacity: .85;
+}
+.noLoss {
+  font-size: 11px;
+  color: rgb(var(--content-muted));
+}
+
+/* 客观题明细行 */
+.orow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px;
+  border-top: 1px dashed rgb(var(--line));
+  font-size: 11.5px;
+}
+.orow:first-of-type {
+  border-top: none;
+}
+.onN {
+  flex: none;
+  width: 24px;
+  font-weight: 700;
+  color: rgb(var(--content-secondary));
+  font-variant-numeric: tabular-nums;
+}
+.oAns {
+  flex: 1;
+  min-width: 0;
+  color: rgb(var(--content-secondary));
+}
+.oAns b.good {
+  color: rgb(var(--accent));
+}
+.oAns b.bad {
+  color: rgb(var(--danger));
+}
+.omark {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-variant-numeric: tabular-nums;
+}
+.omark.no {
+  background: rgb(var(--danger) / .09);
+  color: rgb(var(--danger));
+}
+.omark.ok {
+  background: rgb(var(--accent) / .1);
+  color: rgb(var(--accent));
+}
+.orow.mute .oAns,
+.orow.mute .onN {
+  color: rgb(var(--content-muted));
+}
+
+/* 主观题自评卡 */
+.rv {
+  border: 1px solid rgb(var(--line));
+  border-radius: 10px;
+  padding: 10px 12px 11px;
+  margin-bottom: 8px;
+}
+.rv:last-child {
+  margin-bottom: 0;
+}
+.rvHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.qnoBadge {
+  flex: none;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: rgb(var(--accent) / .1);
+  color: rgb(var(--accent));
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.kindTag {
+  font-size: 10.5px;
+  color: rgb(var(--content-muted));
+  border: 1px solid rgb(var(--line));
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.stp {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgb(var(--line));
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgb(var(--surface));
+}
+.stp button {
+  width: 26px;
+  height: 24px;
+  border: none;
+  background: rgb(var(--surface));
+  color: rgb(var(--content-secondary));
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+.stp button:hover {
+  color: rgb(var(--accent));
+  background: rgb(var(--accent) / .1);
+}
+.stp b {
+  width: 30px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--content-primary));
+}
+.rvScore {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: rgb(var(--content-primary));
+}
+.rvScore i {
+  font-style: normal;
+  font-size: 10.5px;
+  color: rgb(var(--content-muted));
+  font-weight: 400;
+}
+.stem {
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: rgb(var(--content-primary));
+  margin-top: 8px;
+  white-space: pre-wrap;
+}
+.rvImgs {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rvImg {
+  max-width: 46%;
+  max-height: 220px;
+  border: 1px solid rgb(var(--line));
+  border-radius: 8px;
+}
+.answer {
+  margin-top: 6px;
+  border: 1px dashed rgb(var(--line-strong, var(--line)));
+  border-radius: 9px;
+  padding: 8px 11px;
+  font-family: 'LXGW WenKai Screen', 'KaiTi', '楷体', serif;
+  font-size: 13px;
+  line-height: 1.8;
+  color: rgb(var(--content-primary));
+  white-space: pre-wrap;
+}
+.answer.empty {
+  color: rgb(var(--content-muted));
+  font-family: inherit;
+  font-size: 11.5px;
+}
+/* 「去问AI」链接族(统一轻量文字链;有上下文可带才出) */
+.askRow {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+}
+.asklnk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  padding: 2px 5px;
+  border-radius: 6px;
+  color: rgb(var(--accent));
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease);
+  white-space: nowrap;
+}
+.asklnk:hover {
+  background: rgb(var(--accent) / .1);
+}
+.asklnk svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+/* AI 批改(复活版按钮,坐在步进器旁) */
+.askbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgb(var(--accent));
+  border-radius: 999px;
+  background: rgb(var(--accent) / .1);
+  color: rgb(var(--accent));
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 4px 11px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease);
+  white-space: nowrap;
+}
+.askbtn:hover {
+  background: rgb(var(--accent) / .18);
+}
+.askbtn svg {
+  width: 11px;
+  height: 11px;
+}
+.aiNote {
+  font-size: 10.5px;
+  color: rgb(var(--content-muted));
+  margin-top: 7px;
+}
+
+/* 错题流转 */
+.wflow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.wq {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 7px;
+  background: rgb(var(--danger) / .09);
+  color: rgb(var(--danger));
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.wsep {
+  font-size: 10.5px;
+  color: rgb(var(--content-muted));
+  margin: 0 3px;
+}
+.reviewBtn {
+  flex: none;
+  border: none;
+  border-radius: 999px;
+  background: rgb(var(--accent));
+  color: rgb(var(--accent-foreground));
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.reviewBtn:hover {
+  opacity: .9;
+}

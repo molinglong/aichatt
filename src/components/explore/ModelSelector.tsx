@@ -33,7 +33,7 @@ export function ModelSelector({ models, value, onChange, compact = false }: Mode
 
   const filteredModels = models.filter(
     (m) =>
-      (configuredProviders.has(m.provider) || m.provider === 'custom') &&
+      (configuredProviders.has(m.provider) || m.provider === 'custom' || m.publicPool === true) &&
       (showLegacy || m.tier !== 'legacy')
   )
 

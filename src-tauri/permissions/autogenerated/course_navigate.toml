@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-navigate"
+description = "Enables the course_navigate command without any pre-configured scope."
+commands.allow = ["course_navigate"]
+
+[[permission]]
+identifier = "deny-course-navigate"
+description = "Denies the course_navigate command without any pre-configured scope."
+commands.deny = ["course_navigate"]

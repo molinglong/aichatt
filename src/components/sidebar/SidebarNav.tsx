@@ -74,7 +74,7 @@ export function SidebarNav({ variant }: { variant: 'list' | 'rail' }) {
       onMouseEnter={warm}
       onFocus={warm}
       className={cn(
-        'w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm text-left transition-colors touch-manipulation',
+        'fl-line w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm text-left transition-colors touch-manipulation',
         active
           ? 'bg-accent-soft text-content-primary font-medium'
           : 'text-content-secondary hover:text-content-primary hover:bg-surface-subtle/60'

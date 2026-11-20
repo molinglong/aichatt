@@ -1,0 +1,58 @@
+/* 卷面右上角品牌钤印「墨印」(design/preview-paper-brandmark.html B案定稿)。
+   品牌红固定 #e5484d(墨印同源),不跟 accent;纸面恒白所以深浅主题同效。
+   打印:整体恢复纯黑 —— 卷面纪律「黑白打印禁灰阶」(屏显红、打印黑,与卷头灰阶降噪同构)。 */
+
+.seal {
+  position: absolute;
+  top: 20px;
+  right: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 9px 6px;
+  border: 1.5px solid rgb(229 72 77 / 0.55);
+  border-radius: 8px;
+  transform: rotate(-4deg);
+  color: #e5484d;
+  pointer-events: none;
+}
+
+.mark {
+  display: block;
+  width: 21px;
+  height: auto;
+}
+
+.name {
+  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  line-height: 1;
+}
+
+/* 手机端:详情页卷面回退流式布局。窄纸上居中卷头会换行变宽,绝对定位必撞行 ——
+   改为文档流内右对齐小块,自然把卷头压下去,零重叠也不依赖 padding 魔法数。 */
+@media (max-width: 760px) {
+  .seal {
+    position: static;
+    width: fit-content;
+    margin: 0 0 10px auto;
+    padding: 6px 8px 5px;
+    border-radius: 7px;
+  }
+  .mark {
+    width: 18px;
+  }
+  .name {
+    font-size: 7px;
+  }
+}
+
+@media print {
+  .seal {
+    color: #000000;
+    border-color: #000000;
+  }
+}

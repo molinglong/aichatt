@@ -5,6 +5,8 @@
  *
  * ChatInput 监听同名事件把文本追加到输入框;草稿持久化由其既有 effect 自动完成。
  */
+import type { Attachment } from '@/lib/attachment-types'
+
 export const INPUT_INSERT_EVENT = 'aichatt:insert-to-input'
 
 export function insertTextToInput(text: string) {
@@ -48,4 +50,51 @@ export const WRITE_SEL_REWRITE_EVENT = 'aichatt:write-sel-rewrite'
 export function requestSelRewrite(instruction: string) {
   if (typeof window === 'undefined' || !instruction) return
   window.dispatchEvent(new CustomEvent(WRITE_SEL_REWRITE_EVENT, { detail: { instruction } }))
+}
+
+/**
+ * 扩展深链带图提问桥 —— 浏览器扩展截图经服务器中转(/uploads)后,桌面壳把
+ * deeplink://ask 事件经 DeepLinkBridge 校验转发到这里:文本进输入框、截图进
+ * 附件,不自动发送(用户补两句再发,2026-11-19 拍板)。
+ * 跨 tab/导航竞态兜底:详情同时落 sessionStorage,ChatInput 挂载时补领,拿到即删。
+ */
+export const EXT_ASK_EVENT = 'aichatt:ext-ask'
+export const EXT_ASK_STORAGE_KEY = 'aichatt.extAsk.pending'
+
+export interface ExtAskDetail {
+  /** 幂等键:实时分发与挂载补领谁先消费谁生效 */
+  id: string
+  text?: string
+  /** 已上传到服务器的截图(/uploads 路径),形状与 /api/upload 返回一致 */
+  attachment?: Attachment
+  /** 多附件(学习页带附件提问);attachment 单件字段保留兼容扩展深链 */
+  attachments?: Attachment[]
+}
+
+export function dispatchExtAsk(detail: ExtAskDetail) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(EXT_ASK_EVENT, { detail }))
+}
+
+export function storePendingExtAsk(detail: ExtAskDetail) {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.setItem(EXT_ASK_STORAGE_KEY, JSON.stringify(detail))
+  } catch {
+    // 隐私模式等存储失败:事件通道仍可用,静默
+  }
+}
+
+/** 消费待补领的深链提问(拿到即删,保证幂等) */
+export function takePendingExtAsk(): ExtAskDetail | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = sessionStorage.getItem(EXT_ASK_STORAGE_KEY)
+    if (!raw) return null
+    sessionStorage.removeItem(EXT_ASK_STORAGE_KEY)
+    const detail = JSON.parse(raw) as ExtAskDetail
+    return detail && detail.id ? detail : null
+  } catch {
+    return null
+  }
 }

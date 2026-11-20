@@ -32,7 +32,8 @@ export interface StudyPlan {
   items: PlanItem[]
 }
 
-const KIND_META: Record<PlanItem['kind'], { label: (n: number) => string; cls: string }> = {
+/** 计划项动作文案(今日任务弹窗共用) */
+export const KIND_META: Record<PlanItem['kind'], { label: (n: number) => string; cls: string }> = {
   cards: { label: (n) => `翻卡 ${n} 张`, cls: 'bg-surface-subtle text-content-muted' },
   redo: { label: (n) => `重做 ${n} 题`, cls: 'bg-accent-soft text-accent' },
   variant: { label: (n) => `变式 ${n} 题`, cls: 'bg-accent-soft text-accent' },

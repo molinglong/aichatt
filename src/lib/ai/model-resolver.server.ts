@@ -152,7 +152,7 @@ export async function resolveChatModel(opts: ResolveChatModelOpts): Promise<Reso
   }
 
   if (usesServerBilledKey) {
-    const check = await checkQuota(userId, isEphemeral)
+    const check = await checkQuota(userId, isEphemeral, { modelId: modelDef.id })
     if (!check.ok) {
       console.warn(`${logTag} QUOTA_DENIED: reason=${check.reason}, user=${userId}, model=${modelId}`)
       monitor("chat_quota_denied", { reason: check.reason, provider: "deepseek" })

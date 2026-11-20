@@ -11,13 +11,15 @@
  */
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
-import { useQuery } from '@tanstack/react-query'
-import { ChevronLeft, X } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronLeft, Eye, EyeOff, X } from 'lucide-react'
 import katex from 'katex'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
 import { ClientOnly } from '@/components/ClientOnly'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { fetchJson } from '@/lib/query/fetcher'
 import { queryKeys } from '@/lib/query/keys'
+import { toast } from '@/lib/toast'
 import styles from './PaperViewer.module.css'
 
 const TOPBAR_H = 52
@@ -67,12 +69,15 @@ function PageSection({
   slug,
   pageNo,
   locatedLabel,
+  hideAnswers,
   onLoaded,
 }: {
   slug: string
   pageNo: number
   /** ?number=N 命中本页时的定位徽标文案(如「第 33 题」) */
   locatedLabel?: string
+  /** 预览默认藏官方答案,顶栏「答案」开关打开后可见(打印始终带答案) */
+  hideAnswers?: boolean
   onLoaded: (pageNo: number) => void
 }) {
   const { data } = useQuery({
@@ -110,7 +115,230 @@ function PageSection({
         </span>
       )}
       {/* 契约片段来自用户自己录入的 PaperPage(服务端已剥 <script>),与聊天渲染同信任级别 */}
-      <div ref={ref} className={styles.sheet} dangerouslySetInnerHTML={html} />
+      <div ref={ref} className={`${styles.sheet}${hideAnswers ? ` ${styles.noAnswers}` : ''}`} dangerouslySetInnerHTML={html} />
+    </div>
+  )
+}
+
+/**
+ * 卷头下的「学校考试成绩」卡(方案D 消费端):历次成绩 + 最近一次考点丢分;空态虚线 CTA 直达录入。
+ * 数据走 GET /api/exam-records?slug=(公共库卷也可记成绩);删除收口在学习台全部成绩弹层,这里不删。
+ * 「记一次成绩」深链学习台 /study?recordExam=<slug>,记录卡就地展开并预选本卷。
+ */
+/**
+ * 卷详情页「在线做题」入口卡(方案A 挑稿定稿):开始答题 / 继续考试(断点续考) / 最近报告直进。
+ * 同卷单场:ongoing 存在时只能继续或放弃(放弃走 ConfirmDialog);交卷后自动进成绩台账。
+ */
+function ExamEntryCard({ slug }: { slug: string }) {
+  const router = useRouter()
+  const qc = useQueryClient()
+  const [starting, setStarting] = useState(false)
+  const [confirmAbandon, setConfirmAbandon] = useState(false)
+  const [abandoning, setAbandoning] = useState(false)
+
+  const { data, isPending } = useQuery({
+    queryKey: queryKeys.papers.attemptEntry(slug),
+    queryFn: ({ signal }) =>
+      fetchJson<{
+        ongoing: { id: string; startedAt: string; answered: number; durationMin: number } | null
+        last: { id: string; submittedAt: string; score: number; fullScore: number } | null
+      }>(`/api/papers/${slug}/attempts`, { signal }),
+    staleTime: 15_000,
+  })
+
+  const startExam = useCallback(async () => {
+    setStarting(true)
+    try {
+      const res = await fetchJson<{ attempt: { id: string } }>(`/api/papers/${slug}/attempts`, { method: 'POST' })
+      router.push(`/papers/exam/${res.attempt.id}`)
+    } catch {
+      toast.error('开考失败，请重试')
+      setStarting(false)
+    }
+  }, [slug, router])
+
+  const abandonExam = useCallback(async () => {
+    if (!data?.ongoing) return
+    setAbandoning(true)
+    try {
+      await fetchJson(`/api/papers/attempts/${data.ongoing.id}`, { method: 'DELETE' })
+      qc.invalidateQueries({ queryKey: queryKeys.papers.attemptEntry(slug) })
+      setConfirmAbandon(false)
+    } catch {
+      toast.error('放弃失败，请重试')
+    } finally {
+      setAbandoning(false)
+    }
+  }, [data?.ongoing, qc, slug])
+
+  if (isPending) return <div className="study-sk h-16 rounded-[14px]" />
+  if (!data) return null
+
+  if (data.ongoing) {
+    const remainMin = Math.max(
+      0,
+      data.ongoing.durationMin - Math.floor((Date.now() - Date.parse(data.ongoing.startedAt)) / 60_000)
+    )
+    return (
+      <div className="rounded-[14px] border border-accent/30 bg-accent/5 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[12.5px] font-semibold text-content-primary">
+              进行中的考试 · 已答 {data.ongoing.answered} 题
+            </span>
+            <span className="mt-0.5 block text-[11px] text-content-muted">
+              剩约 {remainMin} 分钟 · 到点自动停笔,进度自动保存
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setConfirmAbandon(true)}
+            className="flex-none rounded-full border border-line px-3 py-1.5 text-[11.5px] text-content-secondary transition-colors hover:border-line-strong hover:text-content-primary"
+          >
+            放弃
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push(`/papers/exam/${data.ongoing!.id}`)}
+            className="flex-none rounded-full bg-accent px-3.5 py-1.5 text-[11.5px] font-semibold text-accent-foreground transition-opacity hover:opacity-90"
+          >
+            继续考试
+          </button>
+        </div>
+        <ConfirmDialog
+          open={confirmAbandon}
+          title="放弃这场考试？"
+          description="已保存的作答会一并丢弃,不可恢复;之后可以重新开始答题。"
+          confirmLabel={abandoning ? '正在放弃…' : '放弃考试'}
+          danger
+          busy={abandoning}
+          onConfirm={() => void abandonExam()}
+          onCancel={() => setConfirmAbandon(false)}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 rounded-[14px] border-[1.5px] border-dashed border-line-strong px-4 py-3">
+        <span className="min-w-0 flex-1">
+          <span className="block text-[12.5px] font-medium text-content-secondary">在线做题 · 全屏开考</span>
+          <span className="mt-0.5 block text-[11px] text-content-muted">
+            卷面仿真答题,交卷自动判客观分并记入学校考试
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={() => void startExam()}
+          disabled={starting}
+          className="flex-none rounded-full bg-accent px-3.5 py-1.5 text-[11.5px] font-semibold text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          {starting ? '开考中…' : '开始答题'}
+        </button>
+      </div>
+      {data.last && (
+        <div className="mt-1.5 flex items-center gap-2 px-1">
+          <span className="min-w-0 flex-1 text-[11px] tabular-nums text-content-muted">
+            上次估分 {data.last.score}/{data.last.fullScore || '—'} ·{' '}
+            {new Date(data.last.submittedAt).toLocaleDateString('sv-SE')}
+          </span>
+          <button
+            type="button"
+            onClick={() => router.push(`/papers/exam/${data.last!.id}`)}
+            className="flex-none text-[11px] font-medium text-accent hover:underline"
+          >
+            查看估分报告 ›
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ExamHistoryCard({ slug }: { slug: string }) {
+  const router = useRouter()
+  const { data, isPending } = useQuery({
+    queryKey: queryKeys.examRecords.byPaper(slug),
+    queryFn: ({ signal }) =>
+      fetchJson<{
+        records: Array<{
+          id: string
+          examName: string
+          date: string
+          score: number
+          fullScore: number
+          rank: string | null
+          topicLoss?: Array<{ topic: string; count: number; loss: number }>
+        }>
+      }>(`/api/exam-records?slug=${encodeURIComponent(slug)}`, { signal }),
+    staleTime: 30_000,
+  })
+  const records = data?.records ?? []
+  const latestLoss = records[0]?.topicLoss ?? []
+
+  if (isPending) return <div className="study-sk h-16 rounded-[14px]" />
+
+  if (records.length === 0) {
+    return (
+      <div className="flex items-center gap-3 rounded-[14px] border-[1.5px] border-dashed border-line-strong px-4 py-3">
+        <span className="min-w-0 flex-1">
+          <span className="block text-[12.5px] font-medium text-content-secondary">还没有学校考试记录</span>
+          <span className="mt-0.5 block text-[11px] text-content-muted">考完试回来记一笔,这卷就会出现在学习台趋势里</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => router.push(`/study?recordExam=${encodeURIComponent(slug)}`)}
+          className="flex-none rounded-full bg-accent px-3.5 py-1.5 text-[11.5px] font-semibold text-accent-foreground transition-opacity hover:opacity-90"
+        >
+          记一次成绩
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-[14px] border border-line/60 bg-surface px-4 py-3">
+      <div className="flex items-baseline">
+        <span className="text-[11px] font-semibold text-content-secondary">学校考试成绩 · {records.length} 次</span>
+        <button
+          type="button"
+          onClick={() => router.push(`/study?recordExam=${encodeURIComponent(slug)}`)}
+          className="flex-none rounded-full bg-accent px-3.5 py-1.5 text-[11.5px] font-semibold text-accent-foreground transition-opacity hover:opacity-90"
+        >
+          记一次成绩
+        </button>
+      </div>
+      <div className="mt-1">
+        {records.map((r, i) => (
+          <div key={r.id} className={`flex items-center gap-3 py-1.5 ${i > 0 ? 'border-t border-line/40' : ''}`}>
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-content-primary">{r.examName}</span>
+            <span className="flex-none text-[11px] tabular-nums text-content-muted">
+              {r.date}
+              {r.rank ? ` · ${r.rank}` : ''}
+            </span>
+            <span className="flex-none text-[15px] font-bold tabular-nums text-content-primary">
+              {r.score}
+              <span className="text-[11px] font-normal text-content-muted">/{r.fullScore}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+      {latestLoss.length > 0 && (
+        <div className="mt-1 border-t border-line/40 pt-2">
+          <div className="text-[10.5px] text-content-muted">考点丢分 · 来自最近一次勾错</div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {latestLoss.map((t) => (
+              <span
+                key={t.topic}
+                className="rounded-full bg-danger/10 px-2 py-0.5 text-[10.5px] font-semibold tabular-nums text-danger"
+              >
+                {t.topic} <span className="font-normal opacity-80">×{t.count} · −{t.loss}分</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -133,6 +361,8 @@ function ViewerContent() {
   const [current, setCurrent] = useState(1)
   const [jumpOpen, setJumpOpen] = useState(false)
   const [jumpInput, setJumpInput] = useState('')
+  // 预览默认藏官方答案:先看答案再开考会把「在线做题」变成对答案
+  const [showAnswers, setShowAnswers] = useState(false)
   const [loaded, setLoaded] = useState<number[]>([])
 
   const locatePage = useMemo(() => {
@@ -278,6 +508,16 @@ function ViewerContent() {
         </div>
         <button
           type="button"
+          onClick={() => setShowAnswers((v) => !v)}
+          className="shrink-0 rounded-lg px-2 py-1.5 text-xs text-content-secondary transition-colors hover:bg-surface-subtle hover:text-content-primary"
+          aria-label={showAnswers ? '隐藏官方答案' : '显示官方答案'}
+          aria-pressed={showAnswers}
+          title={showAnswers ? '隐藏官方答案' : '显示官方答案（默认隐藏，开考前先不看）'}
+        >
+          {showAnswers ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+        <button
+          type="button"
           onClick={() => {
             setJumpInput(String(current))
             setJumpOpen((v) => !v)
@@ -333,12 +573,17 @@ function ViewerContent() {
         style={{ scrollBehavior: 'auto' }}
       >
         <div className="mx-auto flex max-w-3xl flex-col gap-4 px-2 pt-3 pb-[max(64px,var(--sab))] md:px-4 md:pb-16">
+          {/* 在线做题入口卡(进行中=继续考试;否则虚线 CTA 开考;下挂最近报告) */}
+          <ExamEntryCard slug={slug} />
+          {/* 学校考试成绩卡(空态=虚线 CTA;有记录=历次成绩+考点丢分) */}
+          <ExamHistoryCard slug={slug} />
           {(meta?.pages ?? []).map((p) => (
             <PageSection
               key={p.pageNo}
               slug={slug}
               pageNo={p.pageNo}
               locatedLabel={locatePage === p.pageNo && questionParam ? `第 ${questionParam} 题` : undefined}
+              hideAnswers={!showAnswers}
               onLoaded={onLoaded}
             />
           ))}

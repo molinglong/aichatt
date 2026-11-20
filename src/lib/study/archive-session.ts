@@ -22,9 +22,12 @@ export async function archiveStudySession(userId: string, sessionId: string): Pr
   if (!session) return null
 
   // 讲解内容拼解析:结课总结打头,后面保留每步正文(复习卡背面 = 完整回看)
+  // 「本轮讲解预算到上限」是流式收尾的 UI 提示,不属于题目解析,落库前剥掉
+  const BUDGET_HINT_RE = /\s*[（(]本轮讲解预算到上限[^）)]*[）)]\s*/g
   const stepBlocks = session.steps
-    .filter((s) => s.content.trim())
-    .map((s) => `### 第 ${s.idx + 1} 步\n\n${s.content.trim()}`)
+    .map((s) => ({ ...s, content: s.content.replace(BUDGET_HINT_RE, '').trim() }))
+    .filter((s) => s.content)
+    .map((s) => `### 第 ${s.idx + 1} 步\n\n${s.content}`)
   const analysis = [session.summary?.trim(), ...stepBlocks].filter(Boolean).join('\n\n') || null
 
   // 过程自评折算:again 越多,初始掌握度越低(下限 0.05)

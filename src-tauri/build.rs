@@ -43,6 +43,38 @@ fn main() {
             "updater_status",
             "updater_download",
             "updater_install",
+            // 监管模式(focus_lock.rs)
+            "focus_lock_start",
+            "focus_lock_status",
+            "focus_lock_stop",
+            "focus_lock_end",
+            // 桌面小鸡(pet_window.rs)
+            "pet_probe",
+            "pet_set_click_through",
+            "pet_move_window",
+            "pet_set_position",
+            "pet_home_position",
+            "pet_close",
+            "pet_show",
+            "open_main_path",
+            // 性能采样(perf.rs,仅 Windows)
+            "perf_probe",
+            "perf_history",
+            "perf_log_event",
+            // 浏览器深链带图提问(lib.rs,仅桌面)
+            "deep_link_ask_take",
+            // 课堂分栏浏览器(course_browser.rs)
+            "course_panel_show",
+            "course_panel_hide",
+            "course_panel_resize",
+            "course_navigate",
+            "course_home",
+            "course_go_back",
+            "course_go_forward",
+            "course_reload",
+            "course_get_state",
+            "course_screenshot",
+            "course_set_veiled",
         ])),
     )
     .unwrap();

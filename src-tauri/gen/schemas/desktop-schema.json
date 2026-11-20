@@ -183,10 +183,106 @@
           "markdownDescription": "Enables the close_window command without any pre-configured scope."
         },
         {
+          "description": "Enables the course_get_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-get-state",
+          "markdownDescription": "Enables the course_get_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_go_back command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-go-back",
+          "markdownDescription": "Enables the course_go_back command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_go_forward command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-go-forward",
+          "markdownDescription": "Enables the course_go_forward command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_home command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-home",
+          "markdownDescription": "Enables the course_home command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_navigate command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-navigate",
+          "markdownDescription": "Enables the course_navigate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_panel_hide command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-panel-hide",
+          "markdownDescription": "Enables the course_panel_hide command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_panel_resize command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-panel-resize",
+          "markdownDescription": "Enables the course_panel_resize command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_panel_show command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-panel-show",
+          "markdownDescription": "Enables the course_panel_show command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_reload command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-reload",
+          "markdownDescription": "Enables the course_reload command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_screenshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-screenshot",
+          "markdownDescription": "Enables the course_screenshot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the course_set_veiled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-course-set-veiled",
+          "markdownDescription": "Enables the course_set_veiled command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_buddy_window command without any pre-configured scope.",
           "type": "string",
           "const": "allow-create-buddy-window",
           "markdownDescription": "Enables the create_buddy_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the deep_link_ask_take command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-deep-link-ask-take",
+          "markdownDescription": "Enables the deep_link_ask_take command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the focus_lock_end command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-focus-lock-end",
+          "markdownDescription": "Enables the focus_lock_end command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the focus_lock_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-focus-lock-start",
+          "markdownDescription": "Enables the focus_lock_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the focus_lock_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-focus-lock-status",
+          "markdownDescription": "Enables the focus_lock_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the focus_lock_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-focus-lock-stop",
+          "markdownDescription": "Enables the focus_lock_stop command without any pre-configured scope."
         },
         {
           "description": "Enables the focus_main_window command without any pre-configured scope.",
@@ -321,6 +417,72 @@
           "markdownDescription": "Enables the move_buddy_window command without any pre-configured scope."
         },
         {
+          "description": "Enables the open_main_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-main-path",
+          "markdownDescription": "Enables the open_main_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the perf_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-perf-history",
+          "markdownDescription": "Enables the perf_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the perf_log_event command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-perf-log-event",
+          "markdownDescription": "Enables the perf_log_event command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the perf_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-perf-probe",
+          "markdownDescription": "Enables the perf_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-close",
+          "markdownDescription": "Enables the pet_close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_home_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-home-position",
+          "markdownDescription": "Enables the pet_home_position command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_move_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-move-window",
+          "markdownDescription": "Enables the pet_move_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-probe",
+          "markdownDescription": "Enables the pet_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_set_click_through command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-set-click-through",
+          "markdownDescription": "Enables the pet_set_click_through command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_set_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-set-position",
+          "markdownDescription": "Enables the pet_set_position command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_show command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-show",
+          "markdownDescription": "Enables the pet_show command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_buddy_position command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-buddy-position",
@@ -337,6 +499,18 @@
           "type": "string",
           "const": "allow-show-settings-window",
           "markdownDescription": "Enables the show_settings_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the spike_course_add command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-spike-course-add",
+          "markdownDescription": "Enables the spike_course_add command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the spike_course_remove command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-spike-course-remove",
+          "markdownDescription": "Enables the spike_course_remove command without any pre-configured scope."
         },
         {
           "description": "Enables the toggle_buddy_window command without any pre-configured scope.",
@@ -387,10 +561,106 @@
           "markdownDescription": "Denies the close_window command without any pre-configured scope."
         },
         {
+          "description": "Denies the course_get_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-get-state",
+          "markdownDescription": "Denies the course_get_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_go_back command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-go-back",
+          "markdownDescription": "Denies the course_go_back command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_go_forward command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-go-forward",
+          "markdownDescription": "Denies the course_go_forward command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_home command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-home",
+          "markdownDescription": "Denies the course_home command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_navigate command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-navigate",
+          "markdownDescription": "Denies the course_navigate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_panel_hide command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-panel-hide",
+          "markdownDescription": "Denies the course_panel_hide command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_panel_resize command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-panel-resize",
+          "markdownDescription": "Denies the course_panel_resize command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_panel_show command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-panel-show",
+          "markdownDescription": "Denies the course_panel_show command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_reload command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-reload",
+          "markdownDescription": "Denies the course_reload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_screenshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-screenshot",
+          "markdownDescription": "Denies the course_screenshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the course_set_veiled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-course-set-veiled",
+          "markdownDescription": "Denies the course_set_veiled command without any pre-configured scope."
+        },
+        {
           "description": "Denies the create_buddy_window command without any pre-configured scope.",
           "type": "string",
           "const": "deny-create-buddy-window",
           "markdownDescription": "Denies the create_buddy_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the deep_link_ask_take command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-deep-link-ask-take",
+          "markdownDescription": "Denies the deep_link_ask_take command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the focus_lock_end command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-focus-lock-end",
+          "markdownDescription": "Denies the focus_lock_end command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the focus_lock_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-focus-lock-start",
+          "markdownDescription": "Denies the focus_lock_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the focus_lock_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-focus-lock-status",
+          "markdownDescription": "Denies the focus_lock_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the focus_lock_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-focus-lock-stop",
+          "markdownDescription": "Denies the focus_lock_stop command without any pre-configured scope."
         },
         {
           "description": "Denies the focus_main_window command without any pre-configured scope.",
@@ -525,6 +795,72 @@
           "markdownDescription": "Denies the move_buddy_window command without any pre-configured scope."
         },
         {
+          "description": "Denies the open_main_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-main-path",
+          "markdownDescription": "Denies the open_main_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the perf_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-perf-history",
+          "markdownDescription": "Denies the perf_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the perf_log_event command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-perf-log-event",
+          "markdownDescription": "Denies the perf_log_event command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the perf_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-perf-probe",
+          "markdownDescription": "Denies the perf_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-close",
+          "markdownDescription": "Denies the pet_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_home_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-home-position",
+          "markdownDescription": "Denies the pet_home_position command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_move_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-move-window",
+          "markdownDescription": "Denies the pet_move_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_probe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-probe",
+          "markdownDescription": "Denies the pet_probe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_set_click_through command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-set-click-through",
+          "markdownDescription": "Denies the pet_set_click_through command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_set_position command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-set-position",
+          "markdownDescription": "Denies the pet_set_position command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_show command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-show",
+          "markdownDescription": "Denies the pet_show command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_buddy_position command without any pre-configured scope.",
           "type": "string",
           "const": "deny-set-buddy-position",
@@ -541,6 +877,18 @@
           "type": "string",
           "const": "deny-show-settings-window",
           "markdownDescription": "Denies the show_settings_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the spike_course_add command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-spike-course-add",
+          "markdownDescription": "Denies the spike_course_add command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the spike_course_remove command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-spike-course-remove",
+          "markdownDescription": "Denies the spike_course_remove command without any pre-configured scope."
         },
         {
           "description": "Denies the toggle_buddy_window command without any pre-configured scope.",
@@ -2623,6 +2971,60 @@
           "type": "string",
           "const": "core:window:deny-unminimize",
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
+        },
+        {
+          "description": "Allows reading the opened deep link via the get_current command\n#### This default permission set includes:\n\n- `allow-get-current`",
+          "type": "string",
+          "const": "deep-link:default",
+          "markdownDescription": "Allows reading the opened deep link via the get_current command\n#### This default permission set includes:\n\n- `allow-get-current`"
+        },
+        {
+          "description": "Enables the get_current command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:allow-get-current",
+          "markdownDescription": "Enables the get_current command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_registered command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:allow-is-registered",
+          "markdownDescription": "Enables the is_registered command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:allow-register",
+          "markdownDescription": "Enables the register command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unregister command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:allow-unregister",
+          "markdownDescription": "Enables the unregister command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_current command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:deny-get-current",
+          "markdownDescription": "Denies the get_current command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_registered command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:deny-is-registered",
+          "markdownDescription": "Denies the is_registered command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:deny-register",
+          "markdownDescription": "Denies the register command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unregister command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:deny-unregister",
+          "markdownDescription": "Denies the unregister command without any pre-configured scope."
         },
         {
           "description": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-message`\n- `allow-save`\n- `allow-open`",

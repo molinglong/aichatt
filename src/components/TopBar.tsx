@@ -1,6 +1,6 @@
 'use client'
 
-import { Menu, ArrowLeft, FileCode2, Keyboard, MessageSquarePlus, MessagesSquare, FolderTree, Search, Settings as SettingsIcon } from 'lucide-react'
+import { Menu, ArrowLeft, FileCode2, Keyboard, MessageSquarePlus, MessagesSquare, FolderTree, Search, Settings as SettingsIcon, CalendarDays } from 'lucide-react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useChatStore } from '@/store/chat-store'
 import { useEffect, useState, useCallback } from 'react'
@@ -8,11 +8,17 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useIsTauri } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
+import { FocusLockButton } from './FocusLock'
+import { useFocusLock, bumpFocusIntercept } from '@/lib/focus-lock-store'
+import { EveningQuiz } from './EveningQuiz'
+import { SurpriseQuiz } from './SurpriseQuiz'
+import { CourseBrowserButton } from './CourseBrowser'
 import { prefetchTabData as prefetchTabDataShared } from '@/lib/query/prefetchTab'
 // 「对话资料」面板占位宽:让位量与 ChatPanel/OutlineSidebar 共用同一组常量(单一事实源)
 import { INFO_PANEL_WIDTH, INFO_TAB_WIDTH } from './chat/InfoAsidePanel'
 import { useIsComputerMode } from '@/hooks/useIsComputerMode'
 import { useUiStyle } from '@/hooks/useUiStyle'
+import { openTodayPlan } from './plan/TodayPlanDialog'
 import type { UiStyle } from '@/lib/theme'
 
 /**
@@ -27,6 +33,8 @@ function TopbarShell(props: {
   title: string
   /** 页面专属 logo(如学习模式的 Study 手写体);设置时覆盖 title */
   logo?: React.ReactNode
+  /** 最左插槽(2026-11-19):监管模式徽章/入口固定在顶栏最左,标题随之随流让位 */
+  lead?: React.ReactNode
   offset: string | undefined
   dragProps: Record<string, unknown>
   onSearch: () => void
@@ -34,7 +42,13 @@ function TopbarShell(props: {
 }) {
   if (props.uiStyle === 'google') {
     return (
-      <div className="topbar-google hidden h-14 flex-none relative z-40 items-center gap-5 px-5 md:flex">
+      // dragProps 挂容器(挂法1:属性+CSS drag):整条顶栏都是拖窗区,搜索框/按钮
+      // 由 globals.css 的 [data-tauri-drag-region] 隔离规则自动 no-drag;
+      // 原先挂在右侧按钮簇上,簇内只有 4px 缝隙可拖 = 顶栏形同拖不动
+      <div
+        className="topbar-google hidden h-14 flex-none relative z-40 items-center gap-5 px-5 md:flex"
+        {...props.dragProps}
+      >
         <span className="w-[200px] shrink-0 truncate text-[19px] font-normal tracking-[-0.01em] text-content-primary select-none">
           {props.logo ?? props.title}
         </span>
@@ -51,7 +65,7 @@ function TopbarShell(props: {
             Ctrl K
           </kbd>
         </button>
-        <div className="topbar-actions ml-auto flex items-center gap-1" {...props.dragProps}>
+        <div className="topbar-actions ml-auto flex items-center gap-1">
           {props.children}
         </div>
       </div>
@@ -65,10 +79,24 @@ function TopbarShell(props: {
         )}
         style={{ paddingRight: props.offset } as React.CSSProperties}
       >
-        {/* 左:标题(纯展示,吃容器的 pointer-events-none,不挡消息区点击) */}
-        <span className="absolute left-4 top-0 h-full flex items-center text-sm font-medium text-content-secondary truncate max-w-[38%] select-none">
-          {props.logo ?? props.title}
-        </span>
+        {/* 左:lead 插槽(监管徽章)+ 标题(2026-11-19 徽章移最左:标题由绝对定位
+               left-4 改随流排在 lead 之后,两者永不重叠;拖拽区随组,span 自挂) */}
+        <div className="h-full flex items-center gap-2 min-w-0 max-w-[46%] pointer-events-auto">
+          {props.lead}
+          <span
+            className="min-w-0 flex-1 truncate text-sm font-medium text-content-secondary select-none"
+            {...props.dragProps}
+          >
+            {props.logo ?? props.title}
+          </span>
+        </div>
+        {/* 中部空白拖动带(流内 flex-1,标题右侧到按钮簇左侧):此前的空白区完全
+            pointer-events-none 穿透 —— 顶栏 95% 面积抓下去无响应,仅 42px 标题
+            可拖,形同禁拖。2026-11-17 CDP 实测定性:drag.js 注入与 CSS app-region
+            两条拖动链路均健康,死的只是覆盖面。挂 dragProps 后脚本路径(bare)
+            与 WebView2 原生 NC 区(CSS drag)双路生效;空白矩形无背景,视觉零变化;
+            标题/按钮 DOM 靠后绘制,命中优先级更高,不受带遮挡。 */}
+        <div className="h-full flex-1 pointer-events-auto" {...props.dragProps} />
         <div
           className="topbar-actions flex items-center gap-0.5 pointer-events-auto"
           {...props.dragProps}
@@ -86,6 +114,7 @@ function TopbarShell(props: {
       style={{ right: props.offset } as React.CSSProperties}
       {...props.dragProps}
     >
+      {props.lead}
       {props.children}
     </div>
   )
@@ -114,6 +143,9 @@ const HOTKEY_HINTS: ReadonlyArray<{ keys: string; desc: string }> = [
  */
 export function TopBar() {
   const inTauri = useIsTauri()
+  // 监管模式锁内:侧栏整条隐藏,顶栏开关同步停用(点击 toast 计拦截,不走 toggle ——
+  // 否则锁内翻位、解锁瞬间侧栏意外弹出/收起)
+  const { locked: focusLocked } = useFocusLock()
   // 从 store 读 currentConversationId:克隆分支时用 —— 用 selector 而非全量订阅(zustand v5 下避免过度渲染)
   const conversationTitle = useChatStore((s) => s.conversationTitle)
   const toggleSidebar = useChatStore((s) => s.toggleSidebar)
@@ -275,24 +307,7 @@ export function TopBar() {
 
   return (
     <>
-      {/* ── ≥md 窗口拖动带(仅客户端):顶栏带下沉后内容区顶部没有抓手,
-             仅侧栏头部可拖窗,窗口几乎"钉"在原位。这里补一条与浮簇同层的
-             透明拖动带(内容区顶部 12px),把「抓顶部空白即可移动窗口」的
-             直觉还回来;右侧浮簇 z-40 压其上,按钮不受影响。
-             12px 高是安全值:各 tab 顶部栏内容起于 y=8~12px,不遮挡可点区域;
-             聊天滚动区顶部另有 48px 留白带(md:pt-12),叠加后左中区域更好抓。
-             空 div 无子元素:属性取默认(bare)语义 —— 命中即拖;
-             双击由 Tauri 内置脚本转 maximize(再挂 onDoubleClick 会二次切换)。 */}
-      {inTauri && (
-        <div
-          aria-hidden
-          className="hidden md:block absolute inset-x-0 top-0 z-30 h-3"
-          data-tauri-drag-region=""
-          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-        />
-      )}
-
-      {/* ── Google 2020 移动顶栏: 固定 56px 白底 + 分割线(替代浮动圆钮) */}
+      {/* Google 2020 移动顶栏: 固定 56px 白底 + 分割线(替代浮动圆钮) */}
       {uiStyle === 'google' && (
         <header
           className="flex shrink-0 items-center gap-1 border-b border-line bg-surface px-2 md:hidden"
@@ -351,10 +366,21 @@ export function TopBar() {
       >
         <div className="flex items-center gap-0.5 min-w-0 flex-1">
           <button
-            onClick={toggleSidebar}
-            className="shrink-0 p-2 -ml-1 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-colors active:scale-95 touch-manipulation"
+            onClick={() => {
+              if (focusLocked) {
+                bumpFocusIntercept()
+                toast.warning('监管模式锁定中 · 侧边栏不可用，到点自动恢复', { title: '监管模式' })
+                return
+              }
+              toggleSidebar()
+            }}
+            className={cn(
+              'shrink-0 p-2 -ml-1 rounded-md text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition-colors active:scale-95 touch-manipulation',
+              focusLocked && 'opacity-40 hover:text-content-secondary hover:bg-transparent'
+            )}
             aria-label="打开侧边栏"
-            title="打开侧边栏"
+            aria-disabled={focusLocked || undefined}
+            title={focusLocked ? '监管模式锁定中 · 侧边栏不可用' : '打开侧边栏'}
             style={{ WebkitTapHighlightColor: 'transparent' }}
           >
             <Menu className="w-4 h-4" />
@@ -425,6 +451,7 @@ export function TopBar() {
         uiStyle={uiStyle}
         title={displayTitle}
         logo={studyLogo}
+        lead={<FocusLockButton />}
         offset={actionOffset}
         dragProps={dragProps}
         onSearch={() => setSearchDialogOpen(true)}
@@ -498,6 +525,23 @@ export function TopBar() {
             </>
           )}
         </div>
+        {/* 监管模式(仅 Tauri 桌面):2026-11-19 移到顶栏最左 lead 插槽(见 TopbarShell);锁定中变为倒计时徽章 */}
+        {/* 今晚测验(桌面端):打印监察 → 工作日 22:00 定时/打开补触发 → 监管锁定+弹卡测验 */}
+        <EveningQuiz />
+        {/* 突击测试(桌面端):学习台「突击一测」事件/ ?surpriseQuiz=demo 触发 → 监考黑场概念测验 */}
+        <SurpriseQuiz />
+        {/* 课堂分栏浏览器(仅 Tauri 桌面):方案 B 玻璃条,面板壳 portal 到 body */}
+        <CourseBrowserButton />
+        {/* 今日计划:原 plan 应用并入后的全局入口(弹窗本体挂 app layout) */}
+        <button
+          onClick={openTodayPlan}
+          className="shrink-0 inline-flex items-center justify-center p-1.5 rounded-full text-content-secondary hover:text-content-primary hover:bg-surface-subtle transition duration-150 active:scale-95 touch-manipulation"
+          aria-label="今日计划"
+          title="今日计划"
+          style={{ WebkitTapHighlightColor: 'transparent' }}
+        >
+          <CalendarDays className="w-3.5 h-3.5" />
+        </button>
         {/* 设置入口(与侧栏用户行齿轮同一个弹窗;临时模式下为精简版) */}
         <button
           onClick={() => setSettingsOpen(true)}

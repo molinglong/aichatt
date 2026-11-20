@@ -1,13 +1,43 @@
 use serde::{Serialize, Deserialize};
-use tauri::{Manager, WebviewWindow, WebviewUrl, PhysicalPosition};
+use tauri::{Emitter, Manager, WebviewUrl, PhysicalPosition};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// #[macro_use]: tauri 命令函数为私有 fn,生成的 __cmd__ 宏需经 macro_use 导入 textual
+// 作用域,generate_handler 才能展开(glob use 只带 pub 项,带不出私有宏)
 #[cfg(desktop)]
+#[macro_use]
 mod window_cmds;
 #[cfg(desktop)]
 use window_cmds::*;
+
+// 监管模式:窗口硬锁 + 落盘续锁 + 破戒留痕(方案 design/focus-lock-plan.md)
+#[cfg(desktop)]
+#[macro_use]
+mod focus_lock;
+#[cfg(desktop)]
+use focus_lock::*;
+
+// 课堂分栏浏览器:multiwebview 分栏,D12 定案(§3.2);桌面专属
+#[cfg(desktop)]
+mod course_browser;
+#[cfg(desktop)]
+use course_browser::*;
+
+// 桌面小鸡:任务栏上沿漫步宠物窗(透明置顶 + 动态点击穿透),加载 /pet/ 路由
+#[cfg(desktop)]
+#[macro_use]
+mod pet_window;
+#[cfg(desktop)]
+use pet_window::*;
+
+// 性能采样:CPU / 内存 / GPU,驱动桌面小鸡的过热档位(仅 Windows 有实现)
+#[cfg(target_os = "windows")]
+#[macro_use]
+mod perf;
+#[cfg(target_os = "windows")]
+use perf::*;
 
 // 应用内自更新(仅安卓):检查 VPS 清单 → 下载 APK → FileProvider 唤起系统安装器
 #[cfg(target_os = "android")]
@@ -1143,6 +1173,31 @@ fn lf_exec(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// ── 浏览器深链(桌面):aichatt://ask?img=…&text=…&server=… 带图提问 ──
+// 链路:扩展截图→/api/upload→深链(只带 /uploads 路径,图不过 URL)→本文件解析→
+// emit "deeplink://ask" + 落 pending 状态。冷启动时 webview 未就绪,emit 会丢,
+// 所以前端启动后用 deep_link_ask_take 补领;热唤起走事件实时到。
+
+#[cfg(desktop)]
+#[derive(Debug, Clone, Serialize, Default)]
+struct DeepLinkAsk {
+    img: Option<String>,
+    text: Option<String>,
+    server: Option<String>,
+    id: Option<String>,
+    kind: Option<String>,
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct DeepLinkPending(std::sync::Mutex<Option<DeepLinkAsk>>);
+
+#[cfg(desktop)]
+#[tauri::command]
+fn deep_link_ask_take(state: tauri::State<'_, DeepLinkPending>) -> Option<DeepLinkAsk> {
+    state.0.lock().unwrap().take()
+}
+
 pub fn run() {
     let builder = tauri::Builder::default()
         // 本地文件能力:系统目录选择对话框(用于用户授权工作区根)
@@ -1151,6 +1206,9 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         // 触感反馈:手机端长按弹菜单/选中菜单项时震动(前端经 @tauri-apps/plugin-haptics 调用)
         .plugin(tauri_plugin_haptics::init())
+        // 浏览器深链:aichatt://ask 拉起客户端带图提问(扩展截图→服务器中转→客户端预填)。
+        // 必须注册插件本体,setup 里的 app.deep_link() 才能拿到 state,否则 panic。
+        .plugin(tauri_plugin_deep_link::init())
         // 搭子窗口(悬浮球)暂时禁用:安卓适配期移动端不支持多窗口,桌面端一并下线。
         // 恢复:取消下方注释块,并在 tauri.conf.json 的 app.windows 中加回 buddy 窗口配置。
         .setup(|app| {
@@ -1191,14 +1249,123 @@ pub fn run() {
             //     }
             // }
 
-            // 监听主窗口关闭 → 关闭搭子
-            if let Some(main) = app.get_webview_window("main") {
+            // 监管模式:锁文件存在(上次异常中断)则自动续锁剩余时间
+            #[cfg(desktop)]
+            focus_lock::fl_boot_restore(app.handle());
+
+            // 课堂分栏浏览器:boot 期把主 webview 降级为 child(双 child 架构,
+            // 解决 WebView2 sibling z 序互盖)+ 预创建 course webview
+            // (about:blank + hide)。运行中动态 add_child 死锁 → 只能 boot 期做
+            // (§6 2.0 spike 定案)
+            #[cfg(desktop)]
+            course_browser::cb_boot(app.handle());
+
+            // 桌面小鸡:boot 期创建任务栏漫步窗(收起 = 销毁,下次启动回窝)
+            #[cfg(desktop)]
+            if let Err(e) = pet_window::pet_ensure_window(app.handle()) {
+                eprintln!("pet window create failed: {}", e);
+            }
+
+            // 浏览器深链:注册 aichatt:// 协议(HKCU,免管理员;每次启动都写,保证装完即生效)
+            // 并把 ask 深链转发给前端(事件实时到 + pending 兜底冷启动)
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register_all() {
+                    eprintln!("[deeplink] register_all failed: {}", e);
+                }
+                app.manage(DeepLinkPending::default());
+                let handle = app.handle().clone();
+                // ask 深链 → pending + 前端事件;热/冷两条路径共用
+                let forward_ask = move |url: &tauri::Url| {
+                    // 只认 ask 动作;非特殊 scheme 下 host/path 两种形态都可能
+                    let is_ask = url.host_str() == Some("ask")
+                        || url.path().trim_start_matches('/') == "ask";
+                    if !is_ask {
+                        return;
+                    }
+                    let mut ask = DeepLinkAsk::default();
+                    for (k, v) in url.query_pairs() {
+                        match &*k {
+                            "img" => ask.img = Some(v.into_owned()),
+                            "text" => ask.text = Some(v.into_owned()),
+                            "server" => ask.server = Some(v.into_owned()),
+                            "id" => ask.id = Some(v.into_owned()),
+                            "kind" => ask.kind = Some(v.into_owned()),
+                            _ => {}
+                        }
+                    }
+                    eprintln!(
+                        "[deeplink] ask: img={:?} text_len={:?} server={:?}",
+                        ask.img,
+                        ask.text.as_ref().map(|t| t.len()),
+                        ask.server
+                    );
+                    let pending = handle.state::<DeepLinkPending>();
+                    *pending.0.lock().unwrap() = Some(ask.clone());
+                    let _ = handle.emit("deeplink://ask", ask);
+                };
+                // 热唤起:运行中再次启动 → single-instance 转发 argv → 插件 emit
+                let fa_live = forward_ask.clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        fa_live(&url);
+                    }
+                });
+                // 冷启动补领:argv 在插件 initialize 时已解析并 emit,而 emit 早于本 setup
+                // 的 on_open_url 注册(无重放),只能从 get_current 取回缓存的 URL 重放。
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for url in urls {
+                        forward_ask(&url);
+                    }
+                }
+            }
+
+            // 主窗口事件:锁定期拦截关闭(弹剩余时间提示)/失焦抢回;未锁时保持关搭子的原逻辑
+            if let Some(main) = app.get_window("main") {
+                // Win11 窗口圆角钉 ROUND:undecorated 窗口系统默认策略不给圆角,
+                // 全屏来回切换后也不自动恢复 —— 启动时钉一次,解锁还原后再钉一次
+                #[cfg(desktop)]
+                focus_lock::fl_apply_corner_round(&main);
                 let app_handle = app.handle().clone();
                 main.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { .. } = event {
-                        if let Some(buddy) = app_handle.get_webview_window("buddy") {
-                            let _ = buddy.close();
+                    match event {
+                        tauri::WindowEvent::CloseRequested { api, .. } => {
+                            #[cfg(desktop)]
+                            if focus_lock::fl_is_locked() {
+                                api.prevent_close();
+                                focus_lock::fl_emit_blocked(&app_handle);
+                                return;
+                            }
+                            if let Some(buddy) = app_handle.get_webview_window("buddy") {
+                                let _ = buddy.close();
+                            }
+                            if let Some(pet) = app_handle.get_webview_window(pet_window::PET_LABEL) {
+                                let _ = pet.close();
+                            }
                         }
+                        #[cfg(desktop)]
+                        tauri::WindowEvent::Focused(false) => {
+                            focus_lock::fl_handle_focus_lost(&app_handle);
+                        }
+                        // 锁定期主窗口每次回到前台(失焦抢回的 set_focus / 点击锁定
+                        // 画面激活 / 最小化兜底)都会把自己提到 topmost band 顶部 →
+                        // 盖住陪学小鸡;每次提顶后把小鸡重新提到锁定画面之上
+                        // (D19 全开放口径的可见性保障,与 fl_force_fullscreen 同法)
+                        #[cfg(desktop)]
+                        tauri::WindowEvent::Focused(true) => {
+                            if focus_lock::fl_is_locked() {
+                                pet_window::pet_raise_for_lock(&app_handle);
+                            }
+                        }
+                        // 监管模式兜底:锁定期窗口被拖离全屏(顶栏拖动/Alt+Space 系统菜单)强制拉回
+                        #[cfg(desktop)]
+                        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                            focus_lock::fl_force_fullscreen(&app_handle);
+                            // 课程分栏:child webview 不自动跟随窗口尺寸,按 split 重算 bounds
+                            course_browser::cb_on_resize(&app_handle);
+                        }
+                        _ => {}
                     }
                 });
             }
@@ -1210,7 +1377,7 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
                 let _ = window.set_focus();
@@ -1247,6 +1414,33 @@ pub fn run() {
             lf_overview,
             lf_search,
             lf_read_full_file,
+            focus_lock_start,
+            focus_lock_status,
+            focus_lock_stop,
+            focus_lock_end,
+            course_panel_show,
+            course_panel_hide,
+            course_panel_resize,
+            course_navigate,
+            course_home,
+            course_go_back,
+            course_go_forward,
+            course_reload,
+            course_get_state,
+            course_screenshot,
+            course_set_veiled,
+            pet_probe,
+            pet_set_click_through,
+            pet_move_window,
+            pet_set_position,
+            pet_home_position,
+            pet_close,
+            pet_show,
+            open_main_path,
+            perf_probe,
+            perf_history,
+            perf_log_event,
+            deep_link_ask_take,
         ]);
 
     // 安卓壳:本地文件桥命令 + 应用内自更新,桌面窗口控制不参与编译

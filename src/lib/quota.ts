@@ -53,9 +53,15 @@ export interface QuotaCheckResult {
  * 管理员豁免个人日限（role 按 DB 实时值，JWT 里的可能过期失真）——池闸照卡，
  * 模型级 capTokens 也照卡（免费额度纪律对管理员同样成立）；不返回 baseLimit，
  * 结算处即不会触发附加余额扣减。
+ * 一日卡（QuotaDayPass，opts.modelId 供 scope 匹配）与 admin 同口径：仅免个人
+ * 日限，池闸与模型 cap 照卡；scope 非空时仅名单内模型享受。
  * 池行不存在（迁移未跑）时放行——闸门故障不能阻塞业务主链路。
  */
-export async function checkQuota(userId: string, isEphemeral: boolean): Promise<QuotaCheckResult> {
+export async function checkQuota(
+  userId: string,
+  isEphemeral: boolean,
+  opts?: { modelId?: string }
+): Promise<QuotaCheckResult> {
   const pool = await prisma.quotaPool.findUnique({ where: { id: POOL_ID } })
   if (!pool) return { ok: true }
 
@@ -78,6 +84,25 @@ export async function checkQuota(userId: string, isEphemeral: boolean): Promise<
     select: { role: true },
   })
   if (user?.role === "admin") return { ok: true }
+
+  // 一日卡(QuotaDayPass):命中当天即豁免个人日限,且不返回 baseLimit——结算处
+  // 不会触发附加余额扣减,与 admin 豁免同口径。scope 逗号分隔门面模型 id,
+  // 空 = 不限模型;非空时仅名单内模型享受(未传 modelId 从严视为不在名单)。
+  // 查表失败(表未建等)按无卡处理,不阻塞主链路。
+  try {
+    const pass = await prisma.quotaDayPass.findUnique({
+      where: { userId_dayKey: { userId, dayKey: today } },
+      select: { scope: true },
+    })
+    if (pass) {
+      const scope = pass.scope.split(",").map((s) => s.trim()).filter(Boolean)
+      if (!scope.length || (opts?.modelId && scope.includes(opts.modelId))) {
+        return { ok: true }
+      }
+    }
+  } catch (err) {
+    console.error("[quota] day pass lookup failed, treat as no pass:", err)
+  }
 
   const limit = isEphemeral ? pool.ephemeralPerUserDailyTokens : pool.perUserDailyTokens
   const used = await sumUserDayConsumed(userId, today)

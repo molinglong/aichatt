@@ -16,6 +16,7 @@ import { ChevronLeft, FileText } from 'lucide-react'
 import { AuthErrorBoundary } from '@/components/AuthErrorBoundary'
 import { ClientOnly } from '@/components/ClientOnly'
 import { fetchJson } from '@/lib/query/fetcher'
+import { chickPlay } from '@/lib/chick/reactions'
 import { queryKeys } from '@/lib/query/keys'
 import { toast } from '@/lib/toast'
 import ComposeGenerating from '@/components/papers/ComposeGenerating'
@@ -84,6 +85,8 @@ function GeneratingContent() {
       window.sessionStorage.removeItem('composed-inflight')
       window.sessionStorage.removeItem('composed-form-state')
       void qc.invalidateQueries({ queryKey: queryKeys.papers.composedList() })
+      // 小鸡:卷组好了(就算已离开等待页,宿主在 layout,别的页面照样弹)
+      chickPlay('paperReady')
       if (!mountedRef.current) return
       const shortageNote = (res.shortages ?? [])
         .map((s) =>

@@ -1,0 +1,583 @@
+/* ═══ 学习台首页 v3「小鸡书桌」皮肤(2026-11-18 第二轮整页替换,挑稿 design/preview-study-home-replace.html 新案二)═══
+   蜡笔绘本同源(监管模式 F 案):小鸡报日程,数据变贴纸。手绘感 = 虚线描边 + 歪圆角 + 和纸胶带,纯 CSS/SVG,不引 Rough.js。
+   颜色一律 token(rgb(var(--token) / α));--note-* 便利贴板为 globals 已有定稿,明暗自动反转。
+   气泡/胶带的歪圆角与微旋转是场景皮肤的有意笔触(同 FocusLock 皮肤段口径),不外溢到其它界面。
+   卡体走全局 glass-blur + bg-surface-glass(TSX 侧挂),blur/双环随 data-style 三维度自动生效。 */
+
+/* ── 场景:小鸡 + 台词气泡 + ＋小组件 ── */
+.scene {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 8px 2px 6px;
+  position: relative;
+}
+.chick {
+  flex: none;
+  line-height: 0;
+  margin-top: 4px;
+}
+.bubble {
+  position: relative;
+  max-width: 560px;
+  background: rgb(var(--note-paper));
+  color: rgb(var(--note-ink));
+  border: 1.8px solid rgb(var(--note-edge));
+  /* 歪圆角:手绘笔触,四角不对称 */
+  border-radius: 16px 18px 20px 14px / 18px 14px 20px 16px;
+  padding: 13px 16px 10px;
+  min-width: 0;
+}
+.bubbleMain {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.bubbleMain b {
+  font-size: 24px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.bubbleSub {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: rgb(var(--note-sub));
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.subLink {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: rgb(var(--note-ink));
+  text-decoration: underline dashed rgb(var(--note-sub));
+  text-underline-offset: 3px;
+}
+.subLink:hover {
+  color: rgb(var(--accent));
+}
+.bubbleTail {
+  position: absolute;
+  left: -13px;
+  bottom: -14px;
+  width: 34px;
+  height: 22px;
+}
+.addWrap {
+  position: absolute;
+  top: 6px;
+  right: 0;
+}
+.addBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  cursor: pointer;
+  border: 1.6px dashed rgb(var(--note-edge));
+  border-radius: 999px;
+  background: rgb(var(--surface-glass));
+  color: rgb(var(--content-secondary));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.addBtn:hover {
+  color: rgb(var(--accent));
+  border-color: rgb(var(--accent));
+}
+
+/* ── 小组件挑选弹层(真浮层:可 border+shadow,非 bigsur 无 blur) ── */
+.pickerWrap {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+}
+.picker {
+  width: 264px;
+  padding: 8px;
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--line));
+  border-radius: max(10px, calc(var(--radius-card) - 4px));
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+}
+.pkTitle {
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(var(--content-muted));
+}
+.pkRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: rgb(var(--content-primary));
+}
+.pkRow:hover {
+  background: rgb(var(--surface-subtle) / 0.7);
+}
+.pkRow input {
+  accent-color: rgb(var(--accent));
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.pkMeta {
+  margin-left: auto;
+  font-size: 11px;
+  color: rgb(var(--content-muted));
+}
+
+/* ── 数据贴纸条(auto-fit:可见几张占几列,勾掉即回流) ── */
+.strip {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(min(168px, 100%), 1fr));
+}
+
+/* ── 贴纸通用:虚线描边 + 顶部和纸胶带 ── */
+.sticker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+  padding: 16px 14px 13px;
+  background: rgb(var(--surface-glass));
+  border: 2px dashed rgb(var(--note-edge));
+  border-radius: var(--radius-card);
+  font: inherit;
+  color: inherit;
+  min-width: 0;
+  transition: transform var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.sticker::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 62px;
+  height: 16px;
+  transform: translateX(-50%) rotate(-2.5deg);
+  background: rgb(var(--note-tape) / 0.85);
+  border-radius: 2px;
+}
+/* 悬停摆正 + 抬起(压过 tilt 微旋转,特异性 0,2,0 > 0,1,0)。
+   描边不跟 accent(2026-11-18 用户「悬停还是蓝色,改」):蜡笔皮肤里系统蓝是外来色,
+   悬停改压 note-ink 同族深线 = 蜡笔重描一笔,抬手反馈靠摆正+上浮承担 */
+.sticker:hover {
+  transform: translateY(-2px);
+  border-color: rgb(var(--note-ink) / 0.45);
+  z-index: 1;
+}
+/* 微歪斜档(tilt 类供按格分配,悬停时被 .sticker:hover 的 transform 覆盖) */
+.tiltA { transform: rotate(-1.2deg); }
+.tiltB { transform: rotate(0.9deg); }
+.tiltC { transform: rotate(-0.6deg); }
+.tiltD { transform: rotate(1deg); }
+.tiltE { transform: rotate(-0.8deg); }
+
+/* ── 学新题输入框(胶带便签):又一张贴纸 —— 横贯虚线卡 + 胶带 + 微歪,
+   悬停摆正、聚焦重描(压 note-ink 同族深线,同 .sticker:hover 口径不引系统蓝) ── */
+.newqNote {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* 带附件时附件行整行换行置顶(flex-basis 100%),输入行保持单行 */
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 26px;
+  padding: 13px 18px;
+  background: rgb(var(--surface-glass));
+  border: 2px dashed rgb(var(--note-edge));
+  border-radius: var(--radius-card);
+  transform: rotate(-0.55deg);
+  transition: transform var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease);
+}
+.newqNote::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  width: 62px;
+  height: 16px;
+  transform: translateX(-50%) rotate(-2.5deg);
+  background: rgb(var(--note-tape) / 0.85);
+  border-radius: 2px;
+}
+.newqNote:hover {
+  transform: rotate(-0.55deg) translateY(-2px);
+}
+.newqNote:focus-within {
+  transform: none;
+  border-color: rgb(var(--note-ink) / 0.45);
+  box-shadow: 0 3px 14px rgb(0 0 0 / 0.07);
+}
+.newqLead {
+  display: inline-flex;
+  color: rgb(var(--accent));
+  flex: none;
+}
+.newqLead svg {
+  width: 17px;
+  height: 17px;
+}
+.newqNote input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  /* 16px 锁:防 iOS 聚焦自动缩放(全局口径,桌面同值) */
+  font-size: 16px;
+  font-weight: 500;
+  color: rgb(var(--content-primary));
+  padding: 0;
+}
+.newqNote input::placeholder {
+  color: rgb(var(--content-muted));
+  font-weight: 400;
+}
+.newqKey {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border: 1.6px dashed rgb(var(--note-edge));
+  border-radius: 999px;
+  background: rgb(var(--note-paper));
+  color: rgb(var(--note-ink));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.newqKey kbd {
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  border: 1.2px solid rgb(var(--note-ink) / 0.5);
+  border-radius: 5px;
+  padding: 0 5px;
+  line-height: 1.5;
+}
+.newqKeyOff {
+  opacity: 0.38;
+  cursor: default;
+}
+.newqKey:not(.newqKeyOff):hover {
+  transform: translateY(-1px);
+  border-color: rgb(var(--note-ink) / 0.55);
+}
+
+/* ── 问答便签工具钮 + 附件缩略图(2026-11-19 课堂截图提问第③入口 + 附件上传)──
+   ghost 圆钮与聊天输入框 iconBtnBase 同语义,蜡笔化:无边透明底 + 悬停轻垫 */
+.newqTool {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgb(var(--content-muted));
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
+}
+.newqTool:hover {
+  background: rgb(var(--content-secondary) / 0.12);
+  color: rgb(var(--content-primary));
+  transform: translateY(-1px);
+}
+.newqTool:active {
+  transform: scale(0.94);
+}
+.newqTool:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+.newqAtts {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.newqAtt {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border: 1.6px dashed rgb(var(--note-edge));
+  border-radius: 10px;
+  background: rgb(var(--note-paper));
+  overflow: hidden;
+}
+.newqAttImg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.newqAttFile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: rgb(var(--content-secondary));
+}
+.newqAttX {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(var(--note-ink) / 0.72);
+  color: rgb(var(--note-paper));
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.newqAttUp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1.6px dashed rgb(var(--note-edge));
+  border-radius: 999px;
+  background: rgb(var(--note-paper) / 0.6);
+  font-size: 11px;
+  color: rgb(var(--content-secondary));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stkHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgb(var(--content-secondary));
+}
+.stkIcon {
+  display: inline-flex;
+  color: rgb(var(--accent));
+  flex: none;
+}
+.stkBig {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.05;
+  color: rgb(var(--content-primary));
+  font-variant-numeric: tabular-nums;
+}
+.stkBig i {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--content-muted));
+  margin-left: 2px;
+}
+/* 主贴纸特大号(独立类,避免与 Tailwind 同特异性竞态) */
+.stkBigXL {
+  font-size: 40px;
+}
+.stkSub {
+  font-size: 11.5px;
+  color: rgb(var(--content-muted));
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.stkGo {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: rgb(var(--accent));
+}
+
+/* ── 主贴纸行:今日复习(便利贴黄)+ 侧列(背词/继续学习) ── */
+.mainRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 22px;
+}
+.sideCol {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sideCol > * {
+  flex: 1;
+}
+.stickerMain {
+  background: rgb(var(--note-paper));
+  color: rgb(var(--note-ink));
+  border-color: rgb(var(--note-edge));
+}
+.stickerMain .stkHead { color: rgb(var(--note-sub)); }
+.stickerMain .stkBig { color: rgb(var(--note-ink)); }
+.stickerMain .stkBig i { color: rgb(var(--note-sub)); }
+.stickerMain .stkSub { color: rgb(var(--note-sub)); }
+.stickerMain .stkLink { color: rgb(var(--note-ink)); }
+.stkMainBtn {
+  margin-top: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 700;
+  /* 2026-11-18 用户「不要暗色,要亮色」:深锌灰 accent 换蜡笔家族亮黄 + 暖墨字
+     (.fl-course-btn 同款配方,双态恒定);不用 note-ink —— 它随明暗反转,深色态会翻成奶油字压不住黄底 */
+  background: var(--fl-crayon);
+  color: var(--fl-ink);
+}
+/* 主贴纸底部掌握度行(填住侧列双贴纸拉伸出的空档,数据真值) */
+.stkFoot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding-top: 9px;
+  border-top: 1px dashed rgb(var(--note-edge));
+  font-size: 11.5px;
+  color: rgb(var(--note-sub));
+  font-variant-numeric: tabular-nums;
+}
+.stkFoot + .stkMainBtn {
+  margin-top: 10px;
+}
+.stkLink {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: rgb(var(--accent));
+  text-align: center;
+}
+.stkLink:hover { opacity: 0.8; }
+
+/* ── 入口贴纸行 ── */
+.entryRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+.miniStk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  background: rgb(var(--surface-glass));
+  border: 1.6px dashed rgb(var(--line-strong));
+  border-radius: 999px;
+  color: rgb(var(--content-secondary));
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: color var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease);
+}
+.miniStk:hover {
+  color: rgb(var(--accent));
+  border-color: rgb(var(--accent));
+}
+.miniStkOn {
+  color: rgb(var(--accent));
+  border-color: rgb(var(--accent) / 0.5);
+  border-style: solid;
+  background: rgb(var(--accent-soft));
+}
+
+/* ── 打卡周点(streakDays 可推导:过去 N 天必在连击内,今日恒为空心不冒认) ── */
+.dots {
+  display: inline-flex;
+  gap: 4px;
+}
+.dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgb(var(--surface-subtle));
+}
+.dots span.done {
+  background: rgb(var(--accent));
+}
+.dots span.today {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px rgb(var(--accent));
+}
+
+/* ── 响应式 ── */
+@media (max-width: 1023px) {
+  .strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .scene {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  /* 移动端「＋小组件」随流排在气泡后,避免与壳层浮钮行(左上菜单/右上设置)重叠 */
+  .addWrap {
+    position: static;
+    margin-left: auto;
+  }
+  .bubbleTail {
+    left: 26px;
+  }
+  .strip {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .mainRow {
+    grid-template-columns: 1fr;
+    margin-top: 16px;
+  }
+  .bubbleMain {
+    font-size: 15px;
+  }
+  .bubbleMain b {
+    font-size: 21px;
+  }
+}

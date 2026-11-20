@@ -8,72 +8,82 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
   /// 称呼（可选）：AI 注入与问候用的名字。回退链 nickname → name → 不出现称呼，
   /// 刻意不回退邮箱前缀——邮箱是登录凭据，不是用户希望被叫的名字
-  nickname      String?
-  passwordHash  String?
+  nickname     String?
+  passwordHash String?
   /// 角色:user=普通用户(默认);admin=管理员,可访问 /api/quota/admin 查看公共池与各用户用量。
   /// API 一律按 DB 实时值验权(不信任 JWT),此字段仅作 UI 入口显隐
-  role          String    @default("user")
-  image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  role         String   @default("user")
+  image        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  accounts      Account[]
-  sessions      Session[]
-  apiKeys       ApiKey[]
-  conversations Conversation[]
-  memories      Memory[]
-  customModels  CustomModel[]
-  generatedImages GeneratedImage[]
-  searchApiKeys  SearchApiKey[]
-  mcpServers     McpServer[]
-  courses       Course[]
-  studySessions StudySession[]
-  paperQuestions PaperQuestion[]
-  composedPapers ComposedPaper[]
-  providerModelOverrides ProviderModelOverride[]
-  compareVotes  CompareVote[]
-  memoryEnabled Boolean   @default(true)
-  clarifyEnabled Boolean  @default(true)
+  accounts                 Account[]
+  sessions                 Session[]
+  apiKeys                  ApiKey[]
+  conversations            Conversation[]
+  memories                 Memory[]
+  scratchNotes             ScratchNote[]
+  customModels             CustomModel[]
+  generatedImages          GeneratedImage[]
+  searchApiKeys            SearchApiKey[]
+  mcpServers               McpServer[]
+  courses                  Course[]
+  studySessions            StudySession[]
+  paperQuestions           PaperQuestion[]
+  composedPapers           ComposedPaper[]
+  examRecords              ExamRecord[]
+  examReports              ExamReport[]
+  paperAttempts            PaperAttempt[]
+  pdfImports               PaperImport[]
+  providerModelOverrides   ProviderModelOverride[]
+  compareVotes             CompareVote[]
+  memoryEnabled            Boolean                 @default(true)
+  clarifyEnabled           Boolean                 @default(true)
   /// AI 设置控制总开关：关闭时 chat route 不注入 update_settings 工具（物理级关闭）；
   /// 刻意不在 AI 可控注册表内，仅能通过 设置→通用 手动修改
-  aiSettingsControl Boolean @default(true)
+  aiSettingsControl        Boolean                 @default(true)
   /// AI 本地文件能力总开关：仅桌面客户端(Tauri)可执行；关闭时 chat route 不注入 local_file 工具。
   /// 默认关闭——高危能力(写盘/删除)，需用户在 设置→本地文件 显式开启并选定工作区沙箱目录
-  localFilesEnabled Boolean @default(false)
-    /// 本地文件 exec 命令"始终运行":开启后 AI 执行 PowerShell 命令不再弹确认卡
-    /// (含写入/删除/联网命令);默认 false=只读白名单自动、其余弹确认卡。高危开关
-    localFilesExecAutoRun Boolean @default(false)
+  localFilesEnabled        Boolean                 @default(false)
+  /// 本地文件 exec 命令"始终运行":开启后 AI 执行 PowerShell 命令不再弹确认卡
+  /// (含写入/删除/联网命令);默认 false=只读白名单自动、其余弹确认卡。高危开关
+  localFilesExecAutoRun    Boolean                 @default(false)
   /// 临时聊天:访客密码 hash(空=未启用)。访客密码登录进入临时模式(隔离区);
   /// 设置时须与主密码不同,长期有效可随时更改
-  guestPasswordHash String?
+  guestPasswordHash        String?
   /// 临时聊天模式下是否允许注入长期记忆(默认 false=不注入,防止借号场景暴露记忆内容)
-  ephemeralMemoryInjection Boolean @default(false)
-  imageModel    String   @default("builtin:wanx2.1-t2i-turbo")
-  imageSize     String   @default("1024*1024")
-  imageModels   ImageModel[]
-  masks         Mask[]
-  installedMasks InstalledMask[]
-  uploadFiles   UploadFile[]
-  studyNotes    StudyNote[]
-  studyPlans    StudyPlan[]
-  favorites     Favorite[]
-  favoriteItems FavoriteItem[]
-  knowledgeDocs KnowledgeDoc[]
-  questions      Question[]
-  papers         Paper[]
-  todos         Todo[]
-  planMemos     PlanMemo[]
-  writeDocs     WriteDoc[]
-  works         Work[]
-  codeDocs      CodeDoc[]
-  amapKey       AmapKey?
-  apiTokens     ApiToken[]
-  domainProfiles  UserDomainProfile[]
+  ephemeralMemoryInjection Boolean                 @default(false)
+  imageModel               String                  @default("builtin:wanx2.1-t2i-turbo")
+  imageSize                String                  @default("1024*1024")
+  imageModels              ImageModel[]
+  masks                    Mask[]
+  installedMasks           InstalledMask[]
+  uploadFiles              UploadFile[]
+  studyEvents              StudyEvent[]
+  studyNotes               StudyNote[]
+  studyPlans               StudyPlan[]
+  userWords                UserWord[]
+  wordPlans                WordPlan[]
+  wordPassages             WordPassage[]
+  favorites                Favorite[]
+  favoriteItems            FavoriteItem[]
+  knowledgeDocs            KnowledgeDoc[]
+  questions                Question[]
+  papers                   Paper[]
+  todos                    Todo[]
+  planMemos                PlanMemo[]
+  planItems                PlanItem[]
+  writeDocs                WriteDoc[]
+  works                    Work[]
+  codeDocs                 CodeDoc[]
+  amapKey                  AmapKey?
+  apiTokens                ApiToken[]
+  domainProfiles           UserDomainProfile[]
 }
 
 model Account {
@@ -114,7 +124,7 @@ model VerificationToken {
 model ApiKey {
   id           String   @id @default(cuid())
   userId       String
-  provider     String   // openai, anthropic, deepseek, qianwen, wenxin
+  provider     String // openai, anthropic, deepseek, qianwen, wenxin
   encryptedKey String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -129,17 +139,17 @@ model ApiKey {
 /// 姓名、籍贯、爱好这类事实留在记忆流不在此建第二份可漂移副本。
 /// fields 为档位化 JSON 对象，自由长文不进档案。
 model UserDomainProfile {
-  id      String @id @default(cuid())
-  userId  String
-  domain  String
-  fields  Json   @default("{}")
+  id              String    @id @default(cuid())
+  userId          String
+  domain          String
+  fields          Json      @default("{}")
   /// 档案注入总开关：默认关，需在 设置→用户中心 显式开启后才进 system prompt
-  enabled Boolean  @default(false)
+  enabled         Boolean   @default(false)
   /// 最近一次用户确认档案的时间。换学年提醒（学生/教师跟 9/1）与
   /// 打工人 180 天提醒均由每次请求惰性判定，不做定时任务、不做推送
   lastConfirmedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -153,13 +163,13 @@ model Conversation {
   title         String   @default("新对话")
   model         String   @default("gpt-4o")
   mode          String   @default("single") // single | compare
-  compareModels String?  // JSON 数组,如 ["gpt-4o","claude-sonnet"]
+  compareModels String? // JSON 数组,如 ["gpt-4o","claude-sonnet"]
   styleOffset   Int      @default(50)
-  stylePreset   String?  // 新版风格预设:id 来自 STYLE_PRESETS(balanced/practical/dev/editor/mentor/scholar). 为 null 时视为 balanced
+  stylePreset   String? // 新版风格预设:id 来自 STYLE_PRESETS(balanced/practical/dev/editor/mentor/scholar). 为 null 时视为 balanced
   /// 回复长度档:id 来自 REPLY_LENGTH_LEVELS(minimal/short/standard/detailed).
   /// 为 null 时视为 standard(不注入长度段,与新增该字段前的行为一致)
   replyLength   String?
-  maskId        String?  // 面具 id:内置面具 id 来自 BUILTIN_MASKS(如 translator);将来用户自定义面具用 user:<cuid> 前缀. 为 null 时不启用面具
+  maskId        String? // 面具 id:内置面具 id 来自 BUILTIN_MASKS(如 translator);将来用户自定义面具用 user:<cuid> 前缀. 为 null 时不启用面具
   /// 临时聊天标记:临时模式(访客密码登录)下创建的对话进入隔离区,
   /// 正常模式列表不可见,设置→用户中心 的临时聊天专区可找回/转正/删除。
   /// 隔离由服务端按 session 模式强制执行
@@ -174,9 +184,9 @@ model Conversation {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages   Message[]
-  summaries  ConversationSummary[]
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages     Message[]
+  summaries    ConversationSummary[]
   compareVotes CompareVote[]
 
   @@index([userId, updatedAt])
@@ -188,8 +198,8 @@ model CompareVote {
   id             String   @id @default(cuid())
   userId         String
   conversationId String
-  groupId        String   // 一轮对比的分组 id(Message.groupId)
-  votedModel     String   // 被投票的模型 id(Message.model)
+  groupId        String // 一轮对比的分组 id(Message.groupId)
+  votedModel     String // 被投票的模型 id(Message.model)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -202,16 +212,16 @@ model CompareVote {
 
 // 用户自定义面具 (P1): maskId = 'user:<cuid>' 前缀
 model Mask {
-  id           String    @id @default(cuid())
+  id           String   @id @default(cuid())
   userId       String
-  name         String                    // 显示名，必填 1-30
-  avatar       String    @default("🎭")  // emoji 头像，1-2 字符
-  description  String    @default("")    // 一句话定位，≤50
-  systemPrompt String                   // 人格指令，≤8000
-  fewShot      Json?                   // [{role: 'user'|'assistant', content}], ≤4 轮
-  stylePreset  String?                 // 来自 STYLE_PRESETS(balanced/practical/dev/editor/mentor/scholar)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  name         String // 显示名，必填 1-30
+  avatar       String   @default("🎭") // emoji 头像，1-2 字符
+  description  String   @default("") // 一句话定位，≤50
+  systemPrompt String // 人格指令，≤8000
+  fewShot      Json? // [{role: 'user'|'assistant', content}], ≤4 轮
+  stylePreset  String? // 来自 STYLE_PRESETS(balanced/practical/dev/editor/mentor/scholar)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -224,7 +234,7 @@ model Mask {
 model InstalledMask {
   id        String   @id @default(cuid())
   userId    String
-  maskId    String   // 内置面具 id(如 physics-master / lib-ml)
+  maskId    String // 内置面具 id(如 physics-master / lib-ml)
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -238,18 +248,18 @@ model InstalledMask {
 // 一条 system 注入,代替被压缩的原文,防止长对话撞窗口失忆。
 // 同一会话可有多个摘要(分代压缩),最新一条代表"当前最早期"。
 model ConversationSummary {
-  id             String   @id @default(cuid())
-  conversationId String
+  id              String   @id @default(cuid())
+  conversationId  String
   // 覆盖范围:从第一条到哪一条消息(以 Message.id 标识)。
   // rangeStart 可以为空,表示从对话开头;rangeEnd 为该次压缩最后一条消息 id。
-  rangeStart     String?
-  rangeEnd       String   // 该次压缩覆盖的最后一条消息 id
-  content        String   // 摘要文本
+  rangeStart      String?
+  rangeEnd        String // 该次压缩覆盖的最后一条消息 id
+  content         String // 摘要文本
   // 用于回查:压缩时正在使用的模型 id,便于后续按窗口大小决策
-  modelId        String?
+  modelId         String?
   // 摘要覆盖的原始消息对数(估算),用于调试/统计
-  coveredMessages Int     @default(0)
-  createdAt      DateTime @default(now())
+  coveredMessages Int      @default(0)
+  createdAt       DateTime @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -259,18 +269,18 @@ model ConversationSummary {
 model Message {
   id               String   @id @default(cuid())
   conversationId   String
-  role             String   // user, assistant, system
+  role             String // user, assistant, system
   content          String
-  reasoning        String?  // AI 思考过程（深度思考 / 推理模型）
-  attachments      String?  // JSON string for file URLs
+  reasoning        String? // AI 思考过程（深度思考 / 推理模型）
+  attachments      String? // JSON string for file URLs
   // 结构化 UI 提示（JSON 字符串），按 kind 决定前端如何渲染。
   // 例：{"kind":"branch_summary","version":1,"sourceId":"cuid","sourceTitle":"...","branchedAt":"2026-09-03T..."}
   // 写入规则：仅后端写入；前端按 kind 分发渲染分支。
   metadata         String?
-  model            String?  // assistant 消息所属模型 id
-  groupId          String?  // 同一轮对比共享的分组 id
-  promptTokens     Int?     // 本轮输入 token 数（assistant 消息）
-  completionTokens Int?     // 本轮输出 token 数（assistant 消息）
+  model            String? // assistant 消息所属模型 id
+  groupId          String? // 同一轮对比共享的分组 id
+  promptTokens     Int? // 本轮输入 token 数（assistant 消息）
+  completionTokens Int? // 本轮输出 token 数（assistant 消息）
   // prompt caching 观测（assistant 消息，上游报了明细才落库）：
   // cacheReadTokens：0=报了但未命中，null=上游未报明细；>0 即本轮命中量。
   // 轮次命中率 = cacheReadTokens>0 的轮次 / cacheReadTokens 非空轮次（2026-11-09 起 0 不再吞成 null）。
@@ -301,10 +311,10 @@ model Memory {
   category      String   @default("general")
   content       String
   source        String   @default("auto") // auto 自动提取 | manual 手动添加 | imported 从其他 AI 导入
-  sourceDetail  String?  // 导入来源名称，如 "ChatGPT" / "Claude" / "Grok"，仅 source=imported 时使用
+  sourceDetail  String? // 导入来源名称，如 "ChatGPT" / "Claude" / "Grok"，仅 source=imported 时使用
   status        String   @default("active") // active 生效 | superseded 已被新记忆取代（不再注入，设置里可恢复）
-  supersededBy  String?  // 取代本条的记忆 id（仅 status=superseded；恢复时据此反向取代）
-  conflictPeers String?  // 已裁决「都保留」的对端记忆 id，逗号分隔（不再重复提示冲突）
+  supersededBy  String? // 取代本条的记忆 id（仅 status=superseded；恢复时据此反向取代）
+  conflictPeers String? // 已裁决「都保留」的对端记忆 id，逗号分隔（不再重复提示冲突）
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -314,20 +324,43 @@ model Memory {
   @@index([userId, status])
 }
 
+// ===================== 短期记忆（临时便签） =====================
+// AI 自动判记的「进行中状态」：进度推进、备考安排、正在攻坚的内容等。
+// 与长期记忆(Memory)的分界：短期=会过期的进行时态，长期=不过期的完成时态。
+// topic 同用户内唯一，重复写 = 覆盖更新（"背单词进度"永远只有最新一条，不堆积）。
+// 过期策略：写入时把 expiresAt 落成具体时间（显式到期日 ?? 默认14天窗口），
+//   更新即续期；读侧与注入侧只取 expiresAt > now 的活跃条目（惰性失效，无清理任务）。
+model ScratchNote {
+  id        String   @id @default(cuid())
+  userId    String
+  /// 短标签，如「数学期中考」「背单词」「物理错题」；语义锚点，同 topic 覆盖
+  topic     String
+  content   String
+  /// 具体过期时间（写入时已算好）；到期后不再注入、设置页标记已过期
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, topic])
+  @@index([userId, updatedAt])
+}
+
 // 用户自定义生图模型(OpenAI 兼容文生图端点)
 model ImageModel {
-  id           String   @id @default(cuid())
-  userId       String
-  name         String   // 显示名称
-  modelId      String   // 实际模型标识,如 "dall-e-3" / "stable-diffusion-xl"
-  baseURL      String   // API 端点,如 https://api.openai.com/v1
-  apiKeySource String   @default("provider") // "provider" 复用服务商 Key | "own" 独立 Key
-  apiKey       String?  // 独立 API Key(加密),keySource=own 时使用
-  keyProvider  String?  // 复用哪个服务商的 Key,keySource=provider 时使用
-  contextWindow Int     @default(2048) // 备注/上下文限制
-  supportsSize Boolean  @default(true)  // 是否支持自定义尺寸
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  userId        String
+  name          String // 显示名称
+  modelId       String // 实际模型标识,如 "dall-e-3" / "stable-diffusion-xl"
+  baseURL       String // API 端点,如 https://api.openai.com/v1
+  apiKeySource  String   @default("provider") // "provider" 复用服务商 Key | "own" 独立 Key
+  apiKey        String? // 独立 API Key(加密),keySource=own 时使用
+  keyProvider   String? // 复用哪个服务商的 Key,keySource=provider 时使用
+  contextWindow Int      @default(2048) // 备注/上下文限制
+  supportsSize  Boolean  @default(true) // 是否支持自定义尺寸
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -340,22 +373,22 @@ model ImageModel {
 //   - isHidden=true 表示「隐藏该预置模型」
 //   - isHidden=false + name 非空 = 「用户为该 provider 新增的模型（复用该 provider 的 Key）」
 model ProviderModelOverride {
-  id          String   @id @default(cuid())
-  userId      String
-  provider    String   // "deepseek" / "openai" / "anthropic" / ...
-  modelId     String   // "deepseek-chat" / "gpt-5" / "claude-sonnet-4-5" / ...
+  id       String @id @default(cuid())
+  userId   String
+  provider String // "deepseek" / "openai" / "anthropic" / ...
+  modelId  String // "deepseek-chat" / "gpt-5" / "claude-sonnet-4-5" / ...
 
-  isHidden    Boolean  @default(false)
+  isHidden Boolean @default(false)
 
   // 仅 isHidden=false 时生效（新增模型必填）
   name              String
-  contextWindow     Int      @default(32768)
-  supportsVision    Boolean  @default(false)
-  supportsFiles     Boolean  @default(false)
-  supportsReasoning Boolean  @default(false)
+  contextWindow     Int     @default(32768)
+  supportsVision    Boolean @default(false)
+  supportsFiles     Boolean @default(false)
+  supportsReasoning Boolean @default(false)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -365,20 +398,20 @@ model ProviderModelOverride {
 
 // 用户自定义模型(OpenAI 兼容协议)
 model CustomModel {
-  id               String   @id @default(cuid())
-  userId           String
-  name             String // 显示名
-  modelId          String // 实际模型标识,如 "gpt-4o-mini" / "qwen2.5:7b"
-  baseURL          String // OpenAI 兼容端点,如 https://api.siliconflow.cn/v1
-  protocol         String   @default("auto") // auto、chat、responses 或 anthropic
-  apiKey           String? // 独立 API Key(加密);为空时复用 keyProvider 的 Key 或免鉴权
-  keyProvider      String? // 复用已有服务商 Key 的 provider id(如 "openai")
-  contextWindow    Int      @default(32768)
-  supportsVision   Boolean  @default(false)
-  supportsFiles    Boolean  @default(false)
-  supportsReasoning Boolean @default(false)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                String   @id @default(cuid())
+  userId            String
+  name              String // 显示名
+  modelId           String // 实际模型标识,如 "gpt-4o-mini" / "qwen2.5:7b"
+  baseURL           String // OpenAI 兼容端点,如 https://api.siliconflow.cn/v1
+  protocol          String   @default("auto") // auto、chat、responses 或 anthropic
+  apiKey            String? // 独立 API Key(加密);为空时复用 keyProvider 的 Key 或免鉴权
+  keyProvider       String? // 复用已有服务商 Key 的 provider id(如 "openai")
+  contextWindow     Int      @default(32768)
+  supportsVision    Boolean  @default(false)
+  supportsFiles     Boolean  @default(false)
+  supportsReasoning Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -388,25 +421,25 @@ model CustomModel {
 
 // 用户通过"生图工作台"生成的图片记录
 model GeneratedImage {
-  id        String   @id @default(cuid())
-  userId    String
-  prompt    String   // 用户输入的提示词
-  url       String   // 相对路径,如 /uploads/wanx-xxx.png
-  model     String   @default("builtin:wanx2.1-t2i-turbo")
-  width     Int      @default(1024)
-  height    Int      @default(1024)
-  size      String   @default("1024*1024") // 生图请求时的尺寸参数(如 1024*1024 / 720*1280 / 1280*720)
+  id                String   @id @default(cuid())
+  userId            String
+  prompt            String // 用户输入的提示词
+  url               String // 相对路径,如 /uploads/wanx-xxx.png
+  model             String   @default("builtin:wanx2.1-t2i-turbo")
+  width             Int      @default(1024)
+  height            Int      @default(1024)
+  size              String   @default("1024*1024") // 生图请求时的尺寸参数(如 1024*1024 / 720*1280 / 1280*720)
   // 关联来源: workspace = 来自生图工作台; chat = 来自对话中的 [IMG] 触发
-  source    String   @default("workspace")
+  source            String   @default("workspace")
   // 二创链路: parentId 指向被修改的原图,null = 首次生成
-  parentId  String?
+  parentId          String?
   // 生成方式: t2i(文生图) | edit(以图生图/img2img) | inpaint(局部重绘) | variation(变体)
-  editType  String   @default("t2i")
+  editType          String   @default("t2i")
   // inpaint 用: 涂抹区域相对原图的归一化坐标 JSON,形如 {"x":0.1,"y":0.2,"w":0.3,"h":0.4}
-  maskRect  String?
+  maskRect          String?
   // 文生图时用户上传的参考图(相对路径 /uploads/xxx.png),null = 纯文生图
   referenceImageUrl String?
-  createdAt DateTime @default(now())
+  createdAt         DateTime @default(now())
 
   user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   parent   GeneratedImage?  @relation("ImageDerivation", fields: [parentId], references: [id], onDelete: SetNull)
@@ -421,7 +454,7 @@ model GeneratedImage {
 model SearchApiKey {
   id           String   @id @default(cuid())
   userId       String
-  engine       String   // qianfan | tavily | ...
+  engine       String // qianfan | tavily | ...
   encryptedKey String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -437,9 +470,9 @@ model SearchApiKey {
 model AmapKey {
   id           String   @id @default(cuid())
   userId       String   @unique
-  jsKey        String   // JS API Key(浏览器渲染用,本就公开明文)
-  encryptedSec String?  // 安全密钥(Web端 JS API 类型 Key 配套;为空走 v=1.4.4)
-  encryptedWs  String?  // Web服务 Key(服务端 REST 校准;需控制台 IP 白名单)
+  jsKey        String // JS API Key(浏览器渲染用,本就公开明文)
+  encryptedSec String? // 安全密钥(Web端 JS API 类型 Key 配套;为空走 v=1.4.4)
+  encryptedWs  String? // Web服务 Key(服务端 REST 校准;需控制台 IP 白名单)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -452,12 +485,12 @@ model AmapKey {
 model McpServer {
   id                   String   @id @default(cuid())
   userId               String
-  name                 String   // 显示名(如 "高德地图")
-  slug                 String   // 工具名前缀用,小写字母数字连字符
-  url                  String   // 远程 MCP 端点(https)
-  headerName           String?  // 自定义鉴权 Header 名(如 Authorization)
-  encryptedHeaderValue String?  // Header 值,复用 lib/crypto encrypt
-  excludeTools         String?  // JSON 数组:server 级排除的工具名(如 ["tavily-search"])
+  name                 String // 显示名(如 "高德地图")
+  slug                 String // 工具名前缀用,小写字母数字连字符
+  url                  String // 远程 MCP 端点(https)
+  headerName           String? // 自定义鉴权 Header 名(如 Authorization)
+  encryptedHeaderValue String? // Header 值,复用 lib/crypto encrypt
+  excludeTools         String? // JSON 数组:server 级排除的工具名(如 ["tavily-search"])
   enabled              Boolean  @default(true)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -478,10 +511,10 @@ model UploadFile {
   originalName String
   mimeType     String
   size         Int
-  parseStatus  String   // done | failed | skipped(图片无需解析文本)
+  parseStatus  String // done | failed | skipped(图片无需解析文本)
   parseError   String?
-  parseText    String?  // 提取文本全文(入库不截断,注入时按 20000 字符截断)
-  pageCount    Int?     // PDF 专有
+  parseText    String? // 提取文本全文(入库不截断,注入时按 20000 字符截断)
+  pageCount    Int? // PDF 专有
   charCount    Int?
   createdAt    DateTime @default(now())
 
@@ -489,6 +522,7 @@ model UploadFile {
 
   @@index([userId, createdAt])
 }
+
 // ===================== 教学模式(teach mode) =====================
 // 课程(Course) 与某个 Conversation 一一对应,用于把对话生成的结构化课程
 // (chapters) 持久化下来,便于 CourseProgress 跟踪学习进度,
@@ -498,12 +532,12 @@ model Course {
   id             String   @id @default(cuid())
   userId         String
   title          String
-  sourceFile     String?  // 来源文件名(可选,用于显示)
-  chapters       Json     // 章节列表,结构由前端约定
-  conversationId String?  @unique  // 与生成它的会话一一对应(允许尚未关联会话的课程)
+  sourceFile     String? // 来源文件名(可选,用于显示)
+  chapters       Json // 章节列表,结构由前端约定
+  conversationId String?  @unique // 与生成它的会话一一对应(允许尚未关联会话的课程)
   createdAt      DateTime @default(now())
 
-  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   progress CourseProgress?
   wrongs   WrongQuestion[]
 
@@ -511,13 +545,13 @@ model Course {
 }
 
 model CourseProgress {
-  id              String   @id @default(cuid())
-  userId          String
-  courseId        String   @unique
-  currentChapter  Int      @default(0)
-  masteredChapters Json    @default("[]")
-  weakPoints      Json     @default("[]")
-  updatedAt       DateTime @updatedAt
+  id               String   @id @default(cuid())
+  userId           String
+  courseId         String   @unique
+  currentChapter   Int      @default(0)
+  masteredChapters Json     @default("[]")
+  weakPoints       Json     @default("[]")
+  updatedAt        DateTime @updatedAt
 
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 }
@@ -543,42 +577,43 @@ model WrongQuestion {
 // 错题本: 一条记录 = 一道存入的题(题干 + 可选 AI 讲解),附带掌握度与 FSRS 间隔复习状态。
 // 复习调度用 ts-fsrs 官方包,下列 FSRS 字段与其 Card 一一对应,复习时重建后调 repeat()。
 model StudyNote {
-  id              String    @id @default(cuid())
-  userId          String
-  sourceMessageId String?   // 来源消息 id,保留追溯(聊天气泡一键存入)
-  sourceQuestionId String?  // 来源题库题 id(Question.id,练习做错转入);软关联不设外键,题目删除不影响错题,兼作同题幂等查重
-  subject         String?   // 学科: math/english/chinese/physics/chemistry/biology/history/geography/politics/other(AI 打标)
-  topic           String?   // 考点标签,如「十字相乘」(AI 打标)
-  title           String    // 题干摘要
-  content         String    // 完整题目 + 我的解答
+  id               String    @id @default(cuid())
+  userId           String
+  sourceMessageId  String? // 来源消息 id,保留追溯(聊天气泡一键存入)
+  sourceQuestionId String? // 来源题库题 id(Question.id,练习做错转入);软关联不设外键,题目删除不影响错题,兼作同题幂等查重
+  origin           String    @default("manual") // 建卡来源: manual=手动/聊天存入 | surprise_quiz=突击测试答错回流(预留 study_event)
+  subject          String? // 学科: math/english/chinese/physics/chemistry/biology/history/geography/politics/other(AI 打标)
+  topic            String? // 考点标签,如「十字相乘」(AI 打标)
+  title            String // 题干摘要
+  content          String // 完整题目 + 我的解答
   /// 题目截图(/uploads/...):B 站截图问答存错题时把原图留在题干区
-  imageUrl        String?
-  analysis        String?   // AI 解析(markdown,含 LaTeX),复习卡背面展示
-  mastery         Float     @default(0) // 掌握度 0-1,复习自评与变式判卷驱动
+  imageUrl         String?
+  analysis         String? // AI 解析(markdown,含 LaTeX),复习卡背面展示
+  mastery          Float     @default(0) // 掌握度 0-1,复习自评与变式判卷驱动
   // —— FSRS 状态(与 ts-fsrs Card 对应) ——
-  stability       Float?
-  difficulty      Float?
-  state           Int       @default(0) // 0=New 1=Learning 2=Review 3=Relearning
-  dueAt           DateTime? // 下次复习时间;建卡时=now,直接进入今日队列
-  lastReviewAt    DateTime?
-  reps            Int       @default(0)
-  lapses          Int       @default(0) // 遗忘次数,lapses>=2 时写入长期记忆
-  createdAt       DateTime  @default(now())
+  stability        Float?
+  difficulty       Float?
+  state            Int       @default(0) // 0=New 1=Learning 2=Review 3=Relearning
+  dueAt            DateTime? // 下次复习时间;建卡时=now,直接进入今日队列
+  lastReviewAt     DateTime?
+  reps             Int       @default(0)
+  lapses           Int       @default(0) // 遗忘次数,lapses>=2 时写入长期记忆
+  createdAt        DateTime  @default(now())
 
   user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   reviewLogs StudyNoteReviewLog[]
 
-  @@index([userId, dueAt])
-  @@index([userId, subject])
   /// 同一条消息只允许一张卡:自动归档/手动存入/重复点击共用唯一键
   @@unique([userId, sourceMessageId])
+  @@index([userId, dueAt])
+  @@index([userId, subject])
 }
 
 // 复习/自评流水: 阶段 B 每次自评写入一行,阶段 C 掌握度曲线的数据源
 model StudyNoteReviewLog {
   id            String   @id @default(cuid())
   noteId        String
-  rating        Int      // 1=Again(卡住了) 3=Good(想起来了),即 FSRS Rating 枚举值
+  rating        Int // 1=Again(卡住了) 3=Good(想起来了),即 FSRS Rating 枚举值
   masteryBefore Float
   masteryAfter  Float
   /// 评级来源:null=手动自评(翻卡核对式) redo=重做判分 variant=变式练习判分
@@ -588,6 +623,27 @@ model StudyNoteReviewLog {
   note StudyNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([noteId, ratedAt])
+}
+
+// ===================== 学习事件记录 =====================
+// 「今天在学校背了哪些/学了哪些单词」式一句话流水:AI 聊天快记(record_study_event)
+// 与学习台手动补一条共用一张表;按 eventDate(本地日)分组展示,tag 六选一自动打标。
+model StudyEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  /// 一句话记录,如「背了 Unit 5 的 30 个单词」
+  text      String
+  /// 标签: word/recite/drill/read/mistake/other(AI 自动打标,手动可选)
+  tag       String?
+  /// 来源: chat=AI 聊天快记 manual=学习台手动补一条
+  source    String   @default("manual")
+  /// 记录归属日(本地日,支持补记昨天);展示按此分组,createdAt 仅排序
+  eventDate DateTime @db.Date
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, eventDate])
 }
 
 // ===================== 考前冲刺计划 =====================
@@ -614,16 +670,16 @@ model StudyPlan {
 
 // 冲刺计划每日任务:topic 维度,kind 决定复习形态(cards=翻卡 redo=重做题库原题 variant=同考点变式)
 model StudyPlanItem {
-  id     String   @id @default(cuid())
+  id     String    @id @default(cuid())
   planId String
   userId String
   /// 归属日(本地当天 0 点),按日分组展示
   date   DateTime
   topic  String
-  kind   String   // cards | redo | variant
+  kind   String // cards | redo | variant
   /// 目标量(翻卡张数/重做题数/变式题数)
-  target Int      @default(3)
-  done   Boolean  @default(false)
+  target Int       @default(3)
+  done   Boolean   @default(false)
   doneAt DateTime?
 
   plan StudyPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
@@ -639,13 +695,13 @@ model StudyPlanItem {
 model StudySession {
   id         String   @id @default(cuid())
   userId     String
-  question   String                          // 题干 markdown
-  images     String[] @default([])           // 题图 URL(附件上传后的地址)
-  notes      String?                         // 思路备注:「只会一点」起点时用户贴的已做过程/卡点,每次讲解生成都会注入
-  startLevel String   @default("beginner")   // beginner(完全不会) | partial(只会一点) | review(都会了复习)
+  question   String // 题干 markdown
+  images     String[] @default([]) // 题图 URL(附件上传后的地址)
+  notes      String? // 思路备注:「只会一点」起点时用户贴的已做过程/卡点,每次讲解生成都会注入
+  startLevel String   @default("beginner") // beginner(完全不会) | partial(只会一点) | review(都会了复习)
   status     String   @default("explaining") // explaining | completed
-  modelId    String                          // 讲解模型,创建时选定
-  summary    String?                         // 结课总结(finish_study 的输入)
+  modelId    String // 讲解模型,创建时选定
+  summary    String? // 结课总结(finish_study 的输入)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -660,13 +716,13 @@ model StudySession {
 model StudyStep {
   id               String   @id @default(cuid())
   sessionId        String
-  idx              Int                     // 0-based 步序
-  action           String?                 // 触发动作: start | continue | easier | solution | followup
-  followupText     String?                 // followup 时的用户自由输入
+  idx              Int // 0-based 步序
+  action           String? // 触发动作: start | continue | easier | solution | followup
+  followupText     String? // followup 时的用户自由输入
   content          String   @default("")
   reasoning        String?
-  refs             Json?                   // 课本引用(KnowledgeHit 精简: doc/chapter/section/content)
-  selfRating       String?                 // 本步自评: good | again(喂归档时的初始掌握度)
+  refs             Json? // 课本引用(KnowledgeHit 精简: doc/chapter/section/content)
+  selfRating       String? // 本步自评: good | again(喂归档时的初始掌握度)
   streaming        Boolean  @default(false)
   promptTokens     Int?
   completionTokens Int?
@@ -685,14 +741,14 @@ model StudyStep {
 model Favorite {
   id                String   @id @default(cuid())
   userId            String
-  sourceMessageId   String?  // 来源消息 id(软关联;删消息不影响收藏)
-  conversationId    String?  // 原会话 id,"回到原对话"用(软关联)
-  conversationTitle String?  // 会话标题快照,避免会话删除后列表失去上下文
-  role              String   // user | assistant
-  title             String   // 正文摘要(40 字),列表展示
-  content           String   // 完整正文快照(已清洗工具标记)
-  attachments       String?  // JSON 字符串,与 Message.attachments 同形
-  imageUrl          String?  // 首图,列表缩略用
+  sourceMessageId   String? // 来源消息 id(软关联;删消息不影响收藏)
+  conversationId    String? // 原会话 id,"回到原对话"用(软关联)
+  conversationTitle String? // 会话标题快照,避免会话删除后列表失去上下文
+  role              String // user | assistant
+  title             String // 正文摘要(40 字),列表展示
+  content           String // 完整正文快照(已清洗工具标记)
+  attachments       String? // JSON 字符串,与 Message.attachments 同形
+  imageUrl          String? // 首图,列表缩略用
   createdAt         DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -708,24 +764,24 @@ model Favorite {
 // 与 monitor 关键词监控也分家:这里收藏具体某一件商品,不自动爬价、不参与回报。
 // itemId 用 goofish 商品的数字 id(来自 CLI item_id,即搜索 url 的 id= 参数),稳定键。
 model FavoriteItem {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   userId       String
-  itemId       String   // goofish 商品数字 id(收藏的稳定键)
+  itemId       String // goofish 商品数字 id(收藏的稳定键)
   title        String
-  price        Float?   // 收藏时售价(元);解析不出为 null
-  priceDisplay String?  // 收藏时原样价("¥1199" / "1.5万")
-  url          String   // 商品链接 goofish.com/item?id=xxx
-  pic          String?  // 封面图 CDN 直链(可能缺省)
+  price        Float? // 收藏时售价(元);解析不出为 null
+  priceDisplay String? // 收藏时原样价("¥1199" / "1.5万")
+  url          String // 商品链接 goofish.com/item?id=xxx
+  pic          String? // 封面图 CDN 直链(可能缺省)
   location     String?
   seller       String?
-  keyword      String?  // 收藏时的搜索词,便于回看上下文
-  note         String?  // 用户备注(可选)
+  keyword      String? // 收藏时的搜索词,便于回看上下文
+  note         String? // 用户备注(可选)
   // ── 下架/现价检测(手动「查现价」+ 打开收藏池渐进体检一件) ──
-  status       String?  // null=未检测过 | 'onSale'=在售 | 'off'=已下架/删除 | 'unknown'=查询失败(不误标)
-  statusText   String?  // 状态原文透传(如"已下架/删除"、非"在线"的其他状态词)
-  checkedPrice Float?   // 最近一次检测到的现价(元)
+  status       String? // null=未检测过 | 'onSale'=在售 | 'off'=已下架/删除 | 'unknown'=查询失败(不误标)
+  statusText   String? // 状态原文透传(如"已下架/删除"、非"在线"的其他状态词)
+  checkedPrice Float? // 最近一次检测到的现价(元)
   checkedAt    DateTime? // 最近一次检测时间
-  createdAt    DateTime @default(now())
+  createdAt    DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -741,14 +797,14 @@ model FavoriteItem {
 model KnowledgeDoc {
   id             String   @id @default(cuid())
   userId         String
-  title          String   // 资料名,如「数学 七年级上册」
-  subject        String   // 学科,与 NOTE_SUBJECTS 对齐: math/chinese/english/.../other
+  title          String // 资料名,如「数学 七年级上册」
+  subject        String // 学科,与 NOTE_SUBJECTS 对齐: math/chinese/english/.../other
   kind           String   @default("textbook") // 资料类型: textbook=课本/教材原文 | material=资料(答题模板/提纲/讲义)
-  publisher      String?  // 出版社,如「人民教育出版社」
-  grade          String?  // 年级/册别,如「七年级 上册」
-  sourceUploadId String?  // 原始文件追溯(UploadFile.id);直接导入文本/HTML 时为空
-  bookKey        String?  // 页图目录名(nanoid(12),public/kb-pages/{bookKey}/pNNN.webp);按页导入的课本才有,阅读器/封面用
-  pageCount      Int?     // 页数(按页导入的课本);HTML/文本导入为 null
+  publisher      String? // 出版社,如「人民教育出版社」
+  grade          String? // 年级/册别,如「七年级 上册」
+  sourceUploadId String? // 原始文件追溯(UploadFile.id);直接导入文本/HTML 时为空
+  bookKey        String? // 页图目录名(nanoid(12),public/kb-pages/{bookKey}/pNNN.webp);按页导入的课本才有,阅读器/封面用
+  pageCount      Int? // 页数(按页导入的课本);HTML/文本导入为 null
   charCount      Int      @default(0) // 全文总字符数(切块内容合计)
   chunkCount     Int      @default(0) // 切块数量
   createdAt      DateTime @default(now())
@@ -766,13 +822,13 @@ model KnowledgeChunk {
   id         String   @id @default(cuid())
   docId      String
   userId     String
-  chapter    String?  // 章,如「第一章 有理数」
-  section    String?  // 节,如「1.1 正数和负数」
-  subsection String?  // 小节,如「1.2.2 数轴」
-  heading    String   // 块标题(引用展示用),如「1.1 正数和负数」
-  content    String   // 切块正文(含栏目内容,LaTeX 原样)
-  sortOrder  Int      // 书内顺序,引用展示按此排序
-  page       Int?     // PDF 页码(1-based);按页导入的课本填写,检索命中后可跳转阅读器;HTML/文本导入为 null
+  chapter    String? // 章,如「第一章 有理数」
+  section    String? // 节,如「1.1 正数和负数」
+  subsection String? // 小节,如「1.2.2 数轴」
+  heading    String // 块标题(引用展示用),如「1.1 正数和负数」
+  content    String // 切块正文(含栏目内容,LaTeX 原样)
+  sortOrder  Int // 书内顺序,引用展示按此排序
+  page       Int? // PDF 页码(1-based);按页导入的课本填写,检索命中后可跳转阅读器;HTML/文本导入为 null
   charCount  Int      @default(0)
   createdAt  DateTime @default(now())
 
@@ -789,19 +845,19 @@ model Question {
   id         String   @id @default(cuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject    String   // math/chinese/english/physics/chemistry/biology/history/politics/geography/other
-  topic      String?  // 考点短语，如「相反数」「去括号」
-  kind       String   // choice=选择题 answer=解答题
-  stem       String   // 题干(选择题含选项，每行一项「A. …」)
-  answer     String   // 答案+解析(含用到的课本法则)
+  subject    String // math/chinese/english/physics/chemistry/biology/history/politics/geography/other
+  topic      String? // 考点短语，如「相反数」「去括号」
+  kind       String // choice=选择题 answer=解答题
+  stem       String // 题干(选择题含选项，每行一项「A. …」)
+  answer     String // 答案+解析(含用到的课本法则)
   difficulty String   @default("medium") // basic/medium/hard
   source     String   @default("ai_generated") // ai_generated/exam_import
-  sourceRef  String?  // 出处，如「§2.2.1 例3」/试卷库中为「卷名 · 第N题」
+  sourceRef  String? // 出处，如「§2.2.1 例3」/试卷库中为「卷名 · 第N题」
   /// 试卷来源。为空 = 出题 API 生成。卷面题缺答案时暂不建 Question 行
   /// （空答案会污染抽题池），字段预留给官方答案齐备后的回填
   paperId    String?
-  number     Int?     // 卷内题号
-  score      Int?     // 卷面分值
+  number     Int? // 卷内题号
+  score      Int? // 卷面分值
   createdAt  DateTime @default(now())
 
   paper Paper? @relation(fields: [paperId], references: [id], onDelete: SetNull)
@@ -819,32 +875,111 @@ model Question {
 model Paper {
   id            String   @id @default(cuid())
   userId        String
-  slug          String   // 目录名，如 guangxi-math-mock-1；同用户内唯一
+  slug          String // 目录名，如 guangxi-math-mock-1；同用户内唯一
   title         String
-  subject       String   // 与 Note 学科枚举对齐
-  year          String?  // 年份/考期，卷面未标注时为空
-  region        String?  // 地区，如「广西」
-  examType      String?  // 高考/中考/模拟/学业水平/其他
+  subject       String // 与 Note 学科枚举对齐
+  year          String? // 年份/考期，卷面未标注时为空
+  region        String? // 地区，如「广西」
+  examType      String? // 高考/中考/模拟/学业水平/其他
   totalScore    Int
   durationMin   Int
   questionCount Int      @default(0)
   pageCount     Int      @default(0)
-  sourceDir     String   // 原始页面目录(仓库相对路径)，如 data/exam-papers/guangxi-math-mock-1
+  sourceDir     String // 原始页面目录(仓库相对路径)，如 data/exam-papers/guangxi-math-mock-1
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   // ── legacy：DB 存量列，代码零引用（弃用实验残留，2026-11-13 收编入 schema 排掉
   //    db push 的 data-loss 地雷；数据保留不删）──
-  origin        String   @default("imported")
+  origin        String @default("imported")
   blueprintJson Json?
 
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  pages     PaperPage[]
-  questions Question[]
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pages          PaperPage[]
+  questions      Question[]
   paperQuestions PaperQuestion[]
+  examRecords    ExamRecord[]
+  attempts       PaperAttempt[]
+  pdfImports     PaperImport[]
 
   @@unique([userId, slug])
   @@index([userId, subject, createdAt])
+}
+
+// PDF 录题作业(PaperImport):一次上传一条。PDF 原文件存 data/exam-papers/<importId>/source.pdf,
+// 逐页文本(文本版)与候选题清单整包存 Json;入库时把 state=done 且有答案的候选写 Question 练题池,
+// 「完成并建卷」把未被跳过的候选整卷写 Paper+PaperQuestion 真题池(PaperPage 卷面仿真后置,暂不生成)。
+// 候选状态三态:wait=待审 done=已入库 skip=跳过;答案来源 paper=卷面抽到 ai=AI 解(与 PaperQuestion.answerSource 对齐)。
+model PaperImport {
+  id         String   @id @default(cuid())
+  userId     String
+  status     String   @default("splitting") // splitting=切题中 | ready=候选齐备 | finished=已建卷 | failed
+  fileName   String
+  subject    String
+  title      String   @default("") // 建卷用卷名,默认取文件名,可改
+  pageCount  Int      @default(0)
+  mode       String   @default("text") // text=文本版直切 | scan=扫描版走页图视觉
+  pageTexts  Json     @default("[]") // string[] 逐页文本(文本版);扫描版为空数组
+  pageBoxes  Json     @default("{}") // { [pageNo]: {w,h,items:[{s,x,y,w,h}]} } 页文本项坐标(PDF pt,客户端换算叠加高亮)
+  meta       Json     @default("{}") // AI 从卷头抽的 {title?,year?,examType?,totalScore?,durationMin?}
+  candidates Json     @default("[]") // ImportCandidate[](见 lib/papers/pdf-import.ts)
+  error      String?
+  paperId    String? // 完成并建卷后的 Paper 指针
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paper Paper? @relation(fields: [paperId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+}
+
+// 学校考试成绩记录(ExamRecord):成绩台账,一次学校考试一条。
+// 必关联卷库 Paper(定案:卷子先入库再记录,库外自由记录不做);勾错题只存题号数组,
+// 逐题分值/考点由 PaperQuestion 反推 → 考点丢分统计,喂「针对我复习」与拟卷选题。
+// date 存 'YYYY-MM-DD' 字符串:躲 Prisma UTC 日期 slice 偏一天坑(与冲刺计划同思路)。
+model ExamRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  paperId      String
+  examType     String // 月考/期中/期末/周测/模拟
+  examName     String // 考试名称,如「11 月期中考试」
+  date         String // 考试日期 'YYYY-MM-DD'(字符串存,免时区换算)
+  score        Int // 得分
+  fullScore    Int // 满分(默认取卷子 totalScore,学校考试可改)
+  rank         String? // 排名选填,自由文本「班级 12 · 年级 156」
+  wrongNumbers Int[]    @default([]) // 勾错的题号(卷内题号;空=只记总分)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paper   Paper        @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  reports ExamReport[]
+
+  @@index([userId, date])
+  @@index([paperId])
+}
+
+// AI 成绩分析报告(ExamReport):成绩分析弹层里一键生成、落库可回看。
+// kind=exam 单次考后小结(关联一条 ExamRecord,记录删了报告保留 SetNull);
+// kind=stage 阶段总结(可选按科目)。scope 存生成时的数据快照(records/bySubject/考点丢分聚合),
+// 回看时数据区直接渲染快照,不依赖当时勾错题是否被改。content 为 AI 生成的 markdown。
+model ExamReport {
+  id           String   @id @default(cuid())
+  userId       String
+  kind         String // exam=单次考后小结 | stage=阶段总结
+  examRecordId String?
+  subject      String? // 阶段报告按科目过滤时记录;单考报告取卷的科目
+  examName     String? // 冗余存标题用(单考=考试名,阶段=「数学阶段总结」)
+  scope        Json // 生成时的数据快照
+  content      String // AI 生成的 markdown
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  examRecord ExamRecord? @relation(fields: [examRecordId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
 }
 
 // 试卷页面：pageNo 升序渲染即为整卷。html 为改写图片路径后的 article 片段
@@ -858,7 +993,6 @@ model PaperPage {
   paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
 
   @@unique([paperId, pageNo])
-
 }
 
 // 试卷逐题索引层（方案乙）：一题一行，由导入器从 PaperPage HTML 契约确定性解析。
@@ -866,33 +1000,57 @@ model PaperPage {
 // 「考了几次」按 topics 数组计数（一题多考点各计一次）；answer 可空，
 // 官方答案齐备前不回填 Question 练题池（隔离原则）。
 model PaperQuestion {
-  id        String   @id @default(cuid())
-  paperId   String
-  userId    String   // 冗余存储免 join（与 KnowledgeChunk 同思路）
-  number    Int      // 卷内题号
-  section   String?  // 所在大题，如「一、单项选择题」
-  kind      String   // choice=选择题 answer=解答/填空题
-  multiple  Boolean  @default(false)
-  score     Int
-  stem      String   // 题干纯文本（保留 $...$ LaTeX；图以 [图N] 占位，链接在 images）
-  options   String[] @default([]) // 选择题选项，每项「A. …」；非选择题为空
-  images    String[] @default([]) // 题图 URL（/exam-papers/<slug>/…）
-  answer    String?  // 官方答案+解析；null=缺答案（等待官方答案卷）
+  id           String   @id @default(cuid())
+  paperId      String
+  userId       String // 冗余存储免 join（与 KnowledgeChunk 同思路）
+  number       Int // 卷内题号
+  section      String? // 所在大题，如「一、单项选择题」
+  kind         String // choice=选择题 answer=解答/填空题
+  multiple     Boolean  @default(false)
+  score        Int
+  stem         String // 题干纯文本（保留 $...$ LaTeX；图以 [图N] 占位，链接在 images）
+  options      String[] @default([]) // 选择题选项，每项「A. …」；非选择题为空
+  images       String[] @default([]) // 题图 URL（/exam-papers/<slug>/…）
+  answer       String? // 官方答案+解析；null=缺答案（等待官方答案卷）
   /// 答案来源：official=官方答案卷/手批补录（默认），ai=AI 参考答案（双模型比对一致才落库，
   /// 卷面页答案页逐题挂「AI」标注；后续补录官方答案时改回 official，标注自动消失）
-  answerSource String @default("official")
-  topics    String[] @default([]) // 考点标签（受控词表，导入后 AI 打标回填）
+  answerSource String   @default("official")
+  topics       String[] @default([]) // 考点标签（受控词表，导入后 AI 打标回填）
   /// 存疑拉黑：录入错/答案存疑的题（拟卷「这题有误」标记）。true=不再进入组卷候选池，
   /// 原卷数据(PaperPage)永远不动；修复对照原件后手动改回 false
-  flagged   Boolean  @default(false)
-  createdAt DateTime @default(now())
+  flagged      Boolean  @default(false)
+  createdAt    DateTime @default(now())
 
-  paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paper         Paper          @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   composedSlots ComposedSlot[]
 
   @@unique([paperId, number])
   @@index([userId, section])
+}
+
+// 在线做题考试场(PaperAttempt):一次开考一条;同卷单场由代码保证(status=ongoing 先查后建)。
+// answers 以卷内题号(number)字符串为 key:choice=字母串(如 "C"/"BC"),answer=作答文本;
+// 交卷时服务端判分写入 result 快照(逐题判定/大题小计/考点丢分),自评分在 selfScores。
+// 判分只作估分用途,不回写 PaperQuestion/Question 练习池(与拟卷同一隔离原则)。
+model PaperAttempt {
+  id          String    @id @default(cuid())
+  userId      String
+  paperId     String
+  status      String    @default("ongoing") // ongoing=进行中 | submitted=已交卷
+  startedAt   DateTime  @default(now())
+  submittedAt DateTime?
+  durationSec Int? // 实际用时(交卷时按 startedAt 结算,秒)
+  answers     Json      @default("{}")
+  result      Json? // 交卷判分快照(AttemptResult,见 lib/papers/attempt.ts)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paper Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([paperId, status])
 }
 
 // ===================== 智能拟卷（真题重组卷） =====================
@@ -900,19 +1058,19 @@ model PaperQuestion {
 // 换题。与 Paper 真题库严格分表——重组卷不进考频统计、不算试卷清单。纪律：
 // 候选池只含有官方答案且未 flagged 的题；卷面分值/题号永远由槽位实时重算，不写死。
 model ComposedPaper {
-  id          String   @id @default(cuid())
-  userId      String
-  title       String   // 如「政治重组卷 11-11」；retitle 可改
-  subject     String   // 与 Note 学科枚举对齐
-  baseSlug    String   // 底卷 slug（结构模板来源；reshuffle 按它重摇）
-  onlyChoice  Boolean  @default(false) // 组卷参数：只取选择题
+  id             String   @id @default(cuid())
+  userId         String
+  title          String // 如「政治重组卷 11-11」；retitle 可改
+  subject        String // 与 Note 学科枚举对齐
+  baseSlug       String // 底卷 slug（结构模板来源；reshuffle 按它重摇）
+  onlyChoice     Boolean  @default(false) // 组卷参数：只取选择题
   /// 组卷参数：是否放行 AI 参考答案题入池（answerSource=ai）。false=纯官方池。
   /// 换题/加题/重摇沿用本卷记录的口径，保证槽位候选与组卷时一致
-  allowAiAnswers Boolean @default(false)
-  totalScore  Int      @default(0)     // 槽位分值之和，增删后实时重算
-  durationMin Int      @default(0)     // 取底卷时长
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  allowAiAnswers Boolean  @default(false)
+  totalScore     Int      @default(0) // 槽位分值之和，增删后实时重算
+  durationMin    Int      @default(0) // 取底卷时长
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   slots ComposedSlot[]
@@ -924,27 +1082,26 @@ model ComposedPaper {
 // 换/删/加全部是槽位操作。position 不设唯一约束：重排会中途撞键，唯一性由
 // 写路径在事务内整体重排保证。paperQuestion 删除(重录)时置 null，渲染跳过空槽容错。
 model ComposedSlot {
-  id              String  @id @default(cuid())
+  id              String   @id @default(cuid())
   composedPaperId String
   position        Int
   section         String? // 所在大题（来自底卷题）
-  kind            String  // choice=选择题 answer=解答/填空题
+  kind            String // choice=选择题 answer=解答/填空题
   score           Int
   paperQuestionId String?
   /// 换题溯源冗余：该槽历经哪些题（首=当前）。答案页来源声明与「换一题」排除集用
-  historyIds String[] @default([])
-
+  historyIds      String[] @default([])
 
   /// 多源题目:非真题槽的内联题(真题槽走 paperQuestionId 引用,这四列留空)
   inlineStem    String?
   inlineOptions String[] @default([])
   inlineAnswer  String?
   /// 槽位题目来源:paper=真题(默认/空) textbook=课本拟题 ai-variant=AI变式 web=网络搜题
-  source    String?
-  sourceRef String?
+  source        String?
+  sourceRef     String?
 
-    composedPaper  ComposedPaper  @relation(fields: [composedPaperId], references: [id], onDelete: Cascade)
-  paperQuestion  PaperQuestion? @relation(fields: [paperQuestionId], references: [id], onDelete: SetNull)
+  composedPaper ComposedPaper  @relation(fields: [composedPaperId], references: [id], onDelete: Cascade)
+  paperQuestion PaperQuestion? @relation(fields: [paperQuestionId], references: [id], onDelete: SetNull)
 
   @@index([composedPaperId, position])
   @@index([paperQuestionId])
@@ -953,17 +1110,69 @@ model ComposedSlot {
 /// 变更计划快照：助手计划应用前自动落一份整卷状态，撤销=按快照还原后删行。
 /// 只留最近一份（应用新计划时覆盖旧的），不堆积历史。
 model ComposedSnapshot {
-  id         String   @id @default(cuid())
-  composedId String
-  userId     String   // 冗余存储免 join（与 PaperQuestion 同思路）
-  title      String
+  id          String   @id @default(cuid())
+  composedId  String
+  userId      String // 冗余存储免 join（与 PaperQuestion 同思路）
+  title       String
   durationMin Int
-  totalScore Int
+  totalScore  Int
   /// 槽位全量快照（position/section/kind/score/paperQuestionId/historyIds/内联字段），JSON 数组
-  slots      Json
-  createdAt  DateTime @default(now())
+  slots       Json
+  createdAt   DateTime @default(now())
 
   @@index([composedId, createdAt])
+}
+
+// ===================== 今晚测验（打印监察 → 监管之夜） =====================
+// 打印事件:App 内打印出口 beforeprint 自动上报(计数点 = 打印对话框真实弹出,
+// 打印页打开≠打印的误差由此消掉)。物理张数/校外复印感知不到,口径即 App 内
+// 触发的打印对话框次数(已拍板)。起步只接组卷;word-sheet/passage 预留。
+model PrintEvent {
+  id        String   @id @default(cuid())
+  userId    String // 冗余存储免 join（与 ComposedSnapshot 同思路）
+  kind      String   // composed=组卷 | word-sheet=单词默写纸 | passage=英语阅读
+  targetId  String   // composed: ComposedPaper id
+  createdAt DateTime @default(now())
+
+  @@index([userId, kind, targetId, createdAt])
+}
+
+// 今晚测验回执:监管之夜对一份组卷的原题重测结果。有当日回执的卷不再进当晚队列。
+// 变式为答错真题当场经 variants API 生成、只用于当场作答,不落题库;
+// wrongQuestionIds 指向 PaperQuestion,留复盘入口。
+model EveningTest {
+  id               String   @id @default(cuid())
+  userId           String
+  composedId       String
+  origTotal        Int
+  origRight        Int
+  variantTotal     Int      @default(0)
+  variantRight     Int      @default(0)
+  wrongQuestionIds String[] @default([])
+  durationSec      Int?
+  releasedBy       String   @default("quiz") // quiz=测完即放 | fallback=兜底放行 | skip=无锁环境跳过
+  createdAt        DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([composedId])
+}
+
+// ===================== 突击测试 =====================
+// 突袭概念测验回执:题源构成/7 天冷却查重/触发频率统计都从这张表推。
+// items 存每题快照(source/题干/选项/正误/题源指向),错题卡另有 StudyNote 行承载 FSRS,
+// 这里只做回执与去重,不参与复习排期。外键同 EveningTest 惯例:软关联不设 FK。
+model SurpriseQuizAttempt {
+  id          String   @id @default(cuid())
+  userId      String
+  trigger     String   @default("manual") // manual=学习台手动 | demo=验收参数(week2: weekday_window=锁内抽查 | weekend=周末随机 | catchup=补触发)
+  items       Json // 每题:{source, topic, stem, options, answer, userAnswer, right, sourceNoteId?, sourceRef?}
+  total       Int
+  correct     Int
+  durationSec Int?
+  escaped     Boolean  @default(false) // 弹出 60s 未响应被收回(第 2 波触发引擎用)
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 // ===================== 待办(Todo) =====================
@@ -973,7 +1182,7 @@ model ComposedSnapshot {
 model Todo {
   id        String    @id @default(cuid())
   userId    String
-  content   String    // 待办内容，如「周五 交物理作业」
+  content   String // 待办内容，如「周五 交物理作业」
   done      Boolean   @default(false)
   doneAt    DateTime? // 完成时间(勾选时写入，展示/统计用)
   dueAt     DateTime? // 截止/提醒时间(AI 从自然语言解析，如「周五」)；无明确时间时为空
@@ -1004,6 +1213,42 @@ model PlanMemo {
   @@index([userId, pinned, updatedAt])
 }
 
+// ===================== 今日计划(Plan 应用并入) =====================
+// 原 plan 应用(独立 Hono+SQLite 服务)并入后的时间轴/收集箱数据。
+// kind: task=任务 event=固定安排 memo=备忘(不进时间轴,备忘文本走 PlanMemo)。
+// status: inbox=待安排 planned=已排 done=完成 dropped=软删(撤销恢复用)。
+// 时间字段用当日分钟数(9:30=570),与 AI 排程端点 /api/plan/schedule 同口径。
+model PlanItem {
+  id            String   @id @default(cuid())
+  userId        String
+  title         String
+  note          String   @default("")
+  kind          String   @default("task")
+  status        String   @default("inbox")
+  /// 0 普通 / 1 重要 / 2 重要且紧急(勾选圈描边深浅同口径)
+  priority      Int      @default(1)
+  estimateMin   Int      @default(30)
+  /// deep=要精力 light=轻量 any=随意;19:00 后不排 deep(AI 排程规则)
+  energy        String   @default("any")
+  /// 计划所属日 YYYY-MM-DD(本地时区,服务端生成,不用 toISOString 防UTC跨天)
+  plannedDate   String?
+  /// 当日分钟数;带时间创建即直接落成计划块(固定事件用)
+  startMin      Int?
+  endMin        Int?
+  /// AI 排程理由一句话(手动排=「手动安排」)
+  reason        String?
+  done          Boolean  @default(false)
+  /// 连续顺延次数;≥3 复盘提示降级(要么拆小要么别做了)
+  postponeCount Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([userId, plannedDate])
+}
+
 // ===================== 写作画布(WriteDoc) =====================
 // 豆包式「帮我写作」工作区(/write)的文档:一章一文档,正文为纯文本。
 // 生成走 /api/write/generate(流式,不进聊天消息流),CRUD 走 /api/write/docs。
@@ -1032,14 +1277,14 @@ model WriteDoc {
 // 生成时把启用的条目按预算注入 system prompt,解跨章"吃书"(人物漂移/伏笔丢失)。
 // 注入策略见 src/lib/write/work-settings.ts(画布全量 / 聊天命中式)。
 model Work {
-  id          String   @id @default(cuid())
-  userId      String
-  title       String   @default("未命名作品")
-  description String   @default("")
+  id              String   @id @default(cuid())
+  userId          String
+  title           String   @default("未命名作品")
+  description     String   @default("")
   /// 作品级设定注入总开关:关掉后画布与聊天两条链路都不注入
-  settingsEnabled Boolean @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  settingsEnabled Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   settings WorkSetting[]
@@ -1051,15 +1296,15 @@ model Work {
 // 设定条目:分类 + 标题 + 别名(英文逗号分隔,聊天链路按此在最近消息/正文里命中) + 正文。
 // content 用模板引导自由撰写(人物卡:姓名/身份/外貌/说话习惯/关系),不设硬表单。
 model WorkSetting {
-  id       String  @id @default(cuid())
-  workId   String
+  id        String   @id @default(cuid())
+  workId    String
   /// 分类 key:outline/character/system/faction/place/item/other(见 lib/write/work-settings.ts 白名单)
-  category String  @default("other")
-  title    String
-  aliases  String  @default("")
-  content  String  @default("")
-  enabled  Boolean @default(true)
-  sort     Int     @default(0)
+  category  String   @default("other")
+  title     String
+  aliases   String   @default("")
+  content   String   @default("")
+  enabled   Boolean  @default(true)
+  sort      Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1100,7 +1345,7 @@ model ApiToken {
   id         String    @id @default(cuid())
   userId     String
   name       String    @default("默认") // 展示名，如「新标签页」
-  tokenHash  String    @unique           // sha256(token) hex
+  tokenHash  String    @unique // sha256(token) hex
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
   revokedAt  DateTime?
@@ -1175,6 +1420,20 @@ model QuotaRedeemCode {
   createdAt  DateTime  @default(now())
 }
 
+// 一日卡：管理员手工发放的当日「个人日限」豁免(userId+dayKey 命中即生效,
+// 跨天自然失效,过期行可留表不清理)。只免个人日限与附加余额扣减;池闸与
+// 单模型 capTokens 照卡——全站预算纪律不因发卡松动。scope 为逗号分隔的
+// 门面模型 id(PublicPoolModel.id,如 deepseek-standard),空 = 不限模型。
+model QuotaDayPass {
+  userId String
+  dayKey String // 北京时间 yyyy-MM-dd
+  scope  String @default("") // 逗号分隔门面模型 id;空=不限模型
+  note   String @default("")
+
+  @@id([userId, dayKey])
+  @@index([dayKey])
+}
+
 // 注册码：注册为邀请制,必须持管理员生成的注册码才能建号(防脚本批量注册烧池)。
 // 一码一用,usedBy/usedAt 记占用;code 明文存(低价值凭证,泄露可停用)。
 model RegisterCode {
@@ -1192,11 +1451,11 @@ model RegisterCode {
 model PublicPoolModel {
   id         String   @id // 门面模型 id：选择器/账本用；发上游时映射到 upstreamId
   name       String // 选择器显示名
-  provider   String   // 服务商 id（须在内置 provider 注册表内）
-  upstreamId String   // 上游真实模型 id（须为该 provider 的内置模型）
-  weight    Float    @default(1) // 计费倍率：落账 tokens×weight（1=与「标准」flash 同口径），管理卡可改
-  capTokens Int      @default(0) // 全站累计消耗预算：Σchat 落账（×倍率后）达到即停运+用户端隐藏，0=不限；管理员改大即恢复
-  enabled   Boolean  @default(true)
+  provider   String // 服务商 id（须在内置 provider 注册表内）
+  upstreamId String // 上游真实模型 id（须为该 provider 的内置模型）
+  weight     Float    @default(1) // 计费倍率：落账 tokens×weight（1=与「标准」flash 同口径），管理卡可改
+  capTokens  Int      @default(0) // 全站累计消耗预算：Σchat 落账（×倍率后）达到即停运+用户端隐藏，0=不限；管理员改大即恢复
+  enabled    Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
@@ -1221,4 +1480,222 @@ model DeviceAuthCode {
   createdAt  DateTime @default(now())
 
   @@index([expiresAt])
+}
+
+// ===================== 英语词汇:字典 / 我的词 / 计划 =====================
+// 三层分工(2026-11-15 改版,替换掉「词条自带 userId」的第一版):
+//   字典层(全局,无 userId):DictEntry 词条 / DictList 词单 / DictListItem 词单条目
+//   学习层(我的):UserWord 学习状态(FSRS) / WordReviewLog 复习流水
+//   计划层(我的):WordPlan 每日新词配额 + 清单游标
+// 为什么这么分:
+//   - 字典是「数据」不是「个人资产」:lemma 全局唯一,导入一次全站可查,换账号/加词单都不重复存;
+//   - 「我要背哪些词」是策略:计划只存 cursor 与每日配额,每天按需把清单里接下来的 N 个词落成
+//     UserWord,不预生成每日任务行(表不涨、改计划零成本、中断可续);
+//   - 同一个词只有一条 UserWord,跨词单进度共享——雅思/托福重叠词不会双倍复习。
+// 与 StudyNote 的关系:FSRS 字段口径一致,但单词与错题本分表,互不污染统计。
+
+model DictEntry {
+  id           String   @id @default(cuid())
+  /// 原形(显示用,保留大小写与连字符,如 "take off")
+  headword     String
+  /// 归一键:小写 + 合并空白 + 去首尾标点。全局唯一,查词与查重都认它
+  lemma        String   @unique
+  /// 短语/多词条目(如 "according to"):助记按短语出卡、拼写默写按此排除
+  isPhrase     Boolean  @default(false)
+  phoneticUs   String?
+  phoneticUk   String?
+  /// 主词性 n/v/adj…,多词性用 / 分隔
+  pos          String?
+  /// 中文释义合串(卡面与列表用);结构化释义在 senses
+  trans        String?
+  /// 英文释义
+  definition   String?
+  /// 词形变化(ECDICT exchange 口径 p:/d:/i:/3:/r:/t:),查词时把变形还原到原形用
+  exchange     String?
+  /// 结构化释义 [{pos, meaning, examples:[{en,zh}]}];来源无结构时留空,不硬造
+  senses       Json?
+  /// 例句 [{en, zh}]
+  examples     Json?
+  /// 搭配/短语(如 take … into account)
+  collocations Json?
+  /// 助记:一句话的联想/口诀(短语尤其需要,如 "take off = 飞机起飞前把外套脱下")
+  /// 来源可为导入(文件里的「助记」列)、手填,或后续 AI 生成(生成的内容要标 source)
+  mnemonic     String?
+  /// 难度/考试标签(高考/CET4/IELTS…)
+  tags         String[] @default([])
+  /// 柯林斯星级 1-5
+  collins      Int?
+  /// BNC 词频序号
+  bncFreq      Int?
+  /// 归一排序键(越小越常见),「高频优先」抽词用
+  freqRank     Int?
+  /// 来源:import=词表导入 | ai=AI 补全 | manual=手动录入
+  source       String   @default("import")
+  /// 导入原始行:未识别的列原样保留,防丢数据
+  raw          Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  listItems DictListItem[]
+  userWords UserWord[]
+
+  @@index([freqRank])
+  @@index([headword])
+}
+
+/// 词单:一份有序词表(高考3500/雅思核心/我的计划)。词条本体全局共享,本表只管「哪些词、什么顺序」。
+model DictList {
+  id         String   @id @default(cuid())
+  /// 稳定键(如 gao-kao-3500 / ielts-core);同 slug 重复导入=覆盖,不产生第二份
+  slug       String   @unique
+  name       String
+  /// imported=文件导入 | builtin=内置 | custom=手动清单
+  kind       String   @default("imported")
+  /// 难度/用途:高考 / CET4 / IELTS / TOEFL / 我的计划 …
+  level      String?
+  /// 条目数(导入结束时回写)
+  wordCount  Int      @default(0)
+  sourceFile String?
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  items DictListItem[]
+  plans WordPlan[]
+
+  @@index([level])
+}
+
+/// 词单条目:同一个词出现在多份词单里只存一条 DictEntry,本表只记顺序与单元。
+model DictListItem {
+  id       String  @id @default(cuid())
+  listId   String
+  entryId  String
+  /// 单内顺序(导入行序);按清单推进与断点续学都靠它
+  position Int
+  /// 单元/List 名(如「Unit 3」「List 12」「高频词」)
+  unit     String?
+
+  list  DictList  @relation(fields: [listId], references: [id], onDelete: Cascade)
+  entry DictEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@unique([listId, entryId])
+  @@index([listId, position])
+}
+
+/// 我的词:一条 = 我学过/要学的一个词。entryId 为空表示字典里没有的自由词(划词遇到、自己输入)。
+model UserWord {
+  id           String    @id @default(cuid())
+  userId       String
+  entryId      String?
+  /// 冗余:自由词的词形,或字典词的快照(队列/列表免 join)
+  headword     String
+  /// 归一键,同用户内唯一(自由词与字典词按同一口径去重)
+  lemma        String
+  /// 自由词的释义快照;字典词恒为空,展示时取 DictEntry
+  trans        String?
+  /// 进队来源:plan=计划推进 | chat=聊天划词 | kb=课文取词 | paper=试卷生词 | manual=手动
+  source       String    @default("plan")
+  /// 出处引用(消息 id / 文档 id / 卷 slug),软关联不留外键
+  sourceRef    String?
+  // —— FSRS(字段与 StudyNote 对齐) ——
+  stability    Float?
+  difficulty   Float?
+  /// 0=New 1=Learning 2=Review 3=Relearning
+  state        Int       @default(0)
+  /// 下次复习时间;进队即排期(now),当天就出现在复习队列
+  dueAt        DateTime?
+  lastReviewAt DateTime?
+  reps         Int       @default(0)
+  lapses       Int       @default(0)
+  /// 掌握度 0-1(自评 + 拼写判分合成)
+  mastery      Float     @default(0)
+  /// 暂停:不再进队列(生僻/弃用词),数据保留
+  suspended    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry DictEntry?      @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  logs  WordReviewLog[]
+
+  @@unique([userId, lemma])
+  @@index([userId, dueAt])
+  @@index([userId, suspended, dueAt])
+}
+
+/// AI 短文缓存：同一组目标词只花一次 token。
+/// key = 目标词排序去重后的 sha256 前 32 位；重新生成会覆盖同一条（不堆积版本）。
+model WordPassage {
+  id          String   @id @default(cuid())
+  userId      String
+  /// 词集指纹（排序去重后 hash），同一组词命中同一条
+  key         String
+  /// 原始目标词（顺序保留，展示「用到的词」用）
+  words       String[]
+  title       String
+  titleZh     String?
+  body        String
+  translation String?
+  /// 模型自报的「文中的形式」[{w, form}]，给底部词条行用
+  usedWords   Json?
+  /// 命中次数（观察缓存有没有用）
+  hits        Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId, createdAt])
+}
+
+/// 复习流水:每次评级一行,掌握度曲线与正确率统计的数据源(与 StudyNoteReviewLog 同思路)。
+model WordReviewLog {
+  id         String @id @default(cuid())
+  userWordId String
+  userId     String
+  /// 1=忘记 2=困难 3=一般 4=秒答(ts-fsrs Rating)
+  rating     Int
+  /// 判分来源:flip=自评 | spell=拼写判分 | choice=选择题 | write=造句(AI 判分)
+  source     String @default("flip")
+
+  masteryBefore Float
+  masteryAfter  Float
+  /// 本次距上次复习的天数 / 排期后间隔天数(算记忆保持率)
+  elapsedDays   Int?
+  scheduledDays Int?
+  ratedAt       DateTime @default(now())
+
+  userWord UserWord @relation(fields: [userWordId], references: [id], onDelete: Cascade)
+
+  @@index([userId, ratedAt])
+  @@index([userWordId, ratedAt])
+}
+
+/// 我的背词计划:一条 = 一段时间内的推进策略。同时只认一条 active(新建时旧计划置 false)。
+/// cursor 记「这份词单已推进到第几个 position」,每日新词按需生成 UserWord,不预生成任务行。
+model WordPlan {
+  id          String   @id @default(cuid())
+  userId      String
+  /// 从哪份词单抽新词;为空 = 只复习存量、不开新词
+  listId      String?
+  name        String
+  /// 每日新词上限(0=只复习)
+  dailyNew    Int      @default(15)
+  /// 每日复习上限(到期积压时截断,防爆量)
+  dailyReview Int      @default(100)
+  /// 抽词顺序:list=按词单顺序 | freq=高频优先
+  order       String   @default("list")
+  /// 词单游标:下一个待推进的 position
+  cursor      Int      @default(0)
+  active      Boolean  @default(true)
+  startedAt   DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  list DictList? @relation(fields: [listId], references: [id], onDelete: SetNull)
+
+  @@index([userId, active])
 }

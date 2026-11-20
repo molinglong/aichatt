@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-panel-hide"
+description = "Enables the course_panel_hide command without any pre-configured scope."
+commands.allow = ["course_panel_hide"]
+
+[[permission]]
+identifier = "deny-course-panel-hide"
+description = "Denies the course_panel_hide command without any pre-configured scope."
+commands.deny = ["course_panel_hide"]

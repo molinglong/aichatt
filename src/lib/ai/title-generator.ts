@@ -17,9 +17,14 @@ export async function generateConversationTitle(
       prompt: `User message: "${userMessage.slice(0, 500)}"\n\nTitle:`,
       temperature: 0.3,
     })
+    // 部分推理模型会把思考过程塞进正文(含未闭合的  thinking 标记),标题里不能带出来:
+    // 先剥成对 / 未闭合的思考块,再取标题;剥完全空则回落到用户原文截断。
     const title = text
+      .replace(/<\s*think(?:ing)?\s*>[\s\S]*?<\s*\/\s*think(?:ing)?\s*>/gi, '')
+      .replace(/<\s*think(?:ing)?\s*>[\s\S]*$/i, '')
       .trim()
       .replace(/^["'""'']+|["'""'']+$/g, '')
+      .replace(/^Title:\s*/i, '')
       .slice(0, 50)
     return title || fallbackTitle(userMessage)
   } catch {

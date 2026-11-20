@@ -13,4 +13,12 @@ UI 审美细则见 DESIGN.md;两者冲突时以 DESIGN.md 为准。
 - 端口:3456 = 正式 dev。**build 会杀运行中的 dev server**,build 前先停 dev。
 - 改 prisma schema 后 `prisma generate` 必须重启 dev server。
 - dev server 用 PowerShell 分离进程启动(挂在会话后台任务里的 npm 会被回收)。
+- **dev server 启动/重启后自动预热已挂 predev**(scripts/predev.cjs 派生分离预热进程,日志 scripts/dev-warmup.log;手动 = `npm run warm`)。Next dev 按需编译,冷路由首访 0.7~36s,预热后稳态 0.1~1s;会话内改完代码若期间有并行改动,交验收前可再跑一次 `npm run warm`。
 - **部署必须用户发起或确认**,禁止自行部署 VPS。
+
+## 实例自动化红线(硬性)
+
+- 浏览器自动化默认仅限**只读**:导航、截图、读 DOM。
+- **交互允许但严格限定**:仅限当前任务必需的最小步骤,动手前先一句话告知要点什么;禁止连环重试与批量循环,一步失败或结果异常即**整体停手**。
+- 在真实实例造测试数据用可识别命名,清理时再确认。
+- **越权入口**:用户明确准许时,可越过以上限定;准许一次一事,不自动延续到下次。

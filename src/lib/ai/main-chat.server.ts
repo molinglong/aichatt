@@ -23,19 +23,31 @@ export interface PingActionResult {
 
 /** 确保主对话存在并返回 */
 export async function ensureMainConversation(userId: string, modelId?: string) {
-  const existing = await prisma.conversation.findFirst({
-    where: { userId, isMain: true },
-  })
+  // 主对话用确定性 id(main:<userId>):登录时两个并发请求同时 find-then-create
+  // 会建出双主对话(A1 实测),改成主键直建 + 撞键回读,竞态窗口天然归一。
+  // 老账号主对话仍是 cuid id:先按确定性 id 找,再回落 findFirst 兼容存量。
+  const id = `main:${userId}`
+  const existing =
+    (await prisma.conversation.findUnique({ where: { id } })) ??
+    (await prisma.conversation.findFirst({ where: { userId, isMain: true } }))
   if (existing) return existing
-  return prisma.conversation.create({
-    data: {
-      userId,
-      title: "主对话",
-      model: modelId || "deepseek-flash",
-      maskId: KEEPER_MASK_ID,
-      isMain: true,
-    },
-  })
+  try {
+    return await prisma.conversation.create({
+      data: {
+        id,
+        userId,
+        title: "主对话",
+        model: modelId || "deepseek-flash",
+        maskId: KEEPER_MASK_ID,
+        isMain: true,
+      },
+    })
+  } catch (err) {
+    // 并发对手已建:回读它的行;真不是主键冲突就原样抛
+    const raced = await prisma.conversation.findUnique({ where: { id } })
+    if (raced) return raced
+    throw err
+  }
 }
 
 interface PingTemplate {

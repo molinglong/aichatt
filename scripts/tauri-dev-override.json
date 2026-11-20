@@ -1,0 +1,5 @@
+{
+  "build": {
+    "beforeDevCommand": "cmd /c exit 0"
+  }
+}

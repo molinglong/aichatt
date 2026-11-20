@@ -1,10 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Menu, ArrowLeft, Settings as SettingsIcon, RotateCw } from 'lucide-react'
+import { Menu, ArrowLeft, Settings as SettingsIcon, RotateCw, CalendarDays } from 'lucide-react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useChatStore } from '@/store/chat-store'
 import { cn } from '@/lib/utils'
+import { openTodayPlan } from '@/components/plan/TodayPlanDialog'
 
 /**
  * 方案 C 手机端悬浮圆钮(≤md):深色半透明玻璃圆钮悬浮在壁纸上,
@@ -80,6 +81,16 @@ export function MobileFloatButtons() {
             style={btnStyle}
           >
             <RotateCw className={cn('w-[18px] h-[18px]', reloading && 'animate-spin')} />
+          </button>
+          {/* 今日计划:原 plan 应用并入后的全局入口(弹窗见 TodayPlanDialog) */}
+          <button
+            onClick={openTodayPlan}
+            className={cn(btnBase, 'pointer-events-auto')}
+            aria-label="今日计划"
+            title="今日计划"
+            style={btnStyle}
+          >
+            <CalendarDays className="w-[18px] h-[18px]" />
           </button>
           <button
             onClick={() => setSettingsOpen(true)}

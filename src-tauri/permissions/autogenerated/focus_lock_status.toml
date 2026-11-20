@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-focus-lock-status"
+description = "Enables the focus_lock_status command without any pre-configured scope."
+commands.allow = ["focus_lock_status"]
+
+[[permission]]
+identifier = "deny-focus-lock-status"
+description = "Denies the focus_lock_status command without any pre-configured scope."
+commands.deny = ["focus_lock_status"]

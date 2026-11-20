@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pet-home-position"
+description = "Enables the pet_home_position command without any pre-configured scope."
+commands.allow = ["pet_home_position"]
+
+[[permission]]
+identifier = "deny-pet-home-position"
+description = "Denies the pet_home_position command without any pre-configured scope."
+commands.deny = ["pet_home_position"]

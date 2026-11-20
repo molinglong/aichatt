@@ -9,6 +9,11 @@ import { ConfirmDialogHost } from '@/components/ui/ConfirmDialog'
 import { MobileFloatButtons } from '@/components/mobile/MobileFloatButtons'
 import { UpdateBanner } from '@/components/mobile/UpdateBanner'
 import { MobileDrawer } from '@/components/mobile/MobileDrawer'
+import { SelectionTranslator } from '@/components/english/SelectionTranslator'
+import { TodayPlanDialog } from '@/components/plan/TodayPlanDialog'
+import { ChickReactions } from '@/components/chick/ChickReactions'
+import { ChickSkyScene } from '@/components/wallpaper/ChickSkyScene'
+import { DeepLinkBridge } from '@/components/DeepLinkBridge'
 
 /**
  * 各主 tab(chat/images/explore/write)共享的 shell layout。
@@ -46,11 +51,13 @@ export default async function AppLayout({
           的总原则下壳体自身不再是浮层。桌面壳 [data-tauri] 的同款强制在 globals.css 一并归零 */}
       <div className="app-shell relative isolate h-full flex overflow-hidden bg-surface-muted">
         {/* 壁纸层(主题 = 壁纸时可见): 无状态,显隐全由 html[data-wallpaper="on"] 驱动。
-            照片一层 + 中间柔光一层。柔光默认 display:none —— 只在对话页出现
+            照片一层 + 小鸡天空场景一层(风格子档 photo/chick 二选一,见 theme.ts) + 中间柔光一层。
+            柔光默认 display:none —— 只在对话页出现
             (欢迎页曾经也有,会在屏幕正中印出一个白圆,已按用户要求去掉)。
-            CSS 在 globals.css 的「主题: 壁纸」段。z-0 低于内容列(z-1)与侧栏(z-50) */}
+            CSS 在 globals.css 的「主题: 壁纸」「主题: 壁纸 · 小鸡天空」两段。z-0 低于内容列(z-1)与侧栏(z-50) */}
         <div className="sky-wallpaper" aria-hidden>
           <div className="sky-wallpaper-photo" />
+          <ChickSkyScene />
           <div className="sky-wallpaper-veil" />
         </div>
         <Sidebar />
@@ -84,6 +91,14 @@ export default async function AppLayout({
       <ContextMenuHost />
       {/* 通道③ 确认框宿主(单例):confirmDialog() 的 Promise 在此落地,须与 SettingsModal 同级 */}
       <ConfirmDialogHost />
+      {/* 划词翻译:选中正文文字后冒「译」按钮,全站生效(输入框/可编辑区除外) */}
+      <SelectionTranslator />
+      {/* 小鸡事件反应浮层(单例):业务流 chickPlay() 喊事件,每日上限/冷却/排队由宿主裁决 */}
+      <ChickReactions />
+      {/* 今日计划弹窗(单例):入口 TopBar 日历钮 / 移动悬浮钮,开关走模块级 store */}
+      <TodayPlanDialog />
+      {/* 桌面壳深链桥(单例):浏览器扩展 aichatt://ask 带图提问 → 校验转发聊天输入框 */}
+      <DeepLinkBridge />
     </div>
   )
 }

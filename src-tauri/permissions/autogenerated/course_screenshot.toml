@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-screenshot"
+description = "Enables the course_screenshot command without any pre-configured scope."
+commands.allow = ["course_screenshot"]
+
+[[permission]]
+identifier = "deny-course-screenshot"
+description = "Denies the course_screenshot command without any pre-configured scope."
+commands.deny = ["course_screenshot"]

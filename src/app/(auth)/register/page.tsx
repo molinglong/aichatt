@@ -53,7 +53,7 @@ export default function RegisterPage() {
         return
       }
 
-      router.push("/login?registered=1")
+      router.push(`/login?registered=1&email=${encodeURIComponent(email)}`)
     } catch {
       setError("网络错误，请稍后重试")
       setLoading(false)

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-course-set-veiled"
+description = "Enables the course_set_veiled command without any pre-configured scope."
+commands.allow = ["course_set_veiled"]
+
+[[permission]]
+identifier = "deny-course-set-veiled"
+description = "Denies the course_set_veiled command without any pre-configured scope."
+commands.deny = ["course_set_veiled"]

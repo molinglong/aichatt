@@ -2,7 +2,7 @@
  * 主题体系单点控制 —— 外观是**一维**的: 选设置里的「主题」等于选一件事。
  *   light / dark / system → 黑白基线
  *   grid                  → 格子,自带光态: 白天(正午) / 暮色(日落) / 晚上(深夜)
- *   wallpaper             → 壁纸(用户自拍的那张云),明暗另配(浅色/深色/跟随系统)
+ *   wallpaper             → 壁纸,风格子档另配(云照片/小鸡天空),明暗另配(浅色/深色/跟随系统)
  * 设置面板随之分两排: 上面那排是主题(五选一),下面那排按主题切换内容 ——
  * 非格子非壁纸时选配色(黑白基线),格子时选白天/暮色/晚上,壁纸时选明暗。
  * 「月白·桂花金」配色已于 2026-10-25 删除,存量存储值一律回落黑白基线。
@@ -13,8 +13,9 @@
  *   html[data-grid-tone]   → dawn | day | dusk | night(仅格子写,区分四个光态)
  *   html[data-style]       → classic | bigsur(形状/材质维度,与明暗配色正交,见 UiStyle)
  *   html[data-wallpaper]   → on | off(壁纸层显隐唯一判据,纯 CSS 驱动)
+ *   html[data-wallpaper-style] → photo | chick(壁纸风格子档,仅壁纸主题下有意义)
  * 格子的光态由 gridTone 决定,且不覆盖用户的明暗偏好 —— 退出格子时原样恢复。
- * 壁纸同理: 明暗记在 wallpaperScheme,不动 theme 键。
+ * 壁纸同理: 明暗记在 wallpaperScheme、风格记在 wallpaperStyle,都不动 theme 键。
  *
  * 三个写入方共用本模块,行为必须一致:
  *   1) src/app/layout.tsx 首帧内联脚本(不能 import,逻辑等价照抄,防首帧闪白)
@@ -42,6 +43,10 @@ export type GridTonePref = GridTone | 'auto'
 export type ThemeChoice = ThemeMode | 'grid' | 'wallpaper'
 /** 壁纸的明暗子档: 壁纸主题下「下面那排」选的就是这个,不动用户的 theme 偏好 */
 export type WallpaperScheme = ThemeMode
+/** 壁纸的风格子档(2026-11-18 小鸡天空接入):
+ *   photo = 云照片(用户自拍那张,现行,只在手机端渲染)
+ *   chick = 小鸡天空(蜡笔小鸡场景,2026-11-18 桌面端先行,手机端暂降级为素底) */
+export type WallpaperStyle = 'photo' | 'chick'
 
 /**
  * UI 样式维度(第二维,与明暗/配色正交): 管**形状与材质**,不管颜色。
@@ -62,6 +67,7 @@ export const PALETTE_STORAGE_KEY = 'palette'
 export const GRID_TONE_STORAGE_KEY = 'gridTone'
 export const UI_STYLE_STORAGE_KEY = 'uiStyle'
 export const WALLPAPER_SCHEME_STORAGE_KEY = 'wallpaperScheme'
+export const WALLPAPER_STYLE_STORAGE_KEY = 'wallpaperStyle'
 
 /** 设置面板「样式」一排。
  *  2026-10-31 用户指令:暂时只保留 Big Sur 玻璃,经典 / Google 2020 从选择入口隐藏 ——
@@ -92,6 +98,12 @@ export const WALLPAPER_SCHEMES: { value: WallpaperScheme; label: string }[] = [
   { value: 'light', label: '浅色' },
   { value: 'dark', label: '深色' },
   { value: 'system', label: '跟随系统' },
+]
+
+/** 下面那排(主题 = 壁纸时): 壁纸的风格。默认云照片(存量用户无感知) */
+export const WALLPAPER_STYLES: { value: WallpaperStyle; label: string }[] = [
+  { value: 'photo', label: '云照片' },
+  { value: 'chick', label: '小鸡天空' },
 ]
 
 /** 下面那排(主题 = 格子时): 格子的光态,按一天的时间序排 —— 一扇窗的四个时刻 */
@@ -143,6 +155,8 @@ export interface Appearance {
   style?: UiStyle
   /** choice 是壁纸时生效: 壁纸的明暗子档。缺省时沿用存储值(默认 system) */
   wallpaperScheme?: WallpaperScheme
+  /** choice 是壁纸时生效: 壁纸的风格子档。缺省时沿用存储值(默认 photo,存量无感知) */
+  wallpaperStyle?: WallpaperStyle
 }
 
 /** 明暗模式的最终判据: system 跟随系统偏好 */
@@ -186,6 +200,11 @@ export function readStoredWallpaperScheme(): WallpaperScheme {
   return v === 'light' || v === 'dark' ? v : 'system'
 }
 
+/** 壁纸的风格子档: 未知值/缺省一律云照片(存量用户无感知) */
+export function readStoredWallpaperStyle(): WallpaperStyle {
+  return localStorage.getItem(WALLPAPER_STYLE_STORAGE_KEY) === 'chick' ? 'chick' : 'photo'
+}
+
 /** 读出当前外观 —— 选择器三个 state 的初值 */
 export function readAppearance(): Appearance {
   if (typeof window === 'undefined') {
@@ -215,6 +234,7 @@ export function readAppearance(): Appearance {
       gridToneAuto,
       style: readStoredStyle(),
       wallpaperScheme: readStoredWallpaperScheme(),
+      wallpaperStyle: readStoredWallpaperStyle(),
     }
   }
 
@@ -259,6 +279,12 @@ export function applyAppearance(input: Appearance): void {
 
   // 壁纸层显隐的唯一判据(纯 CSS 驱动,首帧脚本写同一个值)
   root.setAttribute('data-wallpaper', isWallpaper ? 'on' : 'off')
+
+  // 壁纸风格子档: 非壁纸主题下属性值无意义但保持同步,免得切回壁纸时读到脏值
+  // (CSS 在壁纸段外一律以 data-wallpaper="on" 做共同前提,风格值只在壁纸下被读到)
+  const wstyle: WallpaperStyle = next.wallpaperStyle ?? readStoredWallpaperStyle()
+  if (isWallpaper) localStorage.setItem(WALLPAPER_STYLE_STORAGE_KEY, wstyle)
+  root.setAttribute('data-wallpaper-style', wstyle)
 
   const palette: PaletteId = isGrid ? GRID_PALETTE : isWallpaper ? WALLPAPER_PALETTE : next.palette
   localStorage.setItem(PALETTE_STORAGE_KEY, palette)

@@ -4,8 +4,8 @@ import { prisma } from '@/lib/db'
 
 /**
  * GET /api/study/stats - 复习统计(统计弹层数据源)
- * 返回:连击天数 / 今日已复习 / 待到期 / 近 7 日量 / 近 12 周热力图 / 考点掌握度排行(低的在前)。
- * 热力图口径:按复习日志 ratedAt(本地时区)计每日复习张数,固定回看 84 天(12 周)。
+ * 返回:连击天数 / 今日已复习 / 待到期 / 近 7 日量 / 近半年热力图 / 考点掌握度排行(低的在前)。
+ * 热力图口径:按复习日志 ratedAt(本地时区)计每日复习张数,固定回看 182 天(26 周,约半年)。
  */
 export async function GET() {
   const session = await auth()
@@ -15,7 +15,7 @@ export async function GET() {
   const userId = session.user.id
 
   try {
-    const since = new Date(Date.now() - 84 * 86_400_000)
+    const since = new Date(Date.now() - 182 * 86_400_000)
     const logs = await prisma.studyNoteReviewLog.findMany({
       where: { note: { userId }, ratedAt: { gte: since } },
       select: { ratedAt: true },
@@ -31,11 +31,11 @@ export async function GET() {
       countByDay.set(key, (countByDay.get(key) ?? 0) + 1)
     }
 
-    // 84 天序列(旧→新),本地 0 点锚点
+    // 182 天序列(旧→新),本地 0 点锚点
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const heatmap: Array<{ date: string; count: number }> = []
-    for (let i = 83; i >= 0; i--) {
+    for (let i = 181; i >= 0; i--) {
       const d = new Date(today.getTime() - i * 86_400_000)
       const key = dayKey(d)
       heatmap.push({ date: key, count: countByDay.get(key) ?? 0 })

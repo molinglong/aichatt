@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { Save, Trash2, Loader2, Timer, CheckCircle, AlertCircle, Key, KeyRound, Eye, EyeOff, Zap, ExternalLink, Brain, Plus, Settings2, HelpCircle, Info, MessageSquare, MoreHorizontal, GitBranch, Cpu, Wrench, BarChart3, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Filter, LayoutDashboard, Sparkles, ImageIcon, Check, RefreshCw, Globe, Search, LogOut, User, CalendarDays, Pencil, X, FileUp, Download, Copy, VenetianMask, RotateCcw, Plug, MapPin, FolderOpen, Gauge, Ticket, Gift, Smartphone, FileJson, Watch as WatchIcon, Fish } from 'lucide-react'
+import { Save, Trash2, Loader2, Timer, CheckCircle, AlertCircle, Key, KeyRound, Eye, EyeOff, Zap, ExternalLink, Brain, Plus, Settings2, HelpCircle, Info, MessageSquare, MoreHorizontal, GitBranch, Cpu, Wrench, BarChart3, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Filter, LayoutDashboard, Sparkles, ImageIcon, Check, RefreshCw, Globe, Search, LogOut, User, CalendarDays, Pencil, X, FileUp, Download, Copy, VenetianMask, RotateCcw, Plug, MapPin, FolderOpen, Gauge, Ticket, Gift, Smartphone, FileJson, Watch as WatchIcon, Fish, Shield, Activity } from 'lucide-react'
 import { signOut, useSession } from 'next-auth/react'
 import { cn } from '@/lib/utils'
 import pkg from '../../package.json'
@@ -15,12 +15,14 @@ import {
   THEME_CHOICES,
   UI_STYLES,
   WALLPAPER_SCHEMES,
+  WALLPAPER_STYLES,
   type Appearance,
   type GridTone,
   type SelectablePalette,
   type ThemeChoice,
   type UiStyle,
   type WallpaperScheme,
+  type WallpaperStyle,
 } from '@/lib/theme'
 import { useCustomModels, type CustomModelForm, type SavedCustomModel, CUSTOM_MODEL_DOT } from '@/hooks/useCustomModels'
 import { useWindowDrag } from '@/hooks/useWindowDrag'
@@ -42,6 +44,9 @@ import { parseMemoryText, COMMON_IMPORT_SOURCES, MEMORY_IMPORT_REFERENCE, type P
 import MasksSettings from '@/components/settings/MasksSettings'
 import { PortableSettings } from '@/components/settings/PortableSettings'
 import { WatchSettings } from '@/components/settings/WatchSettings'
+import { PerfPanel } from '@/components/settings/PerfPanel'
+import { FocusLockScheduleSettings } from '@/components/settings/FocusLockScheduleSettings'
+import { isFocusLockPreview } from '@/lib/focus-lock-store'
 import { YellowFishSection } from '@/components/settings/YellowFishSection'
 import { DefaultModelSetting } from '@/components/settings/DefaultModelSetting'
 import QuotaAdminSection from '@/components/settings/QuotaAdminSection'
@@ -80,6 +85,15 @@ interface MemoryInfo {
   status?: string
   /** 取代本条的记忆 id(仅 superseded) */
   supersededBy?: string | null
+}
+
+/** 短期记忆条目（进行中状态，带过期时间，AI 自动判记） */
+interface ScratchNoteInfo {
+  id: string
+  topic: string
+  content: string
+  expiresAt: string
+  updatedAt: string
 }
 
 /** 服务端算好的一组相互矛盾的记忆(本地槽位/常识判定,零 LLM) */
@@ -543,7 +557,7 @@ const PROVIDER_URL: Record<string, string> = {
   yi: 'https://platform.lingyiwanwu.com/apikeys',
 }
 
-type SectionId = 'overview' | 'session' | 'providers' | 'models' | 'search' | 'memory' | 'clarify' | 'localfiles' | 'masks' | 'mcp' | 'general' | 'help' | 'mobileapp' | 'about' | 'usage' | 'image' | 'buddy' | 'account' | 'apitokens' | 'portable' | 'quota' | 'redeem' | 'regcodes' | 'watch' | 'yellowfish'
+type SectionId = 'overview' | 'session' | 'providers' | 'models' | 'search' | 'memory' | 'clarify' | 'localfiles' | 'masks' | 'mcp' | 'general' | 'help' | 'mobileapp' | 'about' | 'usage' | 'image' | 'buddy' | 'account' | 'apitokens' | 'portable' | 'quota' | 'redeem' | 'regcodes' | 'watch' | 'perf' | 'yellowfish' | 'focuslock'
 
 type NavItem = { id: SectionId; label: string; icon: typeof Key; adminOnly?: boolean }
 type NavGroup = { title: string; items: NavItem[] }
@@ -585,6 +599,10 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'help', label: '帮助', icon: HelpCircle },
       { id: 'mobileapp', label: '手机客户端', icon: Smartphone },
       { id: 'watch', label: '手表', icon: WatchIcon },
+      // 性能体检:仅桌面 Tauri(采样/环形缓冲在 Rust 侧,Web 无数据源,不露空壳)
+      { id: 'perf', label: '性能体检', icon: Activity },
+      // 监管模式定时:仅桌面 Tauri 露出(锁本体在 Rust);Web 预览门 __flsched 亦放行
+      { id: 'focuslock', label: '监管模式', icon: Shield },
       { id: 'about', label: '关于', icon: Info },
     ],
   },
@@ -613,7 +631,11 @@ const EPHEMERAL_NAV_GROUPS: NavGroup[] = [
   { title: '会话', items: [EPHEMERAL_SESSION_ITEM] },
   ...NAV_GROUPS
     .filter((g) => g.title === '应用')
-    .map((g) => ({ ...g, items: g.items.filter((i) => i.id !== 'help') })),
+    .map((g) => ({
+      ...g,
+      // 帮助与监管模式对访客无意义:前者是 API Key 指引,后者是桌面硬锁能力
+      items: g.items.filter((i) => i.id !== 'help' && i.id !== 'focuslock'),
+    })),
 ]
 // 「手机客户端」访客也留:没登录的人正是最可能想装 App 的那批
 const EPHEMERAL_SAFE_SECTIONS = new Set<SectionId>(['overview', 'session', 'general', 'mobileapp', 'about'])
@@ -1101,6 +1123,12 @@ export function SettingsModal({
   const [supersededMemories, setSupersededMemories] = useState<MemoryInfo[]>([])
   const [supersededOpen, setSupersededOpen] = useState(false)
   const [memoryResolving, setMemoryResolving] = useState<string | null>(null)
+  // ── 短期记忆（进行中状态）：AI 自动判记，设置页查看/删除/清理过期 ──
+  const [scratchNotes, setScratchNotes] = useState<ScratchNoteInfo[]>([])
+  const [scratchExpired, setScratchExpired] = useState<ScratchNoteInfo[]>([])
+  const [scratchExpiredOpen, setScratchExpiredOpen] = useState(false)
+  const [scratchDeleting, setScratchDeleting] = useState<string | null>(null)
+  const [scratchClearing, setScratchClearing] = useState(false)
   // ── 记忆导入（从 ChatGPT / Claude 等其他 AI 导入）──────────────
   const [memoryImportOpen, setMemoryImportOpen] = useState(false)
   const [memoryImportSource, setMemoryImportSource] = useState('')
@@ -1123,11 +1151,19 @@ export function SettingsModal({
   const [gridToneAuto, setGridToneAuto] = useState(false)
   // 壁纸主题的明暗子档(主题 = 壁纸时生效),默认跟随系统
   const [wallpaperScheme, setWallpaperScheme] = useState<WallpaperScheme>('system')
+  // 壁纸主题的风格子档(云照片/小鸡天空),默认云照片(存量用户无感知)
+  const [wallpaperStyle, setWallpaperStyle] = useState<WallpaperStyle>('photo')
   const [uiStyle, setUiStyle] = useState<UiStyle>('bigsur')
     const inTauri = useIsTauri()
     // 通知类开关按「在任意壳内」露出:安卓壳一样有系统通知能力,
     // 用 inTauri(桌面专属)会把手机端这两项藏掉,设置里根本调不了。
     const inShell = useIsTauriShell()
+    // 监管模式定时分区显隐:桌面 Tauri 或 dev Web 预览门(__flmock/__flsched)。
+    // mount 后置位与 useIsTauri 同理,避免 SSR/CSR 水合不匹配。
+    const [flPreview, setFlPreview] = useState(false)
+    useEffect(() => {
+      if (isFocusLockPreview()) setFlPreview(true)
+    }, [])
 
     // 安卓安装包清单:nginx /apk/ 与站点同源(见 scripts/android-publish.ps1),
     // 取到才在「手机客户端」分区显示版本号与包体大小,取不到就退化成「重试」。
@@ -1329,8 +1365,12 @@ export function SettingsModal({
   // 导航行统一显隐口径:管理组按 role,「手机客户端」按端 —— 桌面壳自己就是客户端,
   // 安卓壳另有 UpdateBanner 走应用内更新,两处壳里放一个"下载 APK"入口只会误导。
   const navItemVisible = useCallback(
-    (item: NavItem) => (!item.adminOnly || isAdmin) && !(item.id === 'mobileapp' && inShell),
-    [isAdmin, inShell]
+    (item: NavItem) =>
+      (!item.adminOnly || isAdmin) &&
+      !(item.id === 'mobileapp' && inShell) &&
+      !(item.id === 'focuslock' && !(inTauri || flPreview)) &&
+      !(item.id === 'perf' && !inTauri),
+    [isAdmin, inShell, inTauri, flPreview]
   )
 
   // 桌面侧栏一个分组的行：所有分组（含管理）都在同一个滚动区里
@@ -1831,10 +1871,18 @@ export function SettingsModal({
     // 每次打开设置时补拉，保证 AI 卡片（manage_provider_models）等外部入口的改动能同步进来
     void fetchProviderOverrides()
     Promise.all([
-      fetch('/api/providers').then((r) => r.json()),
-      fetch('/api/keys').then((r) => r.json()),
-      fetch('/api/memories').then((r) => r.json()),
-      fetch('/api/custom-models').then((r) => r.json()),
+      // 12 个请求并行加载:任一失败不能让整块状态中断(否则「服务商」面板会整片空白)。
+      // providers 额外重试一次 —— 它挂了面板就没有任何可配置项。
+      fetch('/api/providers')
+        .then((r) => r.json())
+        .catch(() =>
+          new Promise((res) => setTimeout(res, 900)).then(() =>
+            fetch('/api/providers').then((r) => r.json()).catch(() => [])
+          )
+        ),
+      fetch('/api/keys').then((r) => r.json()).catch(() => []),
+      fetch('/api/memories').then((r) => r.json()).catch(() => null),
+      fetch('/api/custom-models').then((r) => r.json()).catch(() => []),
       fetch('/api/image-settings').then((r) => r.json()).catch(() => null),
       fetch('/api/usage').then((r) => r.json()).catch(() => null),
       fetch('/api/settings/clarify').then((r) => r.json()).catch(() => null),
@@ -1842,8 +1890,9 @@ export function SettingsModal({
       fetch('/api/user/profile').then((r) => r.json()).catch(() => null),
       fetch('/api/profiles').then((r) => r.json()).catch(() => null),
       fetch('/api/settings/local-files').then((r) => r.json()).catch(() => null),
+      fetch('/api/scratch-notes').then((r) => r.json()).catch(() => null),
     ])
-      .then(([provs, keyList, memoryData, cmList, imgSettings, usageData, clarifyData, aiControlData, profileData, profileStateData, localFilesData]) => {
+      .then(([provs, keyList, memoryData, cmList, imgSettings, usageData, clarifyData, aiControlData, profileData, profileStateData, localFilesData, scratchData]) => {
         setProviders(provs)
         setKeys(keyList)
         setMemories(memoryData?.memories ?? [])
@@ -1853,6 +1902,8 @@ export function SettingsModal({
         setClarifyEnabled(clarifyData?.clarifyEnabled ?? true)
         setLocalFilesEnabled(localFilesData?.localFilesEnabled ?? false)
         setLocalFilesExecAutoRun(localFilesData?.localFilesExecAutoRun ?? false)
+        setScratchNotes(scratchData?.active ?? [])
+        setScratchExpired(scratchData?.expired ?? [])
         if (!aiControlTouchedRef.current) {
           setAiControlEnabled(aiControlData?.aiSettingsControl ?? true)
         }
@@ -2034,6 +2085,7 @@ export function SettingsModal({
     setGridToneAuto(a.gridToneAuto)
     setUiStyle(a.style ?? 'bigsur')
     setWallpaperScheme(a.wallpaperScheme ?? 'system')
+    setWallpaperStyle(a.wallpaperStyle ?? 'photo')
   }, [])
 
   // 智能模式开着设置面板时,高亮那一段要跟着时间走(每 30s 对一次表,跨段才变);
@@ -2101,6 +2153,8 @@ export function SettingsModal({
     setGridToneAuto(safe.gridToneAuto)
     // 壁纸明暗子档: 调用点没带时沿用当前展示值(切主题/切样式不该把它重置)
     if (safe.wallpaperScheme) setWallpaperScheme(safe.wallpaperScheme)
+    // 壁纸风格子档: 同理,没带 = 保持现状
+    if (safe.wallpaperStyle) setWallpaperStyle(safe.wallpaperStyle)
     // 样式维度只在调用点显式带上时回写展示态(老入口不传 = 保持现状)
     if (safe.style) setUiStyle(safe.style)
     applyAppearance(safe)
@@ -2108,22 +2162,27 @@ export function SettingsModal({
   }
 
   function handleChoiceChange(choice: ThemeChoice) {
-    commit({ choice, palette: paletteChoice, gridTone, gridToneAuto, wallpaperScheme })
+    commit({ choice, palette: paletteChoice, gridTone, gridToneAuto, wallpaperScheme, wallpaperStyle })
   }
 
   /** 样式切换: 与主题/配色正交,只改 data-style,其余外观原样保留 */
   function handleStyleChange(style: UiStyle) {
-    commit({ choice: themeChoice, palette: paletteChoice, gridTone, gridToneAuto, style, wallpaperScheme })
+    commit({ choice: themeChoice, palette: paletteChoice, gridTone, gridToneAuto, style, wallpaperScheme, wallpaperStyle })
   }
 
   /** 壁纸明暗: 只在「主题 = 壁纸」时渲染。与格子的光态同理 —— 不动用户的 theme 偏好 */
   function handleWallpaperSchemeChange(scheme: WallpaperScheme) {
-    commit({ choice: 'wallpaper', palette: paletteChoice, gridTone, gridToneAuto, wallpaperScheme: scheme })
+    commit({ choice: 'wallpaper', palette: paletteChoice, gridTone, gridToneAuto, wallpaperScheme: scheme, wallpaperStyle })
+  }
+
+  /** 壁纸风格: 云照片/小鸡天空。只在「主题 = 壁纸」时渲染,与明暗子档互不干扰 */
+  function handleWallpaperStyleChange(style: WallpaperStyle) {
+    commit({ choice: 'wallpaper', palette: paletteChoice, gridTone, gridToneAuto, wallpaperScheme, wallpaperStyle: style })
   }
 
   // 配色行只在「主题 ≠ 格子 且 ≠ 壁纸」时渲染,故这里 themeChoice 一定是明暗三态之一
   function handlePaletteChange(palette: SelectablePalette) {
-    commit({ choice: themeChoice, palette, gridTone, gridToneAuto, wallpaperScheme })
+    commit({ choice: themeChoice, palette, gridTone, gridToneAuto, wallpaperScheme, wallpaperStyle })
   }
 
   // 日出/白天/暮色/晚上这一排只在「主题 = 格子」时渲染。
@@ -2476,6 +2535,48 @@ export function SettingsModal({
     } finally {
       setMemoryDeleting(null)
     }
+  }
+
+  // ── 短期记忆管理（设置页出口）：刷新 / 删单条 / 清空已过期 ──────────
+  async function refreshScratchNotes() {
+    const data = await fetch('/api/scratch-notes').then((r) => r.json()).catch(() => null)
+    setScratchNotes(data?.active ?? [])
+    setScratchExpired(data?.expired ?? [])
+  }
+
+  async function handleDeleteScratch(id: string) {
+    if (!(await confirmDialog({ title: '删除短期记忆', message: '确定要删除这条进行中状态吗？', detail: '删除后不可恢复。', danger: true, okText: '删除' }))) return
+    setScratchDeleting(id)
+    try {
+      const res = await fetch(`/api/scratch-notes?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error()
+      await refreshScratchNotes()
+    } catch {
+      toast.error('删除失败，请重试')
+    } finally {
+      setScratchDeleting(null)
+    }
+  }
+
+  async function handleClearExpiredScratch() {
+    setScratchClearing(true)
+    try {
+      const res = await fetch('/api/scratch-notes?scope=expired', { method: 'DELETE' })
+      if (!res.ok) throw new Error()
+      await refreshScratchNotes()
+    } catch {
+      toast.error('清理失败，请重试')
+    } finally {
+      setScratchClearing(false)
+    }
+  }
+
+  /** 剩余有效期文案（仅打开设置后渲染，无 SSR 水合风险） */
+  function scratchDaysLeft(iso: string) {
+    const days = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
+    if (days <= 0) return '已过期'
+    if (days === 1) return '明天到期'
+    return `${days} 天后失效`
   }
 
   // ── 记忆单条编辑(D) ────────────────────────────────────
@@ -3702,15 +3803,16 @@ export function SettingsModal({
             )}
 
             {/* 需要数据的页面 - 显示 loading(总览/通用零请求,不等全局 loading;否则页面刚加载时的
-                首波请求风暴会把通用拖到 30s 才渲染) */}
-            {activeSection !== 'overview' && activeSection !== 'general' && loading && (
+                首波请求风暴会把通用拖到 30s 才渲染;监管模式分区同为纯 localStorage,亦不等) */}
+            {activeSection !== 'overview' && activeSection !== 'general' && activeSection !== 'focuslock' && activeSection !== 'perf' && loading && (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="w-5 h-5 animate-spin text-content-muted" />
               </div>
             )}
 
             {/* 页面内容:通用页签全部来自 store/localStorage,loading 中也直接渲染 */}
-            {activeSection !== 'overview' && (!loading || activeSection === 'general') && (
+            {activeSection !== 'overview' &&
+              (!loading || activeSection === 'general' || activeSection === 'focuslock' || activeSection === 'perf') && (
               <>
                 {/* 联网搜索 */}
                 {activeSection === 'search' && (() => {
@@ -5022,6 +5124,10 @@ export function SettingsModal({
                 {/* 对话搬运(本地 dev ↔ 线上 的会话导出/导入) */}
                 {activeSection === 'portable' && <PortableSettings />}
                 {activeSection === 'watch' && <WatchSettings />}
+                {/* 性能体检(桌面 Tauri):Rust 侧 10s 环形缓冲,面板自带 inTauri 兜底 */}
+                {activeSection === 'perf' && inTauri && <PerfPanel />}
+                {/* 监管模式定时(桌面 Tauri / Web 预览门):课表与跳过配额,纯 localStorage */}
+                {activeSection === 'focuslock' && (inTauri || flPreview) && <FocusLockScheduleSettings />}
                 {activeSection === 'yellowfish' && <YellowFishSection />}
 
                 {/* 管理(管理员专属):号池 / 激活码 / 注册码三 tab 共用同一组件按视图切片;接口自行验权,非管理员只会看到 403 降级态 */}
@@ -6281,6 +6387,121 @@ export function SettingsModal({
                       </ul>
                     )}
 
+                    {/* ── 短期记忆（进行中状态）：AI 自动判记，带过期时间，到期自动失效。
+                        与长期记忆分层：这里只放进行时态，长期稳定事实在上方记忆列表 ── */}
+                    <div className="pt-2 space-y-1.5">
+                      <div className="flex items-center justify-between px-1">
+                        <div className="flex items-center gap-1.5">
+                          <Timer className="w-3 h-3 text-content-muted shrink-0" />
+                          <p className="text-[11px] font-medium text-content-primary">
+                            短期记忆（进行中状态）
+                          </p>
+                        </div>
+                        {scratchExpired.length > 0 && (
+                          <button
+                            onClick={handleClearExpiredScratch}
+                            disabled={scratchClearing}
+                            className="px-2 py-0.5 rounded-md text-[11px] text-content-muted hover:text-content-primary hover:bg-surface-subtle/80 transition-colors disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {scratchClearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                            清掉 {scratchExpired.length} 条已过期
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-content-muted leading-relaxed px-1">
+                        AI 自动记录的进行中状态（背单词进度、备考安排等），到期自动失效；长期稳定的事实请写在上方记忆里。
+                      </p>
+                      {scratchNotes.length === 0 ? (
+                        <p className="text-[11px] text-content-muted px-1 py-1">
+                          暂无。聊天中提到进度时 AI 会自动记下来。
+                        </p>
+                      ) : (
+                        <ul className="space-y-1.5">
+                          {scratchNotes.map((n) => (
+                            <li
+                              key={n.id}
+                              className="flex items-start gap-2 px-2.5 py-2 rounded-lg set-card bg-surface-muted/60"
+                            >
+                              <div className="flex-1 min-w-0 text-left">
+                                <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-subtle/80 text-content-muted shrink-0">
+                                    {n.topic}
+                                  </span>
+                                  <span className="text-[10px] text-content-muted shrink-0">
+                                    {scratchDaysLeft(n.expiresAt)}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-content-secondary break-words leading-relaxed">
+                                  {n.content}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => handleDeleteScratch(n.id)}
+                                disabled={scratchDeleting === n.id}
+                                className="shrink-0 p-1 rounded-md text-content-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                aria-label="删除短期记忆"
+                              >
+                                {scratchDeleting === n.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {scratchExpired.length > 0 && (
+                        <div>
+                          <button
+                            onClick={() => setScratchExpiredOpen((v) => !v)}
+                            className="w-full flex items-center gap-1.5 px-1 py-1 rounded-md text-[11px] text-content-muted hover:text-content-secondary transition-colors"
+                          >
+                            {scratchExpiredOpen ? (
+                              <ChevronUp className="w-3 h-3 shrink-0" />
+                            ) : (
+                              <ChevronDown className="w-3 h-3 shrink-0" />
+                            )}
+                            已过期（{scratchExpired.length}）
+                          </button>
+                          {scratchExpiredOpen && (
+                            <ul className="space-y-1.5 mt-1.5">
+                              {scratchExpired.map((n) => (
+                                <li
+                                  key={n.id}
+                                  className="flex items-start gap-2 px-2.5 py-2 rounded-lg set-card bg-surface-muted/40"
+                                >
+                                  <div className="flex-1 min-w-0 text-left">
+                                    <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-subtle/80 text-content-muted shrink-0">
+                                        {n.topic}
+                                      </span>
+                                      <span className="text-[10px] text-content-muted shrink-0">已过期</span>
+                                    </div>
+                                    <p className="text-xs text-content-muted break-words leading-relaxed line-through decoration-line/60">
+                                      {n.content}
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeleteScratch(n.id)}
+                                    disabled={scratchDeleting === n.id}
+                                    className="shrink-0 p-1 rounded-md text-content-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                    aria-label="删除已过期短期记忆"
+                                  >
+                                    {scratchDeleting === n.id ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     {/* ── 已被取代的记忆：矛盾替换不物理删，留在这里供用户反悔 ── */}
                     {supersededMemories.length > 0 && (
                       <div className="pt-1">
@@ -6577,17 +6798,27 @@ export function SettingsModal({
                       ) : null}
                       </>
                     ) : themeChoice === 'wallpaper' ? (
-                      /* 主题 = 壁纸: 下面这排选壁纸自己的明暗(不动用户的 theme 偏好)。
-                         浅色 = 白纸 + 淡蓝薄雾,深色 = 暗底 + 夜景蓝天;
-                         两张照片的处理完全不同(浅色漂白、深色压暗),写在 globals.css 里 */
+                      /* 主题 = 壁纸: 下面两排是壁纸自己的子档(不动用户的 theme 偏好)。
+                         风格 = 场景本体(云照片/小鸡天空),明暗 = 深浅;
+                         两者的处理(雾纸浓度/蜡笔场景/照片滤镜)写在 globals.css 两段里 */
+                      <>
+                      <MSegRow
+                        label="风格"
+                        help="云照片 = 你的那张云；小鸡天空 = 蜡笔场景，电脑端先行"
+                        options={WALLPAPER_STYLES}
+                        value={wallpaperStyle}
+                        onChange={handleWallpaperStyleChange}
+                        className="mt-2.5"
+                      />
                       <MSegRow
                         label="明暗"
                         help="浅色 = 白纸薄雾；深色 = 暗底夜色。默认跟随系统"
                         options={WALLPAPER_SCHEMES}
                         value={wallpaperScheme}
                         onChange={handleWallpaperSchemeChange}
-                        className="mt-2.5"
+                        className="mt-2"
                       />
+                      </>
                     ) : (
                       /* 主题 ≠ 格子 且 ≠ 壁纸: 下面这排选配色(桂金已删除,只剩黑白基线一项) */
                       <>
@@ -7216,7 +7447,8 @@ function PresetModelsManager({
 // 供新标签页(bento)等本地静态页以 Authorization: Bearer 调用待办/快问等 REST API;
 // 同一枚令牌也是 ACode 的 aichatt 身份凭证:x-api-key 携带后可调用
 // /api/v1/models(拉模型清单)、/api/v1/messages(模型网关)、/api/v1/mcp(记忆读写)。
-// 明文仅创建响应中返回一次,库中只存哈希;撤销为软删除(保留审计)。
+// 明文仅创建响应中返回一次,库中只存哈希;撤销为软删除(保留审计);
+// ⋯ 菜单批量:撤销全部有效 / 清空已撤销(硬删含审计)/ 清空全部,均两步确认。
 
 interface ApiTokenRow {
   id: string
@@ -7284,6 +7516,63 @@ function ApiTokensSection() {
     }
   }
 
+  // ── 批量操作(⋯ 菜单,C案):两步确认,点一下变红再点执行 ──
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [armedOp, setArmedOp] = useState<'revoke-all' | 'clear-revoked' | 'clear-all' | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false)
+    setArmedOp(null)
+    if (armTimer.current) {
+      clearTimeout(armTimer.current)
+      armTimer.current = null
+    }
+  }, [])
+
+  // 菜单开着时:点外面收起
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) closeMenu()
+    }
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [menuOpen, closeMenu])
+
+  // UI 操作名 → 路由 scope 名(active=全部软撤销 / revoked=硬删已撤销 / all=整列清空)
+  const bulkScope = { 'revoke-all': 'active', 'clear-revoked': 'revoked', 'clear-all': 'all' } as const
+
+  const bulkRun = async (op: 'revoke-all' | 'clear-revoked' | 'clear-all') => {
+    setBusy(true)
+    closeMenu()
+    try {
+      const res = await fetch(`/api/tokens?scope=${bulkScope[op]}`, { method: 'DELETE' })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof d.error === 'string' ? d.error : '操作失败')
+      const n = typeof d.count === 'number' ? d.count : 0
+      if (op === 'revoke-all') toast.success(`已撤销全部有效令牌(${n})`)
+      else if (op === 'clear-revoked') toast.success(`已清空 ${n} 条已撤销记录`)
+      else toast.success(`已清空全部令牌(${n})`)
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '操作失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const menuItemClick = (op: 'revoke-all' | 'clear-revoked' | 'clear-all') => {
+    if (armedOp !== op) {
+      setArmedOp(op)
+      if (armTimer.current) clearTimeout(armTimer.current)
+      armTimer.current = setTimeout(() => setArmedOp(null), 2600)
+      return
+    }
+    void bulkRun(op)
+  }
+
   const copyPlaintext = async () => {
     if (!plaintext) return
     try {
@@ -7303,6 +7592,9 @@ function ApiTokensSection() {
       minute: '2-digit',
     })
 
+  const activeCount = tokens?.filter((t) => !t.revokedAt).length ?? 0
+  const revokedCount = tokens ? tokens.length - activeCount : 0
+
   return (
     <div className="space-y-3 text-left">
       <div className="rounded-xl set-card bg-surface/60 px-3.5 py-3 space-y-2.5">
@@ -7311,15 +7603,75 @@ function ApiTokensSection() {
             <p className="text-xs text-content-secondary">API 令牌</p>
             <p className="text-[11px] text-content-muted max-md:hidden">供新标签页等本地静态页以 Bearer Token 调用待办/快问 API,无需浏览器登录态</p>
           </div>
-          <button
-            type="button"
-            onClick={createToken}
-            disabled={busy}
-            className="flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-medium text-accent-foreground disabled:opacity-50 shrink-0"
-          >
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-            生成令牌
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            {tokens !== null && tokens.length > 0 && (
+              <div className="relative" ref={menuRef}>
+                <button
+                  type="button"
+                  onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+                  disabled={busy}
+                  title="批量操作"
+                  aria-label="批量操作"
+                  className="flex items-center justify-center p-1.5 rounded-lg hover:bg-surface-muted/70 text-content-muted hover:text-content-secondary disabled:opacity-50"
+                >
+                  <MoreHorizontal className="w-3.5 h-3.5" />
+                </button>
+                {menuOpen && (
+                  <div className="panel-motion absolute right-0 top-full mt-1.5 z-50 w-[240px] rounded-xl border border-line bg-surface shadow-lg p-1.5 space-y-0.5">
+                    {activeCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => menuItemClick('revoke-all')}
+                        disabled={busy}
+                        className={cn('w-full rounded-lg px-2.5 py-2 text-left hover:bg-surface-muted/70 disabled:opacity-50', armedOp === 'revoke-all' && 'bg-red-500/10')}
+                      >
+                        <span className={cn('flex items-center justify-between gap-3 text-xs font-medium', armedOp === 'revoke-all' ? 'text-red-500' : 'text-content-secondary')}>
+                          {armedOp === 'revoke-all' ? '再点一次确认执行' : '撤销全部有效'}
+                          <span className="text-[11px] font-normal text-content-muted">{activeCount}</span>
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-content-muted">一键撤销所有有效令牌,记录保留</span>
+                      </button>
+                    )}
+                    {revokedCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => menuItemClick('clear-revoked')}
+                        disabled={busy}
+                        className={cn('w-full rounded-lg px-2.5 py-2 text-left hover:bg-surface-muted/70 disabled:opacity-50', armedOp === 'clear-revoked' && 'bg-red-500/10')}
+                      >
+                        <span className={cn('flex items-center justify-between gap-3 text-xs font-medium', armedOp === 'clear-revoked' ? 'text-red-500' : 'text-content-secondary')}>
+                          {armedOp === 'clear-revoked' ? '再点一次确认执行' : '清空已撤销'}
+                          <span className="text-[11px] font-normal text-content-muted">{revokedCount}</span>
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-content-muted">彻底删除已撤销记录,含审计,不可恢复</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => menuItemClick('clear-all')}
+                      disabled={busy}
+                      className={cn('w-full rounded-lg px-2.5 py-2 text-left hover:bg-surface-muted/70 disabled:opacity-50', armedOp === 'clear-all' && 'bg-red-500/10')}
+                    >
+                      <span className={cn('flex items-center justify-between gap-3 text-xs font-medium', armedOp === 'clear-all' ? 'text-red-500' : 'text-content-secondary')}>
+                        {armedOp === 'clear-all' ? '再点一次确认执行' : '清空全部'}
+                        <span className="text-[11px] font-normal text-content-muted">{tokens.length}</span>
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-content-muted">撤销并删除全部记录,不可恢复</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={createToken}
+              disabled={busy}
+              className="flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-medium text-accent-foreground disabled:opacity-50 shrink-0"
+            >
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+              生成令牌
+            </button>
+          </div>
         </div>
 
         {/* 明文一次性展示卡 */}

@@ -18,6 +18,7 @@ import { useForegroundResume } from '@/hooks/useForegroundResume'
 // 暂时下线新消息提醒(如需恢复,连同下方调用一起取消注释)
 // import { useUnreadToastNotifier } from '@/hooks/useUnreadToastNotifier'
 import { useIsTauri } from '@/lib/tauri'
+import { useFocusLock } from '@/lib/focus-lock-store'
 import { TrafficLights } from '@/components/TrafficLights'
 import { cn } from '@/lib/utils'
 import { ConversationItem } from './ConversationItem'
@@ -120,7 +121,10 @@ export function Sidebar() {
     }
   }, [hydrated, setHydrated])
 
-  const sidebarEffectiveOpen = hydrated ? sidebarOpen : true
+  // 监管模式锁内侧边栏整体隐藏(2026-11-18):派生值强制收起 + 本体 hidden(见 aside cn),
+  // 不动 store 持久值 —— 解锁瞬间按用户原有开合状态原地恢复,无残留。
+  const { locked: focusLocked } = useFocusLock()
+  const sidebarEffectiveOpen = hydrated && !focusLocked ? sidebarOpen : false
   const { data: session } = useSession()
   // 临时聊天模式(访客密码登录):侧边栏只显示隔离区临时对话,
   // 隐藏账户设置入口;服务端 API 层已同步隔离,此处仅 UX 提示
@@ -516,7 +520,10 @@ export function Sidebar() {
         className={cn(
           // app-shell-sidebar: shell 层壁纸激活时由 globals.css :has 规则改半透明(毛玻璃透壁纸)
           // max-md:hidden: 方案 C 手机端侧栏改走全屏 V2 抽屉(MobileDrawer),旧 w-56 浮层整体下线
-          'app-shell-sidebar fixed top-1.5 bottom-1.5 left-1.5 z-50 w-56 flex flex-col max-md:hidden',
+          // 锁内整条退场:hidden 与 flex 同组按样式表序不定胜负,干脆二选一
+          // (display:none 压掉 md:static 等布局类;列表状态保留,解锁原地回来)
+          'app-shell-sidebar fixed top-1.5 bottom-1.5 left-1.5 z-50 w-56 max-md:hidden',
+          focusLocked ? 'hidden' : 'flex flex-col',
           // pb-[var(--sab)]: PWA 全屏模式下列表底部让出 Home Indicator 安全区(浏览器内为 0)
           'pb-[var(--sab)]',
           // 侧栏材质 = 「次级面」: 底色走 --surface-muted(比内容区的 --surface 暗一档,
@@ -566,10 +573,7 @@ export function Sidebar() {
         >
           {inTauri && sidebarEffectiveOpen && <TrafficLights />}
           {sidebarEffectiveOpen ? (
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              {/* 品牌标记: 深色模式换反白版图,不用 CSS filter 反相(会连红点一起翻色) */}
-              <img src="/brand/mark.png" alt="" aria-hidden className="w-4 shrink-0 dark:hidden" />
-              <img src="/brand/mark-invert.png" alt="" aria-hidden className="hidden w-4 shrink-0 dark:block" />
+            <div className="flex items-center min-w-0 flex-1">
               <h1 className="text-base font-semibold tracking-tight truncate">aichatt</h1>
             </div>
           ) : (

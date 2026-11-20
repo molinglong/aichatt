@@ -121,7 +121,9 @@
   /* 面板层级
      2026-10-31 「深渊微光 · 蓝中夹黑」二轮(用户: 黑要纯黑不要灰): 底阶压到近纯黑,
      蓝只剩辉光与发丝里的一丝色偏 —— 画布 #07080C / 灰带 #111216 / 悬停 #1C1D22,
-     间隔差不变 */
+     间隔差不变。
+     (2026-11-15 暗色结构可读性 A 案: bigsur 暗色的灰带/悬停在此之上再抬一档,
+     门控在 html[data-style="bigsur"].dark 块,基础基线不动) */
   --surface: 7 8 12;
   --surface-muted: 17 18 22;
   --surface-subtle: 28 29 34;
@@ -341,7 +343,9 @@
    桂花金 = 暖金 + 右上金月盘 + 有光;深夜-格子 = 冷蓝 + **无天体、无光层**,
    只留一层冷月白的格影(screen 提亮)。定稿自预览页「夜蓝 · 删光 B」:
    金属感的来源是右上那团径向镜面高光(高光泽反射是金属的签名),删光即断根。 */
-[data-pal="grid"][data-grid-tone="night"] {
+/* 特异度 (0,3,1): 必须整块压过 html[data-style=bigsur].dark 的 chrome 抬档(2026-11-15 A案,
+   同为同元素级定义),pal 配色永远拥有自己的色阶;当年压 .dark(0,1,0) 的语义不变 */
+html.dark[data-pal="grid"][data-grid-tone="night"] {
   --background: 14 18 27;
   --foreground: 235 240 250;
 
@@ -1377,6 +1381,13 @@ html:not([data-tauri]) .tauri-only {
   /* 窗口圆角：配合 transparent:true 制造圆角窗口 */
   border-radius: 12px;
   overflow: hidden;
+
+  /* 最大化/锁定全屏时窗口铺满屏幕,圆角会在四角裁出透明缺口 → 归零
+     (TauriVisualFX 维护 data-win-max,FocusLock 维护 data-fl-locked) */
+  &[data-win-max],
+  &[data-fl-locked] {
+    border-radius: 0;
+  }
 
   /* 示例：客户端全局优化 */
   /* scrollbar 宽度 */
@@ -3288,6 +3299,13 @@ html[data-style="bigsur"] {
 html[data-style="bigsur"].dark {
   --glass-ring: inset 0 0 0 0.5px rgb(255 255 255 / 0.09), 0 0 0 0.5px rgb(0 0 0 / 0.42);
   --glass-ring-float: var(--glass-ring), 0 8px 32px rgb(0 0 0 / 0.4);
+  /* 2026-11-15 暗色结构可读性 A 案(挑稿 design/preview-dark-sheet-corner.html):
+     灰带 #111216 与画布 #07080C 只差 10 阶,纸面 12px 圆角缺口被星空/辉光淹没,
+     整屏读成直角黑板。chrome 阶梯(灰带/悬停)整体抬一档,画布纯黑不动,
+     层级间隔差不变 —— 灰带 #1A1C22 / 悬停 #26282E。
+     只进 bigsur:classic 无灰带/纸面结构、google 暗色自有暖灰阶梯,均不进门 */
+  --surface-muted: 26 28 34;
+  --surface-subtle: 38 40 46;
 }
 
 /* ② 强调色 → 系统蓝(仅黑白基线;格子/桂花金保留各自强调色,玻璃材质照常生效)。
@@ -3969,6 +3987,8 @@ html[data-style="google"] .app-main {
    侧栏顶栏输入卡全是普通主题的实底,与「浅色/深色」逐像素一致。
    电脑端选「壁纸」只是记下这个偏好,界面等同于普通主题(深浅仍由
    wallpaperScheme 写进 html.dark 决定);照片只在手机端出现。
+   (2026-11-18 例外: 壁纸风格选「小鸡天空」时电脑端渲染蜡笔场景,
+   见下方「主题: 壁纸 · 小鸡天空」段。)
    壁纸层在 layout 里是无条件挂载的,所以它的默认显隐写在媒体查询外面。 */
 .sky-wallpaper {
   display: none;
@@ -4178,6 +4198,162 @@ html[data-wallpaper="on"] .app-shell:has([data-chat-state="thread"]) .mobile-flo
 
 }
 
+/* ═══ 主题: 壁纸 · 小鸡天空 (data-wallpaper-style="chick", 2026-11-18) ════════
+   design/preview-chat-chick-theme.html 方案 B「蜡笔天空」落码:
+   白天 = 太阳/云/草地小鸡,夜晚 = 月亮/星/灯笼小鸡,随 html.dark 切换
+   (明暗沿用壁纸主题的 wallpaperScheme,不新开维度)。
+   桌面端先行(md+);手机端本期降级素底 —— 蜡笔场景只在 min-width:768 显示,
+   手机沿用上方壁纸段的纸/面板体系,浓度被下面这组 chick 变量接管、照片隐藏,
+   就是「奶油/夜色素底 + 半透明面板」,手机端零额外规则。 */
+
+/* ★ 全局(不分端): 照片换下、html 底色与纸浓度全体重定义。
+   上方手机段的规则全部引用这些变量,改值即改观感,两端一处生效 */
+html[data-wallpaper-style="chick"] .sky-wallpaper-photo {
+  display: none;
+}
+html[data-wallpaper="on"][data-wallpaper-style="chick"] {
+  --sky-paper: 0.62;         /* 对话区内容列: 预览定稿值,奶油底上正文 ≥12:1 */
+  --sky-paper-side: 0.72;
+  --sky-paper-chrome: 0.86;
+  --sky-paper-input: 0.8;
+  --sky-paper-glass: 0.9;
+  background-color: #fffdf4; /* 草地奶油: 兜 WebView/过卷露底(照片档深蓝的对应物) */
+}
+html[data-wallpaper="on"][data-wallpaper-style="chick"].dark {
+  background-color: #221f1a; /* 夜色草地 */
+}
+
+/* 蜡笔场景(ChickSkyScene 的亮/暗两层 svg): 默认隐藏,md+ 壁纸态按明暗显其一。
+   天空底色画在 svg 盒子上(预览稿方案 B 定稿色),手机端场景隐藏时不受影响 */
+.chick-scene-light,
+.chick-scene-dark {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.chick-scene-light { background: #d7e9f8; } /* 蜡笔蓝天空 */
+.chick-scene-dark  { background: #171d33; } /* 深靛夜空 */
+@media (min-width: 768px) {
+  html[data-wallpaper="on"][data-wallpaper-style="chick"]:not(.dark) .chick-scene-light { display: block; }
+  html[data-wallpaper="on"][data-wallpaper-style="chick"].dark .chick-scene-dark { display: block; }
+
+  /* 壁纸层本体(md+: 上方全局的 display:none 只被手机段的壁纸规则解开,这里补桌面) */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"] .sky-wallpaper {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  /* 壳体直透(镜像手机段): 壁纸铺到最外圈,描边归零避免露 frame 灰白缝 */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"] .app-shell {
+    background-color: transparent;
+    border-width: 0;
+  }
+  /* 内容列 = 一张 62% 纸,蜡笔天空只当天气。background-image: none 压掉
+     深渊微光的列底(基础规则 html.dark:not(...) 是 (0,3,1),.dark 单列一条兜住) */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"] .app-shell-column {
+    z-index: 1;
+    background-color: rgb(var(--surface) / var(--sky-paper));
+    background-image: none;
+  }
+  html[data-wallpaper="on"][data-wallpaper-style="chick"].dark .app-shell-column {
+    background-image: none;
+  }
+  /* 深渊微光的画布 div 退场(同手机段结论: 黑底之光叠蜡笔场景会脏) */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"] .abyss-sky {
+    display: none;
+  }
+  /* 欢迎脸: 不铺纸,蜡笔天空整幅露出 —— 这是本主题存在的理由 */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"] .app-shell-column:has([data-chat-state="welcome"]) {
+    --sky-paper: 0;
+  }
+  /* 对话脸: 中部径向柔雾把消息托住(数值与照片档一致,只换场景) */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"] .app-shell:has([data-chat-state="thread"]) .sky-wallpaper-veil {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 62% 58% at 50% 42%,
+      rgb(var(--background) / 0.82) 0%,
+      rgb(var(--background) / 0.59) 62%,
+      rgb(var(--background) / 0) 92%);
+  }
+  html[data-wallpaper="on"][data-wallpaper-style="chick"].dark .app-shell:has([data-chat-state="thread"]) .sky-wallpaper-veil {
+    background: radial-gradient(ellipse 62% 58% at 50% 42%,
+      rgb(var(--background) / 0.62) 0%,
+      rgb(var(--background) / 0.45) 62%,
+      rgb(var(--background) / 0) 92%);
+  }
+
+  /* ★ bigsur 桌面的「灰带 + 圆角白纸」架构退场: 44px 起的纸面伪元素不透明,
+     不打透明壁纸会被整张盖住。padding-top 保留(顶栏条仍要占位),
+     顶栏条本身改半透明铬纸(见下)。特异性 (0,5,1) 压过基础规则 (0,3,1) */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"] .app-shell-column:has(.topbar-strip)::before {
+    background-color: transparent;
+    background-image: none;
+    border-top-color: transparent;
+    border-radius: 0;
+  }
+
+  /* 面板用纸(镜像手机段,值同源): 侧栏 / 顶栏条 / 输入卡 / 玻璃卡 */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"] .app-shell-sidebar,
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"].dark .app-shell-sidebar {
+    background-color: rgb(var(--surface-muted) / var(--sky-paper-side));
+  }
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"] .topbar-strip {
+    background-color: rgb(var(--surface-muted) / var(--sky-paper-chrome));
+  }
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"] .composer-card {
+    background-color: rgb(var(--surface-muted) / var(--sky-paper-input));
+  }
+  html[data-wallpaper="on"][data-wallpaper-style="chick"] [data-composer-anchor] {
+    background-color: rgb(var(--surface) / var(--sky-paper-input));
+  }
+  /* 主输入卡内的白卡小钮反向变深一阶,保住「卡-钮」对比不被纸抹平 */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"] .composer-card .bg-surface-muted {
+    background-color: rgb(var(--surface) / var(--sky-paper-input));
+  }
+  /* 其余玻璃卡(热力卡/搜索弹窗/底部 dock)跟纸一起走,避免浮成死白板 */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"] .bg-surface-glass {
+    background-color: rgb(var(--surface-muted) / var(--sky-paper-glass));
+  }
+  /* 对话资料右栏(bigsur 是纯 muted 停靠,壁纸上会成死灰板 → 跟玻璃卡走) */
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"] .info-aside-panel,
+  html[data-wallpaper="on"][data-wallpaper-style="chick"][data-style="bigsur"] .info-aside-tab {
+    background-color: rgb(var(--surface-muted) / var(--sky-paper-glass));
+  }
+}
+
+/* 动效: 独立 translate 属性(不能动 transform,否则覆盖 svg 的 transform 定位
+   属性、小鸡跳回原点 —— 预览阶段结论)。云 30s/40s 缓漂,小鸡 3.4s 轻浮,
+   星 3.2s 明灭;reduce 全关 */
+@keyframes chick-drift {
+  from { translate: -9px 0; }
+  to   { translate: 9px 0; }
+}
+@keyframes chick-bob {
+  0%, 100% { translate: 0 0; }
+  50%      { translate: 0 -4px; }
+}
+@keyframes chick-tw {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+.cloud-drift   { animation: chick-drift 30s ease-in-out infinite alternate; }
+.cloud-drift-2 { animation: chick-drift 40s ease-in-out 3s infinite alternate-reverse; }
+.chick-bob     { animation: chick-bob 3.4s ease-in-out infinite; }
+.chick-bob-2   { animation: chick-bob 3.4s ease-in-out 1.2s infinite; }
+.star-tw       { animation: chick-tw 3.2s ease-in-out infinite; }
+.star-tw-2     { animation: chick-tw 3.2s ease-in-out 1.4s infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .cloud-drift, .cloud-drift-2, .chick-bob, .chick-bob-2, .star-tw, .star-tw-2 {
+    animation: none;
+  }
+}
+
 /* ── 学习台「学新题」按钮:白底虚线「添加」卡 + 涟漪(2026-11-08 v3 定稿)──
    语义回归「新增」(Uiverse 改造前的原形态):白底虚线蓝字,hover 转实线并泛淡蓝,
    悬停时两圈主题蓝环从边缘扩散消散(交错延迟);与入口卡同圆角 14px。 */
@@ -4252,3 +4428,1101 @@ html.dark .study-sk::after {
 @media (prefers-reduced-motion: reduce) {
   .study-sk::after { animation: none; }
 }
+
+/* ── 监管模式「蜡笔绘本」皮肤(F 案日式可爱版;原型 design/preview-focus-lock-cute2.html)──
+   范围:过场层 FlTransition / 沉浸覆盖层 / 顶栏倒计时徽章 / 开启弹层 + 锁定期整窗换肤
+   (纸面底 + 作业本侧栏 + 蜡笔壁纸 + 气泡/输入岛贴纸化)。整窗换肤由 FocusLock 维护的
+   html[data-fl-locked] 驱动,解锁即整段失效回默认皮肤;UI 本体仅 Tauri 桌面渲染
+   (Web 端 dev ?__flmock=1 预览门仅开发自检用,生产无此路径)。 */
+
+/* ③色值族谱(2026-11-18 收敛:段内规则全部经此引用,微调改这一处;
+   两处近似值并入已向用户点明: #e9c25c→--fl-crayon-deep(#f2cf5b)、
+   侧栏书签线 rgb(224 178 62)→--fl-star-rgb(#e8b03c);
+   壁纸 data-uri 内嵌 %23xx 色与横线蓝为拟真定稿,不纳入收敛) */
+:root {
+  --fl-paper: #fffdf4;
+  --fl-paper-ring: #fffdf6;
+  --fl-paper-deep: #fbf6ec;
+  --fl-night: #221f1a;
+  --fl-night-rgb: 34 31 26;
+  --fl-night-accent-soft-rgb: 58 50 28;
+  --fl-night-soft: #262219;
+  --fl-night-soft-rgb: 38 34 25;
+  --fl-night-card: #2a2620;
+  --fl-night-card-2: #2d2921;
+  --fl-ink: #433a2e;
+  --fl-ink-rgb: 67 58 46;
+  --fl-cream: #efe8d8;
+  --fl-cream-rgb: 239 232 216;
+  --fl-gold: #a4762c;
+  --fl-gold-rgb: 164 118 44;
+  --fl-gold-press-rgb: 138 98 36;
+  --fl-gold-line-rgb: 212 172 60;
+  --fl-yellow: #fff6c9;
+  --fl-yellow-rgb: 255 246 201;
+  --fl-yellow-soft: #ffe98f;
+  --fl-yellow-soft-rgb: 255 233 143;
+  --fl-honey-rgb: 255 224 130;
+  --fl-crayon: #ffd75e;
+  --fl-crayon-soft: #f7d766;
+  --fl-crayon-deep: #f2cf5b;
+  --fl-crayon-deep-rgb: 242 207 91;
+  --fl-star: #e8b03c;
+  --fl-star-rgb: 232 176 60;
+  --fl-stamp: #e05a6a;
+  --fl-stamp-rgb: 224 90 106;
+  --fl-armed: #ff6b5e;
+  --fl-armed-press: #f2574b;
+}
+
+/* ---- 过场层(开/退场共用;A案「大字定格」,原型 design/preview-fl-transition-redo.html。
+     尺寸按原型 573px 舞台比例映射 vw,clamp 兜窄窗;节奏不变:开场 2.45s 让位 B 覆盖层) ---- */
+.fl-tr-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(8px, 1.4vw, 28px);
+  background-color: var(--fl-paper-deep);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23n)' opacity='0.05'/></svg>");
+  pointer-events: none;
+}
+html.dark .fl-tr-layer { background-color: var(--fl-night-soft); }
+.fl-tr-frame {
+  position: absolute;
+  inset: 24px;
+  width: calc(100% - 48px);
+  height: calc(100% - 48px);
+  color: rgb(var(--fl-ink-rgb) / 0.5);
+}
+html.dark .fl-tr-frame { color: rgb(var(--fl-cream-rgb) / 0.4); }
+.fl-tr-frame rect { stroke-dasharray: 100; stroke-dashoffset: 0; }
+.fl-intro .fl-tr-frame rect,
+.fl-ending .fl-tr-frame rect { animation: flFrameDraw 0.9s ease-out 0.15s both; }
+@keyframes flFrameDraw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+/* 远角装饰:A案只一颗星一颗心,克制 */
+.fl-tr-dd { position: absolute; color: var(--fl-star); opacity: 0.85; }
+html.dark .fl-tr-dd { color: rgb(232 176 60 / 0.75); }
+.fl-tr-dd-star { width: clamp(20px, 3.8vw, 76px); aspect-ratio: 1; height: auto; left: 9%; top: 16%; }
+.fl-tr-dd-heart { width: clamp(16px, 3.1vw, 62px); aspect-ratio: 1; height: auto; right: 10%; bottom: 18%; color: var(--fl-stamp); opacity: 0.5; }
+html.dark .fl-tr-dd-heart { color: rgb(var(--fl-stamp-rgb) / 0.6); }
+.fl-tr-em { width: clamp(40px, 7vw, 140px); height: clamp(40px, 7vw, 140px); }
+.fl-tr-em svg { width: 100%; height: 100%; display: block; }
+.fl-tr-word {
+  display: flex;
+  gap: 0.16em;
+  color: var(--fl-ink);
+  font-size: clamp(56px, 11.2vw, 224px);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-shadow: 0.035em 0.035em 0 rgb(255 215 94 / 0.35);
+}
+html.dark .fl-tr-word { color: var(--fl-cream); }
+.fl-tr-word span { opacity: 0; }
+.fl-tr-swash { width: clamp(240px, 52vw, 1040px); height: clamp(12px, 2.8vw, 56px); color: var(--fl-crayon); }
+.fl-tr-swash path { stroke-dasharray: 100; stroke-dashoffset: 0; }
+.fl-tr-sub, .fl-tr-sub2 { color: rgb(var(--fl-ink-rgb) / 0.6); font-size: clamp(14px, 2.1vw, 42px); letter-spacing: 0.14em; opacity: 0; }
+html.dark .fl-tr-sub, html.dark .fl-tr-sub2 { color: rgb(var(--fl-cream-rgb) / 0.58); }
+.fl-tr-sub2 { display: none; }
+.fl-tr-stamp {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  transform: translate(-50%, -50%) rotate(8deg);
+  width: clamp(140px, 20.6vw, 420px);
+  height: clamp(140px, 20.6vw, 420px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(72px, 10vw, 205px);
+  font-weight: 800;
+  color: var(--fl-stamp);
+  border: clamp(4px, 0.6vw, 12px) solid rgb(var(--fl-stamp-rgb) / 0.78);
+  border-radius: 26px 34px 24px 32px / 32px 24px 34px 26px;
+  background: rgb(255 255 255 / 0.55);
+  box-shadow: 0 6px 24px rgb(var(--fl-stamp-rgb) / 0.14);
+  opacity: 0;
+}
+html.dark .fl-tr-stamp { background: rgb(var(--fl-night-soft-rgb) / 0.55); }
+.fl-tr-stamp::after {
+  content: "";
+  position: absolute;
+  inset: clamp(5px, 0.85vw, 17px);
+  border: 1.5px solid rgb(var(--fl-stamp-rgb) / 0.4);
+  border-radius: inherit;
+}
+/* 开场:小鸡蹦入 + 四字逐字点亮 + 划线现场画出托底 */
+.fl-intro { animation: flFadeIn 0.26s ease-out 0s both, flFadeOut 0.42s ease-in 2.45s both; }
+/* dev 预览门 __flintro=hold:压掉 2.45s 淡出让位,挂住定格供逐态截图 */
+.fl-intro.fl-intro-hold { animation: flFadeIn 0.26s ease-out 0s both; }
+.fl-intro .fl-tr-em { animation: flChickPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s both, flBob 3.4s ease-in-out 0.9s infinite; }
+.fl-intro .fl-tr-word span:nth-child(1) { animation: flCharIn 0.26s ease-out 0.75s both; }
+.fl-intro .fl-tr-word span:nth-child(2) { animation: flCharIn 0.26s ease-out 0.87s both; }
+.fl-intro .fl-tr-word span:nth-child(3) { animation: flCharIn 0.26s ease-out 0.99s both; }
+.fl-intro .fl-tr-word span:nth-child(4) { animation: flCharIn 0.26s ease-out 1.11s both; }
+.fl-intro .fl-tr-swash path { animation: flFrameDraw 0.5s ease-out 1.25s both; }
+.fl-intro .fl-tr-sub { animation: flFadeIn 0.3s ease-out 1.45s both; }
+/* 退场:四字淡化成小注(A案顺修旧版只亮「监管」两字的半残),大完章居中盖落,小鸡蹦到章边 */
+.fl-ending { justify-content: flex-start; padding-top: 12vh; gap: clamp(10px, 1.7vw, 34px); animation: flFadeIn 0.2s ease-out 0s both; }
+.fl-ending .fl-tr-word { font-size: clamp(18px, 3vw, 60px); letter-spacing: 0.3em; font-weight: 700; opacity: 0.32; text-shadow: none; }
+.fl-ending .fl-tr-word span { opacity: 1; }
+.fl-ending .fl-tr-swash, .fl-ending .fl-tr-sub { display: none; }
+.fl-ending .fl-tr-sub2 { display: block; animation: flFadeIn 0.3s ease-out 0.7s both; }
+.fl-ending .fl-tr-em {
+  position: absolute;
+  left: calc(50% + 8vw);
+  top: calc(52% + 8vh);
+  z-index: 1;
+  width: clamp(44px, 7.7vw, 155px);
+  height: clamp(44px, 7.7vw, 155px);
+  transform: rotate(7deg);
+  animation: flChickHopEnd 0.9s ease-in-out 0.45s both;
+}
+.fl-ending .fl-tr-stamp { animation: flStampIn 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s both; }
+.fl-ending.fl-tr-out { animation: flFadeOut 0.42s ease-in 0s both; }
+@keyframes flFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes flFadeOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes flCharIn { from { opacity: 0.08; } to { opacity: 1; } }
+@keyframes flChickPop { from { opacity: 0; transform: scale(0.5) rotate(-8deg); } to { opacity: 1; transform: scale(1) rotate(0deg); } }
+@keyframes flBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes flStampIn { from { opacity: 0; transform: translate(-50%, -50%) rotate(8deg) scale(1.7); } to { opacity: 1; transform: translate(-50%, -50%) rotate(8deg) scale(1); } }
+@keyframes flChickHopEnd {
+  0% { transform: rotate(7deg) translateY(0); }
+  30% { transform: rotate(7deg) translateY(-4.6vh); }
+  60% { transform: rotate(7deg) translateY(0); }
+  80% { transform: rotate(7deg) translateY(-2.2vh); }
+  100% { transform: rotate(7deg) translateY(0); }
+}
+
+/* ---- B 沉浸覆盖层:纸卡倒计时 + 「完」章 + 落樱/闪星 ---- */
+.fl-ov {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  cursor: pointer;
+  background-color: var(--fl-paper-deep);
+}
+html.dark .fl-ov { background-color: var(--fl-night); }
+.fl-ov-decor { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.fl-petal {
+  position: absolute;
+  width: 15px;
+  height: 10px;
+  background: var(--fl-crayon-soft);
+  border-radius: 12px 3px 12px 3px;
+  opacity: 0;
+  animation: flPetalFall 9s linear infinite;
+}
+.fl-petal.p1 { left: 12%; top: -14px; }
+.fl-petal.p2 { left: 47%; top: -14px; animation-delay: -3.2s; }
+.fl-petal.p3 { left: 78%; top: -14px; animation-delay: -6.4s; width: 12px; height: 8px; }
+@keyframes flPetalFall {
+  0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+  8% { opacity: 0.85; }
+  82% { opacity: 0.8; }
+  100% { transform: translateY(105vh) rotate(320deg); opacity: 0; }
+}
+.fl-spark {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: var(--fl-yellow-soft);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  animation: flSparkTw 2.6s ease-in-out infinite;
+}
+.fl-spark.s1 { top: 18%; right: 9%; background: var(--fl-crayon-deep); }
+.fl-spark.s2 { top: 46%; left: 7%; width: 12px; height: 12px; background: var(--fl-crayon-soft); animation-delay: -1.1s; }
+.fl-spark.s3 { top: 66%; right: 27%; width: 10px; height: 10px; animation-delay: -2s; }
+@keyframes flSparkTw {
+  0%, 100% { transform: scale(0.45) rotate(0deg); opacity: 0.35; }
+  50% { transform: scale(1) rotate(18deg); opacity: 1; }
+}
+.fl-paper-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 40px 20px;
+  background: var(--fl-paper);
+  border: 2px solid rgb(var(--fl-ink-rgb) / 0.5);
+  border-radius: 18px 24px 16px 26px / 24px 16px 26px 18px;
+  box-shadow: 0 0 0 4px var(--fl-paper-ring), 4px 5px 0 rgb(var(--fl-ink-rgb) / 0.14);
+}
+html.dark .fl-paper-card {
+  background: var(--fl-night-card-2);
+  border-color: rgb(var(--fl-cream-rgb) / 0.4);
+  box-shadow: 0 0 0 4px rgb(255 253 246 / 0.12), 4px 5px 0 rgb(0 0 0 / 0.3);
+}
+.fl-paper-card::before,
+.fl-paper-card::after {
+  content: "";
+  position: absolute;
+  top: -11px;
+  width: 84px;
+  height: 20px;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgb(var(--fl-ink-rgb) / 0.16);
+}
+.fl-paper-card::before {
+  left: 24px;
+  background-image: radial-gradient(rgb(255 255 255 / 0.95) 2px, transparent 2.2px);
+  background-color: rgb(var(--fl-yellow-rgb) / 0.9);
+  background-size: 12px 12px;
+  background-position: 3px 4px;
+  transform: rotate(-3.4deg);
+}
+.fl-paper-card::after {
+  right: 28px;
+  background: repeating-linear-gradient(90deg, rgb(255 233 143 / 0.9) 0 10px, rgb(255 255 255 / 0.75) 10px 20px);
+  transform: rotate(3deg);
+}
+.fl-ov-chick { width: 52px; height: 52px; animation: flBob 3.4s ease-in-out infinite; }
+.fl-ov-chick svg { width: 100%; height: 100%; display: block; }
+.fl-ov-clock {
+  position: relative;
+  padding: 0 10px 10px;
+  transform: rotate(-0.5deg);
+  font-family: 'Segoe Print', 'Comic Sans MS', 'Microsoft YaHei', cursive;
+  font-size: 62px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  color: var(--fl-ink);
+  font-variant-numeric: tabular-nums;
+  background-image: linear-gradient(100deg, rgb(var(--fl-yellow-rgb) / 0.95), rgb(var(--fl-honey-rgb) / 0.7));
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 100% 16px;
+}
+html.dark .fl-ov-clock { color: var(--fl-cream); }
+.fl-stamp {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fl-stamp);
+  border: 2.5px solid rgb(var(--fl-stamp-rgb) / 0.75);
+  border-radius: 10px 14px 9px 13px / 13px 9px 14px 10px;
+  transform: rotate(9deg);
+  background: rgb(255 255 255 / 0.5);
+}
+html.dark .fl-stamp { background: rgb(255 255 255 / 0.14); }
+.fl-ov-cap { font-size: 13.5px; color: rgb(var(--fl-ink-rgb) / 0.62); }
+html.dark .fl-ov-cap { color: rgb(var(--fl-cream-rgb) / 0.6); }
+.fl-ov-meta { display: flex; gap: 8px; margin-top: 4px; }
+.fl-ov-pill {
+  font-size: 12px;
+  color: var(--fl-ink);
+  background: rgb(255 255 255 / 0.6);
+  border: 1px solid rgb(var(--fl-ink-rgb) / 0.26);
+  border-radius: 999px;
+  padding: 5px 12px;
+}
+html.dark .fl-ov-pill { color: var(--fl-cream); background: rgb(255 255 255 / 0.08); border-color: rgb(var(--fl-cream-rgb) / 0.16); }
+/* 目标药丸(R7):虚线靶纸风,与普通信息 pill 拉开层次 */
+.fl-ov-pill-goal {
+  background: rgb(255 255 255 / 0.72);
+  border-style: dashed;
+  border-color: rgb(var(--fl-gold-line-rgb) / 0.75);
+  color: var(--fl-gold);
+  font-weight: 600;
+}
+html.dark .fl-ov-pill-goal {
+  background: rgb(255 255 255 / 0.14);
+  border-color: rgb(var(--fl-yellow-rgb) / 0.5);
+  color: var(--fl-yellow);
+}
+
+/* R5 解锁回执 AI 点评行:淡入(与全站入场曲线一致) */
+@keyframes fl-receipt-ai-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+.fl-receipt-ai { animation: fl-receipt-ai-in 0.42s var(--ease-enter) both; }
+.fl-ov-hint { font-size: 11.5px; color: rgb(var(--fl-ink-rgb) / 0.48); margin-top: 16px; }
+html.dark .fl-ov-hint { color: rgb(var(--fl-cream-rgb) / 0.48); }
+
+/* ---- 顶栏倒计时徽章:贴纸切边 + 小鸡 ---- */
+.fl-badge {
+  background: var(--fl-paper);
+  border: 2px solid rgb(var(--fl-ink-rgb) / 0.5);
+  border-radius: 10px 14px 9px 13px / 13px 9px 14px 10px;
+  box-shadow: 0 0 0 3px #fff, 2px 3px 0 rgb(var(--fl-ink-rgb) / 0.22);
+  color: var(--fl-gold);
+  height: 30px;
+}
+html.dark .fl-badge {
+  background: var(--fl-night-card-2);
+  border-color: rgb(var(--fl-cream-rgb) / 0.4);
+  box-shadow: 0 0 0 3px rgb(255 253 246 / 0.14), 2px 3px 0 rgb(0 0 0 / 0.35);
+  color: var(--fl-yellow);
+}
+.fl-badge-chick { width: 18px; height: 18px; flex: none; }
+.fl-badge-chick svg { width: 100%; height: 100%; display: block; }
+
+/* ---- 开启弹层:贴纸切边 + 和纸胶带 + 打气条 ---- */
+.fl-sheet {
+  overflow: visible;
+  background: var(--fl-paper);
+  border: 2px solid rgb(var(--fl-ink-rgb) / 0.55);
+  border-radius: 16px 22px 14px 24px / 22px 14px 24px 16px;
+  box-shadow: 0 0 0 4px var(--fl-paper-ring), 5px 7px 0 rgb(var(--fl-ink-rgb) / 0.16), 0 18px 36px rgb(var(--fl-ink-rgb) / 0.15);
+}
+html.dark .fl-sheet {
+  background: var(--fl-night-card);
+  border-color: rgb(var(--fl-cream-rgb) / 0.35);
+  box-shadow: 0 0 0 4px rgb(255 253 246 / 0.12), 5px 7px 0 rgb(0 0 0 / 0.3), 0 18px 36px rgb(0 0 0 / 0.3);
+}
+.fl-sheet::before,
+.fl-sheet::after {
+  content: "";
+  position: absolute;
+  top: -12px;
+  width: 86px;
+  height: 22px;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgb(var(--fl-ink-rgb) / 0.18);
+}
+.fl-sheet::before {
+  right: 28px;
+  background: repeating-linear-gradient(90deg, rgb(255 233 143 / 0.9) 0 10px, rgb(255 255 255 / 0.75) 10px 20px);
+  transform: rotate(-4deg);
+}
+.fl-sheet::after {
+  left: 26px;
+  background-image: radial-gradient(rgb(255 255 255 / 0.95) 2px, transparent 2.2px);
+  background-color: rgb(var(--fl-yellow-rgb) / 0.9);
+  background-size: 12px 12px;
+  background-position: 3px 4px;
+  transform: rotate(3deg);
+}
+.fl-sheet-chick { width: 34px; height: 34px; flex: none; }
+.fl-sheet-chick svg { width: 100%; height: 100%; display: block; }
+/* B 案纸块分区(原型 design/preview-focus-lock-tidy.html):
+   气泡压成一行黄油金字,时长/目标/课堂虚线纸块统一主题色,时长换学科切换器同款步进器 */
+.fl-cheer-line {
+  margin: 10px 2px 0;
+  font-size: 11px;
+  line-height: 1.75;
+  color: var(--fl-gold);
+}
+html.dark .fl-cheer-line { color: rgb(var(--fl-yellow-rgb) / 0.95); }
+.fl-sec {
+  padding: 10px 10px 11px;
+  border-radius: 10px 14px 10px 14px / 14px 10px 14px 10px;
+}
+.fl-sec-dur { background: rgb(var(--fl-yellow-rgb) / 0.42); border: 1.5px dashed rgb(var(--fl-gold-line-rgb) / 0.55); }
+html.dark .fl-sec-dur { background: rgb(var(--fl-yellow-rgb) / 0.09); border-color: rgb(var(--fl-yellow-rgb) / 0.4); }
+.fl-sec-goal { background: rgb(var(--fl-yellow-rgb) / 0.42); border: 1.5px dashed rgb(var(--fl-gold-line-rgb) / 0.55); }
+html.dark .fl-sec-goal { background: rgb(var(--fl-yellow-rgb) / 0.09); border-color: rgb(var(--fl-yellow-rgb) / 0.4); }
+/* 课程链接输入块(2.3):与时长/目标同款黄油虚线纸块(主题色统一) */
+.fl-sec-course { background: rgb(var(--fl-yellow-rgb) / 0.42); border: 1.5px dashed rgb(var(--fl-gold-line-rgb) / 0.55); }
+html.dark .fl-sec-course { background: rgb(var(--fl-yellow-rgb) / 0.09); border-color: rgb(var(--fl-yellow-rgb) / 0.4); }
+.fl-sec-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--fl-ink);
+}
+html.dark .fl-sec-label { color: var(--fl-cream); }
+.fl-sec-num { color: var(--fl-gold); }
+html.dark .fl-sec-num { color: rgb(var(--fl-yellow-rgb) / 0.95); }
+.fl-sec-rule {
+  margin-left: auto;
+  font-size: 9.5px;
+  font-weight: 400;
+  color: rgb(var(--fl-ink-rgb) / 0.5);
+  white-space: nowrap;
+}
+html.dark .fl-sec-rule { color: rgb(var(--fl-cream-rgb) / 0.5); }
+.fl-sec-opt { font-size: 10px; font-weight: 400; color: rgb(var(--fl-ink-rgb) / 0.5); }
+html.dark .fl-sec-opt { color: rgb(var(--fl-cream-rgb) / 0.5); }
+/* 学科切换器同款步进器(papers/composed 形态参照,色相贴主题黄油色);
+   flex-wrap:弹层内容宽 256px 一行放不下测试胶囊,掉行弱化 */
+.fl-stepper { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fl-step-btn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--fl-ink-rgb) / 0.3);
+  background: rgb(255 255 255 / 0.7);
+  color: rgb(var(--fl-ink-rgb) / 0.6);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+html.dark .fl-step-btn {
+  background: rgb(255 255 255 / 0.06);
+  border-color: rgb(var(--fl-cream-rgb) / 0.3);
+  color: rgb(var(--fl-cream-rgb) / 0.6);
+}
+.fl-step-btn:hover:not(:disabled) { color: var(--fl-ink); }
+html.dark .fl-step-btn:hover:not(:disabled) { color: var(--fl-cream); }
+.fl-step-btn:disabled { opacity: 0.35; cursor: default; }
+.fl-step-value {
+  position: relative;
+  min-width: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 5px 26px 5px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  border: 1.5px solid rgb(var(--fl-gold-line-rgb) / 0.6);
+  background: rgb(var(--fl-yellow-rgb) / 0.45);
+  color: var(--fl-gold);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+html.dark .fl-step-value {
+  background: rgb(var(--fl-yellow-rgb) / 0.08);
+  border-color: rgb(var(--fl-yellow-rgb) / 0.45);
+  color: rgb(var(--fl-yellow-rgb) / 0.95);
+}
+.fl-step-value:hover { background: rgb(var(--fl-yellow-rgb) / 0.65); }
+.fl-step-value .fl-step-chev {
+  position: absolute;
+  right: 9px;
+  width: 12px;
+  height: 12px;
+  opacity: 0.8;
+  transition: transform 0.15s ease;
+}
+.fl-step-value.fl-custom-open .fl-step-chev { transform: rotate(180deg); }
+.fl-step-count {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--fl-ink-rgb) / 0.5);
+  white-space: nowrap;
+}
+html.dark .fl-step-count { color: rgb(var(--fl-cream-rgb) / 0.5); }
+/* 目标 chips:虚线切边形体,与时长步进器拉开 */
+.fl-goal-chip {
+  border-style: dashed;
+  border-radius: 8px 12px 8px 12px / 12px 8px 12px 8px;
+}
+/* 追焦开关:主题黄油色(on 态替换系统蓝 bg-accent;off 态仍用行内 bg-surface-subtle) */
+.fl-switch-on { background: var(--fl-yellow); }
+html.dark .fl-switch-on { background: var(--fl-yellow); }
+/* 底部边界说明 */
+.fl-bound {
+  font-size: 10px;
+  line-height: 1.65;
+  color: rgb(var(--fl-ink-rgb) / 0.5);
+}
+html.dark .fl-bound { color: rgb(var(--fl-cream-rgb) / 0.5); }
+.fl-chip-on {
+  background: var(--fl-yellow);
+  color: var(--fl-ink);
+  transform: rotate(-1.5deg);
+  box-shadow: 0 0 0 3px var(--fl-paper-ring), 2px 3px 0 rgb(var(--fl-ink-rgb) / 0.25);
+}
+html.dark .fl-chip-on { box-shadow: 0 0 0 3px rgb(255 253 246 / 0.14), 2px 3px 0 rgb(0 0 0 / 0.3); }
+.fl-confirm {
+  background: var(--fl-yellow);
+  color: var(--fl-ink);
+  border-radius: 13px 18px 12px 19px / 18px 12px 19px 13px;
+  box-shadow: 0 0 0 3px var(--fl-paper-ring), 3px 4px 0 rgb(var(--fl-ink-rgb) / 0.45);
+  text-shadow: 0 1px 0 rgb(164 118 44 / 0.3);
+}
+.fl-confirm.fl-confirm-armed { background: var(--fl-armed); color: #fff; text-shadow: 0 1px 0 rgb(180 80 100 / 0.35); box-shadow: 0 0 0 3px var(--fl-paper-ring), 3px 4px 0 rgb(var(--fl-ink-rgb) / 0.3); }
+/* hover 压掉 JSX 兜底工具类 hover:bg-accent-hover(特异度 0,2,0 同级、晚出现胜出),
+   否则鼠标停在确认钮上会闪系统蓝,破坏黄油主题统一 */
+.fl-confirm:hover { background: var(--fl-yellow-soft); }
+.fl-confirm.fl-confirm-armed:hover { background: var(--fl-armed-press); }
+html.dark .fl-confirm { box-shadow: 0 0 0 3px rgb(255 253 246 / 0.14), 3px 4px 0 rgb(0 0 0 / 0.4); }
+html.dark .fl-confirm.fl-confirm-armed { box-shadow: 0 0 0 3px rgb(255 253 246 / 0.14), 3px 4px 0 rgb(0 0 0 / 0.3); }
+
+/* ---- 监管模式家族黄油化(2026-11-18):今晚测验弹卡按钮/徽章/选卡 + 课表开关 + 回执贴纸卡。
+   替换全站 bg-accent(用户皮肤下呈冷蓝) —— 与 fl-confirm/弹层 chips 同一口径 ---- */
+.fl-butter-btn {
+  background: var(--fl-yellow);
+  color: var(--fl-ink);
+  box-shadow: 0 0 0 3px var(--fl-paper-ring), 2px 3px 0 rgb(var(--fl-ink-rgb) / 0.25);
+}
+html.dark .fl-butter-btn {
+  box-shadow: 0 0 0 3px rgb(255 253 246 / 0.14), 2px 3px 0 rgb(0 0 0 / 0.4);
+}
+.fl-butter-btn:hover:not(:disabled) { background: var(--fl-yellow-soft); }
+.fl-butter-chip { background: rgb(var(--fl-yellow-rgb) / 0.55); color: var(--fl-gold); }
+html.dark .fl-butter-chip { background: rgb(var(--fl-yellow-rgb) / 0.12); color: var(--fl-yellow); }
+.fl-butter-pick { border-color: rgb(var(--fl-gold-line-rgb) / 0.75); background: rgb(var(--fl-yellow-rgb) / 0.28); }
+html.dark .fl-butter-pick { background: rgb(var(--fl-yellow-rgb) / 0.1); border-color: rgb(var(--fl-yellow-rgb) / 0.45); }
+.fl-butter-hover:hover { border-color: rgb(var(--fl-gold-line-rgb) / 0.5); }
+html.dark .fl-butter-hover:hover { border-color: rgb(var(--fl-yellow-rgb) / 0.4); }
+.fl-gold-text { color: var(--fl-gold); }
+html.dark .fl-gold-text { color: var(--fl-yellow); }
+/* 回执贴纸卡(R5 升级):胶带 + 歪切边 + 小完章,补齐解锁收尾与家族语言的断裂 */
+/* 注:不写 position —— JSX 用 Tailwind .fixed 贴视口右下,未分层规则会压过 @layer 的 .fixed;
+   fixed 自身即 positioned,可锚定内部 absolute(完章/胶带) */
+.fl-receipt {
+  background: var(--fl-paper);
+  border: 2px solid rgb(var(--fl-ink-rgb) / 0.5);
+  border-radius: 14px 20px 12px 22px / 20px 12px 22px 14px;
+  box-shadow: 0 0 0 3px var(--fl-paper-ring), 3px 4px 0 rgb(var(--fl-ink-rgb) / 0.16), 0 18px 36px rgb(var(--fl-ink-rgb) / 0.14);
+}
+html.dark .fl-receipt {
+  background: var(--fl-night-card);
+  border-color: rgb(var(--fl-cream-rgb) / 0.35);
+  box-shadow: 0 0 0 3px rgb(255 253 246 / 0.12), 3px 4px 0 rgb(0 0 0 / 0.3), 0 18px 36px rgb(0 0 0 / 0.3);
+}
+.fl-receipt::before {
+  content: "";
+  position: absolute;
+  top: -10px;
+  left: 22px;
+  width: 72px;
+  height: 19px;
+  border-radius: 3px;
+  background-image: radial-gradient(rgb(255 255 255 / 0.95) 2px, transparent 2.2px);
+  background-color: rgb(var(--fl-yellow-rgb) / 0.9);
+  background-size: 12px 12px;
+  background-position: 3px 4px;
+  transform: rotate(-3deg);
+  box-shadow: 0 1px 3px rgb(var(--fl-ink-rgb) / 0.16);
+}
+.fl-receipt-title { color: var(--fl-ink); }
+html.dark .fl-receipt-title { color: var(--fl-cream); }
+.fl-receipt-goal {
+  border: 1px dashed rgb(var(--fl-gold-line-rgb) / 0.5);
+  background: rgb(var(--fl-yellow-rgb) / 0.15);
+}
+.fl-receipt-stamp {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fl-stamp);
+  border: 2px solid rgb(var(--fl-stamp-rgb) / 0.7);
+  border-radius: 8px 11px 7px 10px / 10px 7px 11px 8px;
+  transform: rotate(9deg);
+  background: rgb(255 255 255 / 0.5);
+}
+html.dark .fl-receipt-stamp { background: rgb(255 255 255 / 0.1); }
+
+/* ---- 锁定期整窗换肤(html[data-fl-locked] 门,解锁自动恢复) ---- */
+html[data-fl-locked] .app-frame { background-color: var(--fl-paper-deep); }
+html.dark[data-fl-locked] .app-frame { background-color: var(--fl-night); }
+/* 压掉暗色星空画布/流星/格子材质层,作业本纸面才显形(特异度对齐原规则,晚出现胜出) */
+html.dark[data-fl-locked]:not([data-style="google"]) .app-shell-column {
+  background-image: none;
+  isolation: auto;
+}
+html.dark[data-fl-locked]:not([data-style="google"]) .abyss-sky { display: none; }
+html[data-fl-locked] .sidebar-material { display: none; }
+/* 侧栏 = 笔记本左页:与主区同纸色、去卡片描边/圆角/外距,
+   原右缘「入影暗层」(::after)换成骑马钉虚线 —— 左右页缝成一本。
+   横线不再平铺:每条快捷链接/会话行挂 fl-line,行自带横线,行与线一一对应 */
+html[data-fl-locked] .sidebar-panel {
+  position: relative;
+  background-color: var(--fl-paper-deep);
+  /* 页边线必须整条让开内容(2026-11-18 用户口径「不要与字重合」):
+     面板内最左的字 = 题头 aichatt 12px(会话行文字 16px),行盒起于 6px 且底透明,
+     线压到 5~7px 才全程不穿字;原来的 22~24px 正好从会话标题第一个字上划过去 */
+  background-image:
+    linear-gradient(90deg, transparent 5px, rgb(var(--fl-star-rgb) / 0.5) 5px, rgb(var(--fl-star-rgb) / 0.5) 7px, transparent 7px);
+  border-color: transparent;
+  border-radius: 0;
+  margin: 0;
+}
+/* 会话行笔记本横线全退场(2026-11-18 用户口径演进:先「导航区删掉灰线」,现「会话列表灰线也删」);
+   fl-line 类保留,行的选中铅笔金/悬停墨色字态仍由它驱动 */
+html[data-fl-locked] .sidebar-panel::after {
+  background-image: none;
+  border-right: 2px dashed rgb(var(--fl-ink-rgb) / 0.3);
+}
+html[data-fl-locked] .sidebar-panel::before {
+  content: "";
+  position: absolute;
+  right: 2px;
+  top: 118px;
+  width: 10px;
+  height: 76px;
+  background: linear-gradient(var(--fl-yellow) 0 24px, var(--fl-yellow-soft) 24px 50px, var(--fl-crayon-deep) 50px 76px);
+  border-radius: 4px 0 0 4px;
+  box-shadow: -1px 1.5px 0 rgb(var(--fl-ink-rgb) / 0.28);
+}
+html.dark[data-fl-locked] .sidebar-panel {
+  background-color: var(--fl-night);
+  background-image:
+    linear-gradient(90deg, transparent 5px, rgb(var(--fl-star-rgb) / 0.45) 5px, rgb(var(--fl-star-rgb) / 0.45) 7px, transparent 7px);
+  border-color: transparent;
+  border-radius: 0;
+  margin: 0;
+}
+/* 选中/常驻态不铺卡片(2026-11-18 用户口径:纸面不贴色块,改用铅笔字色代表选中):
+   压掉 bg-accent-soft 及其 hover 变体,也压掉未选中行的灰卡悬停;选中=铅笔金,悬停=墨色 */
+html[data-fl-locked] .sidebar-panel .fl-line.bg-accent-soft,
+html[data-fl-locked] .sidebar-panel .fl-line.bg-accent-soft:hover {
+  background-color: transparent;
+  color: var(--fl-gold);
+}
+html[data-fl-locked] .sidebar-panel .fl-line:hover { background-color: transparent; }
+html[data-fl-locked] .sidebar-panel .fl-line:not(.bg-accent-soft):hover { color: var(--fl-ink); }
+html.dark[data-fl-locked] .sidebar-panel .fl-line.bg-accent-soft,
+html.dark[data-fl-locked] .sidebar-panel .fl-line.bg-accent-soft:hover { color: var(--fl-crayon); }
+html.dark[data-fl-locked] .sidebar-panel .fl-line:not(.bg-accent-soft):hover { color: var(--fl-cream); }
+/* 主对话面具圆标:字色改铅笔金后,原来那颗蓝实心圆是全栏最后一处漏网(只出现在 fl-line 行内),
+   顺手并入黄油系 —— 浅底黄油 + 金描边,深色用蜡笔黄,emoji 本身不受字色影响 */
+html[data-fl-locked] .sidebar-panel .fl-line .bg-accent {
+  background-color: var(--fl-yellow);
+  color: var(--fl-ink);
+  box-shadow: inset 0 0 0 1px rgb(var(--fl-gold-line-rgb) / 0.5);
+}
+html.dark[data-fl-locked] .sidebar-panel .fl-line .bg-accent {
+  background-color: var(--fl-crayon-soft);
+  color: #2a2118;
+  box-shadow: inset 0 0 0 1px rgb(var(--fl-ink-rgb) / 0.4);
+}
+/* 「新对话」按钮描边改虚线(2026-11-18 用户口径):蜡笔贴纸家族 dashed 同源,只动锁定态皮肤 */
+html[data-fl-locked] .sidebar-panel .sidebar-new-chat { border-style: dashed; }
+html.dark[data-fl-locked] .sidebar-panel::after {
+  background-image: none;
+  border-right: 2px dashed rgb(var(--fl-cream-rgb) / 0.16);
+}
+/* 聊天壁纸:纸纹 + 柔光太阳 + 奶白云 + 地平线光晕 + 无缝山丘(郁金香/雏菊),
+   全部随内容滚动 = 笔记本页;移动端(max-md)只留山丘+光晕+纸纹 */
+html[data-fl-locked] {
+  --fl-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23n)' opacity='0.045'/></svg>");
+  --fl-feet: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'><g fill='%23a4762c' opacity='.13'><g transform='rotate(-12 40 44)'><ellipse cx='40' cy='46' rx='6' ry='8'/><circle cx='33' cy='36' r='2.6'/><circle cx='40' cy='34' r='2.6'/><circle cx='47' cy='36' r='2.6'/></g><g transform='rotate(10 104 100)'><ellipse cx='104' cy='102' rx='6' ry='8'/><circle cx='97' cy='92' r='2.6'/><circle cx='104' cy='90' r='2.6'/><circle cx='111' cy='92' r='2.6'/></g></g></svg>");
+  --fl-sun: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'><defs><radialGradient id='g' cx='50%' cy='42%' r='60%'><stop offset='0%25' stop-color='%23ffe9a8'/><stop offset='55%25' stop-color='%23ffd977'/><stop offset='100%25' stop-color='%23ffca55'/></radialGradient><radialGradient id='h' cx='50%25' cy='50%25' r='50%25'><stop offset='0%25' stop-color='%23ffe9a8' stop-opacity='.8'/><stop offset='100%25' stop-color='%23ffe9a8' stop-opacity='0'/></radialGradient></defs><circle cx='60' cy='60' r='54' fill='url(%23h)'/><path d='M100 60h10 M94.6 80l8.7 5 M80 94.6l5 8.7 M60 100v10 M40 94.6l-5 8.7 M25.4 80l-8.7 5 M20 60h-10 M25.4 40l-8.7 -5 M40 25.4l-5 -8.7 M60 20v-10 M80 25.4l5 -8.7 M94.6 40l8.7 -5' stroke='%23f2b44e' stroke-width='4.5' stroke-linecap='round' fill='none' opacity='.85'/><circle cx='60' cy='60' r='31' fill='url(%23g)'/><path d='M50 56q3.5 3.5 7 0 M63 56q3.5 3.5 7 0' stroke='%23b07c2a' stroke-width='2.8' stroke-linecap='round' fill='none'/><path d='M54 65q6 5 12 0' stroke='%23b07c2a' stroke-width='2.8' stroke-linecap='round' fill='none'/><ellipse cx='44' cy='62' rx='5' ry='3' fill='%23ffb37a' opacity='.8'/><ellipse cx='76' cy='62' rx='5' ry='3' fill='%23ffb37a' opacity='.8'/></svg>");
+  --fl-cloud: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 190 90'><g fill='%23ffffff' opacity='.92'><circle cx='52' cy='54' r='26'/><circle cx='94' cy='40' r='31'/><circle cx='134' cy='56' r='23'/><circle cx='74' cy='32' r='17'/><rect x='38' y='52' width='112' height='28' rx='14'/></g></svg>");
+  --fl-wash: none; /* 地平线暖光层已删:底部不再有光带 */
+  --fl-hills: none; /* 地面层已撤:小鸡改站在输入框上沿 */
+}
+html.dark[data-fl-locked] {
+  --fl-cloud: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 190 90'><g fill='%23ffffff' opacity='.08'><circle cx='52' cy='54' r='26'/><circle cx='94' cy='40' r='31'/><circle cx='134' cy='56' r='23'/><circle cx='74' cy='32' r='17'/><rect x='38' y='52' width='112' height='28' rx='14'/></g></svg>");
+  --fl-wash: none; /* 地平线暖光层已删:底部不再有光带 */
+  --fl-hills: none; /* 地面层已撤:小鸡改站在输入框上沿 */
+}
+html[data-fl-locked] .chat-scroll-fade {
+  background-color: transparent;
+  background-image:
+    var(--fl-grain),
+    var(--fl-sun),
+    var(--fl-cloud),
+    var(--fl-cloud),
+    var(--fl-wash),
+    var(--fl-hills),
+    var(--fl-feet);
+  background-position:
+    0 0,
+    top 20px right 28px,
+    top 118px left 4%,
+    top 190px left 30%,
+    bottom center,
+    bottom left,
+    0 0;
+  background-repeat:
+    repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat,
+    repeat-x,
+    repeat;
+  background-size:
+    180px 180px,
+    120px 120px,
+    175px auto,
+    108px auto,
+    100% 520px,
+    auto 190px,
+    150px 150px;
+  background-attachment: local, local, local, local, local, local, local;
+}
+/* 移动端: 太阳/云撞玻璃顶栏,直接不画;山丘压矮一档 */
+@media (max-width: 767px) {
+  html[data-fl-locked] .chat-scroll-fade {
+    background-image: var(--fl-grain), var(--fl-wash), var(--fl-hills), var(--fl-feet);
+    background-position: 0 0, bottom center, bottom left, 0 0;
+    background-size: 180px 180px, 100% 300px, auto 140px, 150px 150px;
+    background-repeat: repeat, no-repeat, repeat-x, repeat;
+    background-attachment: local, local, local, local;
+  }
+}
+/* 用户气泡 = 荧光笔画出的纸片;输入岛 = 歪框贴纸 */
+html[data-fl-locked] .user-bubble {
+  background: var(--fl-crayon);
+  border: 2px solid rgb(var(--fl-ink-rgb) / 0.5);
+  border-radius: 14px 18px 12px 20px / 18px 12px 20px 14px;
+  box-shadow: 2px 3px 0 rgb(var(--fl-ink-rgb) / 0.14);
+}
+html[data-fl-locked] .user-bubble p { color: var(--fl-ink); }
+/* A 案小鸡主题:AI 头像换成小鸡头(锁定期;解锁回原机器人图标) */
+html[data-fl-locked] .msg-avatar {
+  background-color: var(--fl-yellow-soft);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='34' r='21' fill='%23fff0b8' stroke='%23e8a23c' stroke-width='3'/><path d='M26 15 l2.4 -6 3 5.2' stroke='%23e8a23c' stroke-width='2.6' stroke-linecap='round'/><circle cx='25' cy='31' r='2.8' fill='%234a3a28'/><circle cx='39' cy='31' r='2.8' fill='%234a3a28'/><path d='M28.4 38 l5.2 2.4 -5.2 2.4 z' fill='%23ff9a5c'/><ellipse cx='18' cy='36' rx='4' ry='2.4' fill='%23ffb3a0'/><ellipse cx='46' cy='36' rx='4' ry='2.4' fill='%23ffb3a0'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 96% 96%;
+}
+html[data-fl-locked] .msg-avatar svg { display: none; }
+html.dark[data-fl-locked] .msg-avatar { background-color: var(--fl-night-card); }
+/* 输入岛(现役结构是 [data-composer-anchor],.composer-card 仅旧钩子):纸底 + 蜡笔虚线框 */
+/* 小鸡站在输入框上沿(替代壁纸里的地面层):脚踩虚线框顶边,不挡点击。
+   2026-11-19 用户「不要这种小鸡」:旧款扁平简笔小鸡退场,换装主题蛋壳宝宝
+   (path 提取自 ChickSkyScene 同款 CrayonChick,壳点按监管口径用蜡笔黄 #ffd75e;
+   data-uri 由脚本从场景源生成,改形象请同步 CrayonChick.tsx 后重生成) */
+html[data-fl-locked] [data-composer-anchor]::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  bottom: calc(100% - 2px);
+  width: 55px;
+  height: 46px;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27 viewBox%3D%274 11 56 47%27%3E%3Cpath d%3D%22M27 18.8 l2.4 -5.8 3 5.2%22 stroke%3D%22%23e8a23c%22 stroke-width%3D%222.4%22 stroke-linecap%3D%22round%22 fill%3D%22none%22%2F%3E%3Cpath d%3D%22M34.5 18.6 l3.4 -5.6 1.6 6%22 stroke%3D%22%23e8a23c%22 stroke-width%3D%222.2%22 stroke-linecap%3D%22round%22 fill%3D%22none%22%2F%3E%3Cellipse cx%3D%2232%22 cy%3D%2234%22 rx%3D%2218.5%22 ry%3D%2215.5%22 fill%3D%22%23fff0b8%22%2F%3E%3Cellipse cx%3D%2232%22 cy%3D%2234%22 rx%3D%2218.5%22 ry%3D%2215.5%22 stroke%3D%22%23e8a23c%22 stroke-width%3D%222.2%22 fill%3D%22none%22%2F%3E%3Cpath d%3D%22M13.5 38 q-4.5 1.5 -3 5.5 q1.5 3.5 5.5 3%22 stroke%3D%22%23e8a23c%22 stroke-width%3D%222%22 stroke-linecap%3D%22round%22 fill%3D%22none%22%2F%3E%3Cpath d%3D%22M50.5 38 q4.5 1.5 3 5.5 q-1.5 3.5 -5.5 3%22 stroke%3D%22%23e8a23c%22 stroke-width%3D%222%22 stroke-linecap%3D%22round%22 fill%3D%22none%22%2F%3E%3Cellipse cx%3D%2226.8%22 cy%3D%2231.2%22 rx%3D%222.2%22 ry%3D%222.7%22 fill%3D%22%234a3a28%22%2F%3E%3Ccircle cx%3D%2227.6%22 cy%3D%2230.2%22 r%3D%22.85%22 fill%3D%22%23fff%22%2F%3E%3Ccircle cx%3D%2226%22 cy%3D%2232.4%22 r%3D%22.45%22 fill%3D%22%23fff%22 opacity%3D%22.75%22%2F%3E%3Cellipse cx%3D%2237.2%22 cy%3D%2231.2%22 rx%3D%222.2%22 ry%3D%222.7%22 fill%3D%22%234a3a28%22%2F%3E%3Ccircle cx%3D%2238%22 cy%3D%2230.2%22 r%3D%22.85%22 fill%3D%22%23fff%22%2F%3E%3Ccircle cx%3D%2236.4%22 cy%3D%2232.4%22 r%3D%22.45%22 fill%3D%22%23fff%22 opacity%3D%22.75%22%2F%3E%3Cellipse cx%3D%2220.8%22 cy%3D%2236.5%22 rx%3D%223.9%22 ry%3D%222.5%22 fill%3D%22%23ffb3a0%22%2F%3E%3Cellipse cx%3D%2243.2%22 cy%3D%2236.5%22 rx%3D%223.9%22 ry%3D%222.5%22 fill%3D%22%23ffb3a0%22%2F%3E%3Cpath d%3D%22M29.7 35.4 q2.4 -2 4.7 0 q-.85 2.5 -2.35 2.5 q-1.5 0 -2.35 -2.5 z%22 fill%3D%22%23ff9a5c%22%2F%3E%3Cpath d%3D%22M13.5 44 q4.7 -4.2 9.6 0 q4.9 4.2 9.7 0 q4.7 -4.2 9.6 0 q4.8 4.2 9.6 0 l-.4 6.5 q-.5 6.5 -7.5 6.5 h-22.8 q-7 0 -7.5 -6.5 z%22 fill%3D%22%23fffdf6%22 stroke%3D%22%23e8a23c%22 stroke-width%3D%222.2%22 stroke-linejoin%3D%22round%22%2F%3E%3Ccircle cx%3D%2226%22 cy%3D%2252%22 r%3D%221.5%22 fill%3D%22%23ffb3a0%22 opacity%3D%22.8%22%2F%3E%3Ccircle cx%3D%2237%22 cy%3D%2254%22 r%3D%221.2%22 fill%3D%22%23ffd75e%22 opacity%3D%22.75%22%2F%3E%3C%2Fsvg%3E");
+  background-repeat: no-repeat;
+  background-position: left bottom;
+  background-size: contain;
+  pointer-events: none;
+  z-index: 1;
+}
+html[data-fl-locked] [data-composer-anchor] {
+  position: relative;
+}
+html[data-fl-locked] [data-composer-anchor] {
+  background-color: var(--fl-paper);
+  border: 2px dashed rgb(var(--fl-ink-rgb) / 0.45);
+  border-radius: 16px 22px 14px 24px / 22px 14px 24px 16px;
+}
+html.dark[data-fl-locked] [data-composer-anchor] {
+  background-color: var(--fl-night-card);
+  border-color: rgb(var(--fl-cream-rgb) / 0.34);
+}
+html[data-fl-locked] .composer-card {
+  background: var(--fl-paper);
+  border: 2px dashed rgb(var(--fl-ink-rgb) / 0.45);
+  border-radius: 16px 22px 14px 24px / 22px 14px 24px 16px;
+}
+html.dark[data-fl-locked] .composer-card { background: var(--fl-night-card); border-color: rgb(var(--fl-cream-rgb) / 0.34); }
+/* ---- 主列/顶栏/资料右栏并入纸本(对齐 bigsur 灰带+白纸伪元素+让位的特异度) ---- */
+html[data-fl-locked] .app-shell-column:has(.topbar-strip) {
+  background-color: var(--fl-paper-deep);
+}
+/* bigsur「灰带上的白纸」伪元素退场:column 自身就是纸,壁纸直接画在纸面上 */
+html[data-fl-locked]:not([data-style="google"]) .app-shell-column:has(.topbar-strip)::before {
+  content: none;
+}
+html.dark[data-fl-locked] .app-shell-column:has(.topbar-strip) {
+  background-color: var(--fl-night);
+}
+/* 顶栏浮条透在纸面上,标题划一道荧光笔 */
+html[data-fl-locked] .topbar-strip,
+html[data-fl-locked] header[data-app-topbar] {
+  background-color: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+html[data-fl-locked] .topbar-strip > span:first-child,
+html[data-fl-locked] header[data-app-topbar] > div:first-child > span:first-child {
+  background-image: linear-gradient(100deg, rgb(var(--fl-yellow-rgb) / 0.8), rgb(var(--fl-honey-rgb) / 0.45));
+  background-repeat: no-repeat;
+  background-position: 0 78%;
+  background-size: 100% 10px;
+  border-radius: 3px;
+  padding: 0 4px;
+}
+/* 对话资料右栏 = 第三页:同纸面,左缘骑马钉缝线与本子相连 */
+html[data-fl-locked] .info-aside-panel,
+html[data-fl-locked] .info-aside-tab {
+  background-color: var(--fl-paper-deep);
+}
+html[data-fl-locked] .info-aside-panel {
+  border-left: 2px dashed rgb(var(--fl-ink-rgb) / 0.3);
+}
+html.dark[data-fl-locked] .info-aside-panel,
+html.dark[data-fl-locked] .info-aside-tab {
+  background-color: var(--fl-night);
+}
+html.dark[data-fl-locked] .info-aside-panel {
+  border-left-color: rgb(var(--fl-cream-rgb) / 0.16);
+}
+/* 输入岛:双类抬特异度,压过 bigsur 玻璃岛与壁纸模式的白纸规则 */
+html[data-fl-locked] .composer-card.composer-card {
+  background-color: var(--fl-paper);
+  border: 2px solid rgb(var(--fl-ink-rgb) / 0.4);
+  border-radius: 16px 22px 14px 24px / 22px 14px 24px 16px;
+  box-shadow: 2px 3px 0 rgb(var(--fl-ink-rgb) / 0.12);
+}
+html.dark[data-fl-locked] .composer-card.composer-card {
+  background-color: var(--fl-night-card);
+  border-color: rgb(var(--fl-cream-rgb) / 0.3);
+  box-shadow: none;
+}
+/* ---- 工具条胶囊虚线化(2026-11-18 用户口径,延续「新对话」虚线化):MAX(.rt-trigger)/
+   模型选择(.fl-pill)/工具图标钮(.composer-tool)等灰底胶囊加蜡笔 dashed 贴纸描边,
+   与 composer 大框同一支虚线;激活态(bg-accent 实心亮色)不描,实心+虚线会打架 ---- */
+html[data-fl-locked] [data-composer-anchor] .rt-trigger,
+html[data-fl-locked] [data-composer-anchor] .fl-pill,
+html[data-fl-locked] [data-composer-anchor] .composer-tool:not(.bg-accent) {
+  outline: 1.5px dashed rgb(var(--fl-ink-rgb) / 0.4);
+}
+html.dark[data-fl-locked] [data-composer-anchor] .rt-trigger,
+html.dark[data-fl-locked] [data-composer-anchor] .fl-pill,
+html.dark[data-fl-locked] [data-composer-anchor] .composer-tool:not(.bg-accent) {
+  outline-color: rgb(var(--fl-cream-rgb) / 0.34);
+}
+/* 锁定夜纸胶囊底(2026-11-18 用户口径「深黑不顺眼」):深渊画布修复把卡内小钮反白成
+   --surface #07080C 近纯黑,在暖棕夜卡上是一圈冷黑;换奶油墨色低透明度贴纸底,
+   与虚线描边同族;悬停/展开同族再亮一档。仅锁定皮肤,深渊画布等其它深色主题不动 */
+html.dark[data-fl-locked] [data-composer-anchor] .bg-surface-muted,
+html.dark[data-fl-locked] [data-composer-anchor] .rt-trigger {
+  background-color: rgb(var(--fl-cream-rgb) / 0.09);
+}
+html.dark[data-fl-locked] [data-composer-anchor] .bg-surface-muted:hover,
+html.dark[data-fl-locked] [data-composer-anchor] .rt-trigger:hover {
+  background-color: rgb(var(--fl-cream-rgb) / 0.16);
+}
+html.dark[data-fl-locked] [data-composer-anchor] .rt-trigger.open {
+  background-color: rgb(var(--fl-night-accent-soft-rgb) / 0.9);
+}
+/* MAX 胶囊字/脑图标换黄油(2026-11-19 用户口径):粉紫渐变(--slider-grad/#rt-grad)
+   与蜡笔绘本打架;浅色铅笔金、深色星金。仅动胶囊本体,rt-panel 弹层不在此列 */
+html[data-fl-locked] [data-composer-anchor] .rt-trigger.on .rt-val {
+  background: none;
+  color: var(--fl-gold);
+  -webkit-text-fill-color: var(--fl-gold);
+}
+html.dark[data-fl-locked] [data-composer-anchor] .rt-trigger.on .rt-val {
+  color: var(--fl-star);
+  -webkit-text-fill-color: var(--fl-star);
+}
+html[data-fl-locked] [data-composer-anchor] .rt-trigger.on .rt-ico-brain {
+  stroke: currentColor;
+  color: var(--fl-gold);
+}
+html.dark[data-fl-locked] [data-composer-anchor] .rt-trigger.on .rt-ico-brain {
+  color: var(--fl-star);
+}
+/* ---- 锁定期课程分栏面板并入黄油主题(CourseBrowser 全局挂载,锁外保持原样) ----
+   入口高亮/空态地球标:软黄油底+金字;拖拽细线:黄油系;空态纸面并入作业本 */
+html[data-fl-locked] .fl-course-accent { color: var(--fl-gold); background-color: rgb(var(--fl-yellow-rgb) / 0.55); }
+html.dark[data-fl-locked] .fl-course-accent { color: var(--fl-yellow); background-color: rgb(var(--fl-yellow-rgb) / 0.12); }
+html[data-fl-locked] .fl-course-divider { background: rgb(var(--fl-gold-line-rgb) / 0.4); }
+html[data-fl-locked] .fl-course-divider-on { background: var(--fl-crayon-deep); box-shadow: 0 0 8px rgb(var(--fl-crayon-deep-rgb) / 0.5); }
+html[data-fl-locked] .fl-course-input:focus { border-color: rgb(var(--fl-gold-line-rgb) / 0.7); }
+html[data-fl-locked] .fl-course-btn { background: var(--fl-yellow); color: var(--fl-ink); }
+html[data-fl-locked] .fl-course-btn:hover { background: var(--fl-yellow-soft); }
+html[data-fl-locked] [data-course-empty] { background-color: var(--fl-paper-deep); }
+html.dark[data-fl-locked] [data-course-empty] { background-color: var(--fl-night); }
+/* ---- 锁定期背词卷(/papers/words)并入黄油主题 ----
+   只改「屏上 chrome」:桌垫纸底 + 工具条圆条贴纸化 + accent 族换黄油。
+   卷面 .ws-page 与全部 ws-* 印刷规则一律不动(打印保真:纯黑文字/灰度线)。 */
+html[data-fl-locked] .ws-scroll { background-color: var(--fl-paper-deep); }
+html.dark[data-fl-locked] .ws-scroll { background-color: var(--fl-night); }
+/* 打印时桌垫色必须归零:卷面以外不能印出黄油底(工具条本就在 .ws-noprint 里不印) */
+@media print {
+  html[data-fl-locked] .ws-scroll,
+  html.dark[data-fl-locked] .ws-scroll { background-color: transparent !important; }
+}
+/* token 级换肤:选中 chips(border/text/bg-soft)、状态圆点、输入 focus 边、复选框都吃 --accent 族,
+   一处覆盖全跟随;文字用可读的铅笔金 var(--fl-gold)(纯 fff6c9 当字色在纸上看不见),
+   软底用 var(--fl-yellow) —— 与弹层 chips 同一口径。
+   11-18 用户「改，黄色」:赋值从词表子树(.ws-noprint)提升为全文档 —— 锁定态下整窗
+   都是蜡笔绘本,Composer 工具钮/头像圈/设置弹窗导航与开关等一切直取全站
+   accent token 的元素随之黄油化,不再残留 bigsur 冷蓝。
+   加 !important:皮肤 token 段(bigsur 带 :not×2 至 (0,4,1))会持续新增,追特异性
+   是打不完的地鼠;锁定是最高优先级视觉态,声明级强制压过一切皮肤段 */
+html[data-fl-locked] {
+  --accent: var(--fl-gold-rgb) !important;
+  --accent-hover: var(--fl-gold-press-rgb) !important;
+  --accent-soft: var(--fl-yellow-rgb) !important;
+  --accent-foreground: var(--fl-ink-rgb) !important;
+}
+html.dark[data-fl-locked] {
+  --accent: var(--fl-yellow-rgb) !important;
+  --accent-hover: var(--fl-yellow-soft-rgb) !important;
+  --accent-soft: var(--fl-night-accent-soft-rgb) !important;
+  --accent-foreground: var(--fl-night-rgb) !important;
+}
+/* 圆条 = 无框浮条(2026-11-18 用户「取消灰框」):纸底铺满、去描边/外环/投影,
+   与顶栏 topbar-strip「透在纸面上」同一口径;底色必须留=sticky 下滚动词表不能穿透。
+   11-18 追加:圆角要留(用户「要圆角」)——只去框不去形,收回到组件自带的 rounded-2xl */
+html[data-fl-locked] .fl-ws-bar {
+  background-color: var(--fl-paper-deep);
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html.dark[data-fl-locked] .fl-ws-bar {
+  background-color: var(--fl-night);
+  border: 0;
+  box-shadow: none;
+}
+/* 「按计划」徽章:冷灰胶囊(surface-muted)在暖纸面上突兀(2026-11-18 用户「改白底」),
+   换成与旁边 B/C/D 钮同款的 surface 底;深色同理跟着 surface 走。
+   只覆盖 data-fl-locked —— 普通肤色的灰底状态条保持原样 */
+html[data-fl-locked] .fl-ws-bar .bg-surface-muted,
+html.dark[data-fl-locked] .fl-ws-bar .bg-surface-muted {
+  background-color: rgb(var(--surface));
+}
+/* 滚动边缘(2026-11-18 用户口径):静止时融进纸面,词表从条下滑过才浮出 1px 细灰框。
+   用 inset box-shadow 而不是 border —— 出现/消失都不改几何,不会把下面词表顶跳 1px。
+   不加 transition:box-shadow 过渡(动画时钟被节流时会卡在 0ms 把环冻住;
+   1px 边缘线瞬时出现本来就是标准行为)。 */
+html[data-fl-locked] .fl-ws-bar[data-ws-scrolled] {
+  box-shadow: inset 0 0 0 1px rgb(var(--fl-ink-rgb) / 0.22);
+}
+html.dark[data-fl-locked] .fl-ws-bar[data-ws-scrolled] {
+  box-shadow: inset 0 0 0 1px rgb(var(--fl-cream-rgb) / 0.16);
+}
+/* 打印钮:主题实底 + 墨字(与开启弹层的 .fl-confirm 同款),压掉 hover:opacity 的漂白 */
+html[data-fl-locked] .fl-ws-print {
+  background-color: var(--fl-yellow);
+  color: var(--fl-ink);
+  box-shadow: 0 0 0 2px rgb(255 253 246 / 0.9), 2px 3px 0 rgb(var(--fl-ink-rgb) / 0.28);
+}
+html[data-fl-locked] .fl-ws-print:hover { background-color: var(--fl-yellow-soft); opacity: 1; }
+html.dark[data-fl-locked] .fl-ws-print {
+  background-color: var(--fl-crayon-soft);
+  color: #2a2118;
+  box-shadow: 0 0 0 2px rgb(255 253 246 / 0.12), 2px 3px 0 rgb(0 0 0 / 0.35);
+}
+html.dark[data-fl-locked] .fl-ws-print:hover { background-color: var(--fl-yellow-soft); opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .fl-intro,
+  .fl-intro .fl-tr-em,
+  .fl-intro .fl-tr-frame rect,
+  .fl-intro .fl-tr-word span,
+  .fl-intro .fl-tr-swash path,
+  .fl-intro .fl-tr-sub,
+  .fl-ending,
+  .fl-ending .fl-tr-em,
+  .fl-ending .fl-tr-frame rect,
+  .fl-ending .fl-tr-word span,
+  .fl-ending .fl-tr-sub,
+  .fl-ending .fl-tr-sub2,
+  .fl-ending .fl-tr-stamp,
+  .fl-ending.fl-tr-out {
+    animation-duration: 0s;
+    animation-delay: 0s;
+  }
+  .fl-petal,
+  .fl-spark,
+  .fl-ov-chick {
+    animation: none;
+  }
+}
+
+/* ---- 泛蓝收尾(2026-11-19 用户口径「监督模式的图标还是有些蓝色,统一更改为黄色」):
+   11-18 token 级换肤已把 --accent 族整窗金化(见上),但 content/surface token 没跟上 ——
+   暗色下 content-secondary/muted 仍是系统冷蓝灰(154 166 204 / 110 122 160),
+   surface 玻璃卡/边线也是冷黑蓝(7 8 12 / 39 40 44),顶栏盾徽、侧栏图标、小组件贴纸头、
+   活跃度热力图卡、未读点、引用横幅等在夜棕底上全部泛蓝。
+   这里补齐:暗色 content 换奶油暖族、surface/line 换 fl-night 纸卡族;硬编码 blue-* 工具类
+   (未读点/难度 chip/上下文表/引用横幅/StyleSlider)逐一压成星金。
+   浅色 content/surface token 本就中性墨灰白不动;解锁整段失效回默认皮肤。 ---- */
+html.dark[data-fl-locked] {
+  --content-primary: 242 234 218;
+  --content-secondary: 206 194 170;
+  --content-muted: 148 136 114;
+  --surface: 42 38 32;          /* = --fl-night-card */
+  --surface-muted: 38 34 25;    /* = --fl-night-soft */
+  --surface-subtle: 45 41 33;   /* = --fl-night-card-2 */
+  --surface-glass: 34 31 26;    /* = --fl-night */
+  --line: 52 46 36;
+  --line-strong: 66 58 44;
+}
+/* 状态点类(未读点带蓝辉光一并换星金辉光) */
+html[data-fl-locked] .bg-blue-500,
+html[data-fl-locked] .bg-blue-400 {
+  background-color: var(--fl-star);
+  box-shadow: 0 0 8px rgb(var(--fl-star-rgb) / 0.75);
+}
+html[data-fl-locked] .bg-blue-500\/20 { background-color: rgb(var(--fl-star-rgb) / 0.2); }
+/* 文字蓝 → 金族(暗色提档到星金保对比) */
+html[data-fl-locked] .text-blue-300,
+html[data-fl-locked] .text-blue-400 { color: var(--fl-gold); }
+html[data-fl-locked] .text-blue-600\/70 { color: rgb(var(--fl-gold-rgb) / 0.85); }
+html[data-fl-locked] .text-blue-700 { color: var(--fl-gold); }
+html.dark[data-fl-locked] .text-blue-300,
+html.dark[data-fl-locked] .text-blue-400,
+html.dark[data-fl-locked] .text-blue-600\/70 { color: rgb(var(--fl-star-rgb) / 0.9); }
+html.dark[data-fl-locked] .text-blue-700 { color: var(--fl-star); }
+/* 引用回复横幅:蓝条 → 黄油纸条 */
+html[data-fl-locked] .bg-blue-50\/80 { background-color: rgb(var(--fl-yellow-rgb) / 0.5); }
+html[data-fl-locked] .border-blue-200\/70 { border-color: rgb(var(--fl-gold-line-rgb) / 0.5); }
+html[data-fl-locked] .hover\:bg-blue-100\/50:hover { background-color: rgb(var(--fl-yellow-soft-rgb) / 0.45); }
+html[data-fl-locked] .hover\:text-blue-700:hover { color: var(--fl-gold-press); }
+html.dark[data-fl-locked] .bg-blue-950\/30 { background-color: rgb(42 38 32 / 0.55); }
+html.dark[data-fl-locked] .border-blue-800\/50 { border-color: rgb(var(--fl-gold-line-rgb) / 0.32); }
+html.dark[data-fl-locked] .hover\:bg-blue-900\/30:hover { background-color: rgb(42 38 32 / 0.9); }
+/* 学习台贴纸卡副链悬停:系统蓝 → 铅笔金(css module 哈希类,按 subLink 前缀通配) */
+html[data-fl-locked] [class*="subLink"]:hover { color: var(--fl-gold); }
+html.dark[data-fl-locked] [class*="subLink"]:hover { color: var(--fl-star); }
+
+/* ============ 课堂分栏浏览器(course_browser + CourseBrowser.tsx)============ */
+/* 面板打开时内容列让出右侧课程区:course 原生 webview + DOM 壳(工具栏/空态/分隔条)。 */
+/* --course-width 由 CourseBrowser 挂在 body 上(生效 split 变化才更新,拖动预览不动聊天区)。 */
+/* 过渡时长对齐 token「适中」260ms,松手一次生效带轻微跟随感。 */
+body[data-course-open] .app-shell-column {
+  margin-right: var(--course-width, 40vw);
+  transition: margin-right 260ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+/* ── 今日计划弹窗 · 小鸡皮肤(2026-11-19):监管模式锁定下 TodayPlanDialog 挂 data-fl-skin="chick",
+   组件条件类管纸卡底/黄油主钮/蜡笔虚线框(--fl-* token 族见 ③色值族谱段);
+   这里统一把中性文本/刻度线压成墨色系 —— 锁定皮肤恒为纸底浅色系,深色模式也成立。
+   特异性 0,2,0 压 tailwind 工具类,不用 !important。 ── */
+[data-fl-skin="chick"] {
+  color: var(--fl-ink);
+}
+[data-fl-skin="chick"] .text-content-primary { color: var(--fl-ink); }
+[data-fl-skin="chick"] .text-content-secondary { color: rgb(var(--fl-ink-rgb) / 0.65); }
+[data-fl-skin="chick"] .text-content-muted { color: rgb(var(--fl-ink-rgb) / 0.5); }
+[data-fl-skin="chick"] .text-accent { color: var(--fl-gold); }
+[data-fl-skin="chick"] .text-accent-foreground { color: var(--fl-paper); }
+[data-fl-skin="chick"] .text-danger { color: var(--fl-stamp); }
+[data-fl-skin="chick"] .placeholder\:text-content-muted::placeholder { color: rgb(var(--fl-ink-rgb) / 0.4); }
+[data-fl-skin="chick"] .bg-content-primary { background-color: var(--fl-ink); }
+[data-fl-skin="chick"] .border-line-strong { border-color: rgb(var(--fl-ink-rgb) / 0.45); }
+[data-fl-skin="chick"] .bg-line\/55 { background-color: rgb(var(--fl-ink-rgb) / 0.18); }
+[data-fl-skin="chick"] .bg-line\/25 { background-color: rgb(var(--fl-ink-rgb) / 0.09); }
+[data-fl-skin="chick"] .bg-danger { background-color: var(--fl-stamp); }
+[data-fl-skin="chick"] .bg-danger\/60 { background-color: rgb(var(--fl-stamp-rgb) / 0.6); }
+[data-fl-skin="chick"] .bg-surface-subtle { background-color: var(--fl-cream); }
+[data-fl-skin="chick"] .bg-surface { background-color: var(--fl-paper); }
+[data-fl-skin="chick"] .bg-surface-muted { background-color: var(--fl-paper-deep); }
+[data-fl-skin="chick"] .hover\:bg-surface-muted:hover { background-color: var(--fl-paper-deep); }
+[data-fl-skin="chick"] .hover\:bg-surface-subtle:hover { background-color: var(--fl-cream); }
+[data-fl-skin="chick"] .border-line { border-color: rgb(var(--fl-ink-rgb) / 0.2); }
+/* 时间块:黄油纸底 + 墨描边(锚点类在 PlanBlock 根;event 虚线/done 降调由原类保留) */
+[data-fl-skin="chick"] .plan-blk > button { background-color: var(--fl-yellow); border-color: rgb(var(--fl-ink-rgb) / 0.25); }
+[data-fl-skin="chick"] .plan-blk > button:hover { border-color: rgb(var(--fl-ink-rgb) / 0.55); }
+[data-fl-skin="chick"] .plan-blk > button.border-dashed { background-color: transparent; border-color: rgb(var(--fl-ink-rgb) / 0.3); }
+/* 快速记入条:蜡笔虚线框(锚点类在 PlanComposer 输入条) */
+[data-fl-skin="chick"] .plan-composer { border-style: dashed; border-color: rgb(var(--fl-crayon-deep-rgb) / 0.8); background-color: var(--fl-paper-deep); }
+[data-fl-skin="chick"] .plan-composer:focus-within { border-color: var(--fl-crayon-deep); }
+/* 主 CTA(accent)锁定态换黄油;加号/主按钮文字转墨 */
+[data-fl-skin="chick"] .bg-accent { background-color: var(--fl-crayon); }
+[data-fl-skin="chick"] .bg-accent-soft { background-color: rgb(var(--fl-yellow-soft-rgb) / 0.55); }

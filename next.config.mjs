@@ -14,7 +14,15 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   experimental: {
-    serverComponentsExternalPackages: ['shiki', '@prisma/client', 'bcryptjs', '@auth/prisma-adapter', '@prisma/adapter-pg', 'typescript'],
+    // 客户端路由缓存(Router Cache)对动态路由的保鲜期。Next 14 默认 30s:
+    // 30s 后再切回同一页,哪怕路由早已编译好,也要重新发一次 RSC 请求
+    // (实测冷回访 ~500ms vs 回访 ~180ms)。提到 5 分钟,来回跳转基本零请求。
+    // 页面数据由 react-query 负责新鲜度(全局 staleTime 30s),RSC 壳稍旧无碍。
+    staleTimes: {
+      dynamic: 300,
+      static: 300,
+    },
+    serverComponentsExternalPackages: ['shiki', '@prisma/client', 'bcryptjs', '@auth/prisma-adapter', '@prisma/adapter-pg', 'typescript', '@napi-rs/canvas', 'pdfjs-dist', 'sharp'],
     esmExternals: true,
     // Next.js 14 standalone 默认只追踪 import 链路上的文件。
     // 但 @prisma/adapter-pg / pg 是通过 client.ts -> runtime/client.js 这种动态 ESM 入口加载,

@@ -158,6 +158,41 @@ function listenAndroidEvent(event: string, handler: (payload: unknown) => void):
   }
 }
 
+/** 桌面壳事件监听:非桌面环境返回空清理函数(与 listenAndroidEvent 对称) */
+export function listenDesktopEvent(event: string, handler: (payload: unknown) => void): () => void {
+  if (!getIsTauri()) return () => {}
+  let cleanup: (() => void) | null = null
+  ;(async () => {
+    try {
+      const { listen } = await import('@tauri-apps/api/event')
+      cleanup = await listen(event, (e) => handler(e.payload))
+    } catch (err) {
+      console.error(`[tauri] listen ${event} failed:`, err)
+    }
+  })()
+  return () => {
+    cleanup?.()
+  }
+}
+
+/** 深链带图提问载荷(与 Rust DeepLinkAsk 字段对齐,2026-11-19 浏览器截图链路) */
+export interface DeepLinkAskPayload {
+  img: string | null
+  text: string | null
+  server: string | null
+  id: string | null
+  kind: string | null
+}
+
+/**
+ * 桌面壳:取走未消费的深链提问(冷启动兜底)。
+ * 热唤起时 Rust 会 emit "deeplink://ask" 实时事件,由 DeepLinkBridge 监听;
+ * 冷启动时 webview 未就绪事件会丢,Rust 落了 pending,这里补领(拿到即删)。
+ */
+export async function takeDeepLinkAsk(): Promise<DeepLinkAskPayload | null> {
+  return invoke<DeepLinkAskPayload | null>('deep_link_ask_take')
+}
+
 /** updater_check 返回的更新信息(与 Rust UpdateInfo 字段对齐,serde camelCase) */
 export interface AppUpdateInfo {
   version: string
@@ -179,6 +214,46 @@ export interface AppUpdateStatus {
   lastError: string | null
   /** 已完整落盘的版本号 */
   downloadedVersion: string | null
+}
+
+/** focus_lock_status 返回(与 Rust FlStatus 字段对齐,serde camelCase) */
+export interface FocusLockStatus {
+  locked: boolean
+  /** 锁定截止时刻(墙钟毫秒);未锁定为 0;正计时档恒 0 */
+  endsAtMs: number
+  /** 剩余毫秒(正计时档 = 已专注毫秒);未锁定为 0 */
+  remainingMs: number
+  /** 正计时档(D13):无截止时刻,按 startedAtMs 起累计,唯一出口 focusLockEnd */
+  countUp: boolean
+  /** 锁开始时刻(正计时计秒起点;倒计时档用于续锁展示);未锁定为 0 */
+  startedAtMs: number
+  /** 失焦自动拉回是否开启 */
+  refocus: boolean
+  /** 第 2 波课程画中画窗口 URL;第 1 波恒为 null */
+  courseUrl: string | null
+  /** 本次进程启动是否由 boot 续锁(前端据此弹「已恢复锁定」提示) */
+  restored: boolean
+}
+
+/** course_get_state 返回(与 Rust CourseState 字段对齐) */
+export interface CourseState {
+  /** 预创建是否完成(boot 后短暂 false,期间命令报「未就绪」) */
+  ready: boolean
+  /** 面板是否打开(course webview 可见) */
+  open: boolean
+  /** 课程区宽度占窗口宽度比例 0.30–0.55 */
+  split: number
+  /** 当前页面地址(on_navigation 主框架导航时更新) */
+  url: string
+  locked: boolean
+}
+
+/** course_screenshot 返回(与 Rust CourseScreenshot 字段对齐) */
+export interface CourseScreenshotPayload {
+  /** PNG 整图 base64(无 data: 前缀) */
+  data: string
+  width: number
+  height: number
 }
 
 /** 用户点「忽略此版本」记录的版本号 localStorage key */
@@ -282,6 +357,176 @@ export const tauri = {
   minimize: () => invoke('minimize_window'),
   toggleFullscreen: () => invoke('toggle_fullscreen'),
   toggleMaximize: () => invoke('toggle_maximize'),
+
+  /**
+   * 监管模式:启动窗口锁定(真全屏 + 置顶 + 拦关闭/最小化 + 失焦拉回)。
+   * Rust 侧校验 5..=240 分钟;失败 reject 原因文案,由调用方 toast。
+   * countUp = 正计时档(D13):无截止时刻,minutes 被忽略;唯一出口 focusLockEnd。
+   * Web 端 invoke 返回 null —— 调用方以 useIsTauri 门控入口,这里不做 UI 假装。
+   */
+  async focusLockStart(
+    minutes: number,
+    refocus: boolean,
+    courseUrl?: string | null,
+    testSeconds?: number,
+    countUp?: boolean
+  ): Promise<FocusLockStatus | null> {
+    const st = await invoke<FocusLockStatus>('focus_lock_start', {
+      minutes,
+      refocus,
+      courseUrl: courseUrl ?? null,
+      testSeconds: testSeconds ?? null,
+      countUp: countUp ?? false,
+    })
+    if (st === null) throw new Error('仅桌面客户端支持监管模式')
+    return st
+  },
+
+  /** 监管模式:查询锁状态;旧 exe / Web 端返回 null(调用方静默按未锁定处理) */
+  async focusLockStatus(): Promise<FocusLockStatus | null> {
+    try {
+      return await invoke<FocusLockStatus>('focus_lock_status')
+    } catch (err) {
+      console.error('[tauri] focus_lock_status failed:', err)
+      return null
+    }
+  },
+
+  /** 监管模式:测试阶段手动暂停锁定并还原窗口(验收后随测试入口移除) */
+  async focusLockStop(): Promise<FocusLockStatus | null> {
+    const st = await invoke<FocusLockStatus>('focus_lock_stop')
+    return st
+  },
+
+  /** 监管模式:正计时档手动结束(D15,主动结束不算破戒);倒计时锁 Rust 侧拒绝 */
+  async focusLockEnd(): Promise<FocusLockStatus | null> {
+    const st = await invoke<FocusLockStatus>('focus_lock_end')
+    return st
+  },
+
+  /** 监管模式:锁定期用户试图关闭/最小化等,推送剩余毫秒(拦截回执) */
+  onFocusLockBlocked(handler: (remainingMs: number) => void): () => void {
+    return listenDesktopEvent('focus-lock://blocked', (p) =>
+      handler(Number((p as { remainingMs?: number })?.remainingMs ?? 0))
+    )
+  },
+
+  /** 监管模式:到点/手动解锁前的退场过场信号(payload = 本次锁定分钟数);
+      收到后窗口仍全屏锁定,约 2.7s 后 ended 到达(窗口已还原) */
+  onFocusLockEnding(handler: (totalMin: number) => void): () => void {
+    return listenDesktopEvent('focus-lock://ending', (p) =>
+      handler(Number((p as { totalMin?: number })?.totalMin ?? 0))
+    )
+  },
+
+  /** 监管模式:自然到期解锁(payload = 本次锁定分钟数) */
+  onFocusLockEnded(handler: (totalMin: number) => void): () => void {
+    return listenDesktopEvent('focus-lock://ended', (p) =>
+      handler(Number((p as { totalMin?: number })?.totalMin ?? 0))
+    )
+  },
+
+  /** 监管模式:重启后自动续锁(payload = 剩余毫秒) */
+  onFocusLockRestored(handler: (leftoverMs: number) => void): () => void {
+    return listenDesktopEvent('focus-lock://restored', (p) =>
+      handler(Number((p as { leftoverMs?: number })?.leftoverMs ?? 0))
+    )
+  },
+
+  // ── 课堂分栏浏览器(course_browser.rs,§3.2)────────────────────────
+
+  /** 课程面板:打开并可选直接导航;split/Rust 侧管理,DOM 壳由 CourseBrowser 渲染 */
+  async coursePanelShow(url?: string | null): Promise<void> {
+    await invoke('course_panel_show', { url: url ?? null })
+  },
+
+  /** 课程面板:收起(course webview 隐藏,聊天恢复全宽) */
+  async coursePanelHide(): Promise<void> {
+    await invoke('course_panel_hide')
+  },
+
+  /** 课程面板:分隔条松手后一次性调(0.30–0.55,Rust 侧 clamp) */
+  async coursePanelResize(split: number): Promise<void> {
+    await invoke('course_panel_resize', { split })
+  },
+
+  /** 课程面板:导航(无 scheme 自动补 https://;面板未开时隐含打开) */
+  async courseNavigate(url: string): Promise<void> {
+    await invoke('course_navigate', { url })
+  },
+
+  /** 课程面板:后退/前进/刷新 —— eval history API,整 webview 级无跨域限制 */
+  async courseGoBack(): Promise<void> {
+    await invoke('course_go_back')
+  },
+  async courseGoForward(): Promise<void> {
+    await invoke('course_go_forward')
+  },
+  async courseReload(): Promise<void> {
+    await invoke('course_reload')
+  },
+  /** 课程面板:回主页(启动首页)——停媒体+隐藏原生层+清地址,前端空态显示 */
+  async courseHome(): Promise<void> {
+    await invoke('course_home')
+  },
+
+  /** 课程面板:读状态(boot 后短暂 not ready,调用方按 closed 处理) */
+  async courseGetState(): Promise<CourseState | null> {
+    try {
+      return await invoke<CourseState>('course_get_state')
+    } catch (err) {
+      console.error('[tauri] course_get_state failed:', err)
+      return null
+    }
+  },
+
+  /**
+   * 课堂截图提问:GDI 截 course webview 物理矩形(含视频帧),PNG base64 回传,
+   * 上传走前端 /api/upload(落 UploadFile 记录,不受孤儿清扫误伤)。
+   * 面板未打开/没加载页面 reject,由调用方 toast。
+   */
+  async courseScreenshot(): Promise<CourseScreenshotPayload> {
+    const shot = await invoke<CourseScreenshotPayload>('course_screenshot')
+    if (!shot || !shot.data) throw new Error('course screenshot unavailable')
+    return shot
+  },
+
+  /**
+   * 框选配合(2026-11-20 方案 B):临时隐藏/恢复 course webview。
+   * 课程区是原生子窗口,会盖住 DOM 框选层;截图后藏起来,框完立即恢复。
+   * 不动面板开合状态(工具栏/分栏布局保持),隐藏时静默暂停媒体。
+   */
+  async courseSetVeiled(veiled: boolean): Promise<void> {
+    await invoke('course_set_veiled', { veiled })
+  },
+
+  /** 课程面板:主框架导航后 Rust 推送地址(payload = url 字符串) */
+  onCourseNavigated(handler: (url: string) => void): () => void {
+    return listenDesktopEvent('course://navigated', (p) => handler(String(p ?? '')))
+  },
+
+  /** 课程面板:锁定期门卫拒绝导航(payload = 被拒 url);前端节流弹提示 */
+  onCourseBlocked(handler: (url: string) => void): () => void {
+    return listenDesktopEvent('course://blocked', (p) => handler(String(p ?? '')))
+  },
+
+  /** 课程面板:锁定期结束面板自动收起(Rust 已隐 webview,前端收 DOM 壳恢复全宽) */
+  onCourseLockEnded(handler: () => void): () => void {
+    return listenDesktopEvent('course://lock-ended', () => handler())
+  },
+
+  /**
+   * 查询窗口是否最大化(窗口圆角 CSS 门控用;Web 端恒 false)。
+   */
+  async isMaximized(): Promise<boolean> {
+    if (!getIsTauri()) return false
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      return await getCurrentWindow().isMaximized()
+    } catch {
+      return false
+    }
+  },
 
   /**
    * 监听窗口状态变化(全屏/最大化进入退出),

@@ -64,6 +64,9 @@ export async function fetchJson<T = unknown>(
       ...(json !== undefined ? { 'Content-Type': 'application/json' } : {}),
       ...headers,
     },
+    // 带 json 默认 POST:显式传了 method 的调用不受影响;漏传 method 时若按默认 GET 发 body,
+    // fetch 规范会直接抛「GET cannot have body」,表现为静默失败(录题切题驱动曾踩此坑)
+    ...(json !== undefined && rest.method === undefined ? { method: 'POST' as const } : {}),
     ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
   }
 

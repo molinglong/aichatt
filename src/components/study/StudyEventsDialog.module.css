@@ -1,0 +1,206 @@
+/* ═══ 学习记录弹层(便利贴风,挑稿 design/preview-study-events.html 弹层 1)═══
+   小鸡书桌同源:和纸胶带标题/日戳 + 便利贴纸卡输入 + 标签便签色。颜色一律 token
+   (rgb(var(--token)));标签六色为固定便签色,深色走 :global(.dark) 覆盖,不外溢到其它界面。 */
+
+.head {
+  padding-top: 14px;
+  padding-bottom: 10px;
+}
+
+/* 标题 = 斜贴和纸胶带(与书桌贴纸条 ::before 同材质) */
+.tapeTitle {
+  display: inline-block;
+  padding: 4px 16px 5px;
+  transform: rotate(-1.5deg);
+  background: rgb(var(--note-tape) / 0.9);
+  color: rgb(var(--note-ink));
+  border-radius: 2px;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+/* 便利贴纸卡:歪圆角 + 虚线描边,与台词气泡同材质 */
+.composer {
+  background: rgb(var(--note-paper));
+  border: 1.8px solid rgb(var(--note-edge));
+  border-radius: 14px 16px 18px 12px / 16px 12px 18px 14px;
+  padding: 12px 14px;
+  color: rgb(var(--note-ink));
+}
+.compInput {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgb(var(--note-ink));
+}
+.compInput::placeholder {
+  color: rgb(var(--note-sub));
+}
+.tagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* 标签便签色(浅) */
+.tagBtn {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1.5px dashed transparent;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease);
+}
+.tag_word    { background: #dceafc; color: #25549e; }
+.tag_recite  { background: #ddf0d8; color: #2c7046; }
+.tag_drill   { background: #ffe9d2; color: #965014; }
+.tag_read    { background: #e9e1ff; color: #5e3fa6; }
+.tag_mistake { background: #fdd9d9; color: #a02c2c; }
+.tag_other   { background: rgb(var(--surface-subtle)); color: rgb(var(--content-secondary)); }
+/* 标签便签色(深) */
+:global(.dark) .tag_word    { background: #263a5c; color: #9dc0f2; }
+:global(.dark) .tag_recite  { background: #254434; color: #96cfab; }
+:global(.dark) .tag_drill   { background: #4a3217; color: #f0b170; }
+:global(.dark) .tag_read    { background: #37305e; color: #b9a8ef; }
+:global(.dark) .tag_mistake { background: #552626; color: #eda6a6; }
+:global(.dark) .tag_other   { background: rgb(var(--surface-subtle)); color: rgb(var(--content-secondary)); }
+/* 选中:虚线转实线(边框常驻,无布局位移) */
+.tagBtnOn {
+  border-style: solid;
+  border-color: currentColor;
+}
+
+.compFoot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.dateSeg {
+  display: inline-flex;
+  border: 1.5px dashed rgb(var(--note-edge));
+  border-radius: 999px;
+  overflow: hidden;
+}
+.segBtn {
+  padding: 4px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--note-sub));
+  transition: background var(--motion-fast) var(--ease);
+}
+.segBtnOn {
+  background: rgb(var(--note-edge) / 0.3);
+  color: rgb(var(--note-ink));
+}
+.sendBtn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  background: rgb(var(--accent));
+  color: rgb(var(--accent-foreground));
+  cursor: pointer;
+}
+.sendBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 日戳 = 小胶带条 */
+.dayStamp {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 12px 5px;
+  transform: rotate(-1.2deg);
+  background: rgb(var(--note-tape) / 0.9);
+  color: rgb(var(--note-ink));
+  border-radius: 2px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.dayStamp i {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: rgb(var(--note-sub));
+  font-variant-numeric: tabular-nums;
+}
+.dashLine {
+  border-top: 1px dashed rgb(var(--line) / 0.8);
+}
+
+/* 流水行 */
+.evRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 2px;
+  border-bottom: 1px dashed rgb(var(--line) / 0.7);
+}
+.evText {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: rgb(var(--content-primary));
+  word-break: break-word;
+}
+.evRow .tagBtn {
+  padding: 1px 8px;
+  font-size: 10.5px;
+}
+.evTime {
+  flex: none;
+  font-size: 11px;
+  color: rgb(var(--content-muted));
+  font-variant-numeric: tabular-nums;
+}
+.evDel {
+  flex: none;
+  display: inline-flex;
+  padding: 3px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(var(--content-muted));
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.evDel:hover {
+  color: #dc2626;
+}
+.evRow:hover .evDel {
+  opacity: 1;
+}
+/* 触屏无 hover:删除钮常显(半透明) */
+@media (hover: none) {
+  .evDel {
+    opacity: 0.55;
+  }
+}
+
+/* 移动端:iOS 聚焦自动缩放 → 输入锁 16px */
+@media (max-width: 767px) {
+  .compInput {
+    font-size: 16px;
+  }
+}

@@ -1,0 +1,320 @@
+/* 小鸡事件反应浮层 · 形态 A 蜡笔贴纸卡(design/preview-chick-reactions.html 拍板移植)
+   口径:底部居中悬浮,不挡题目区;贴纸卡=暖纸底+蜡笔描边+顶上胶带,深浅主题都用同一套暖色(贴纸质感)。 */
+
+.pop {
+  position: fixed;
+  left: 50%;
+  bottom: 56px;
+  z-index: 130;
+  display: flex;
+  align-items: flex-end;
+  transform: translate(-50%, 140%);
+  opacity: 0;
+  pointer-events: none;
+}
+.pop.show {
+  opacity: 1;
+}
+.pop.enter {
+  transition: transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s;
+  transform: translate(-50%, 0);
+}
+.pop.leave {
+  transition: transform 0.26s ease-in, opacity 0.26s;
+  transform: translate(-50%, 150%) scale(0.7);
+  opacity: 0;
+}
+/* 静态帧模式(开发钩子 hold):定格展示,全部动画关掉 */
+.pop.hold {
+  transform: translate(-50%, 0);
+}
+
+@media (max-width: 767px) {
+  .pop {
+    bottom: 74px;
+  }
+}
+
+/* ── 贴纸卡 ── */
+.card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fffdf6;
+  border: 2px solid #e8a23c;
+  border-radius: 14px;
+  padding: 12px 16px 12px 12px;
+  transform: rotate(-1.2deg);
+  box-shadow: 0 6px 22px rgba(80, 60, 20, 0.14);
+}
+/* 顶部胶带 */
+.card::before {
+  content: '';
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  transform: translateX(-50%) rotate(3deg);
+  width: 56px;
+  height: 16px;
+  background: #ffe9a8;
+  opacity: 0.8;
+  border-radius: 2px;
+}
+
+.chick {
+  width: 84px;
+  height: 84px;
+  flex: none;
+  display: block;
+}
+
+.bubble {
+  position: relative;
+  flex: 0 1 auto;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #3d3830;
+  background: #f0ece2;
+  border-radius: 10px;
+  padding: 7px 12px;
+  max-width: 170px;
+  line-height: 1.4;
+}
+.bubble::after {
+  content: '';
+  position: absolute;
+  left: -5px;
+  bottom: 9px;
+  width: 9px;
+  height: 9px;
+  background: #f0ece2;
+  transform: rotate(45deg);
+}
+
+/* ── 动作(循环;origin=底部,以蛋壳底为轴) ── */
+.wrapG,
+.lower,
+.arm {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+.aJump .wrapG {
+  animation: actJump 1.5s ease-in-out infinite;
+}
+.aTriple .wrapG {
+  animation: actTriple 1.6s ease-in-out infinite;
+}
+.aShake .wrapG {
+  animation: actShake 1.6s ease-in-out infinite;
+}
+.aSleep .wrapG {
+  animation: actSleep 3.2s ease-in-out infinite;
+}
+.aBow .wrapG {
+  animation: actBow 1.6s ease-in-out infinite;
+}
+/* 挥手:单翅上举摆(预览页 act/e-wave 类名错位没真动,这里修正) */
+.aWave .arm {
+  transform-origin: 15% 95%;
+  animation: actWave 1s ease-in-out infinite;
+}
+
+@keyframes actJump {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  12% { transform: translateY(-1px) scale(1.06, 0.92); }
+  45% { transform: translateY(-16px) scale(0.94, 1.08); }
+  70% { transform: translateY(0) scale(1.05, 0.9); }
+  84% { transform: translateY(0) scale(1, 1); }
+}
+@keyframes actTriple {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  5% { transform: translateY(0) scale(1.08, 0.9); }
+  17% { transform: translateY(-17px) scale(0.95, 1.07); }
+  30% { transform: translateY(0) scale(1.05, 0.93); }
+  36% { transform: translateY(0) scale(1.08, 0.9); }
+  48% { transform: translateY(-21px) scale(0.95, 1.08); }
+  61% { transform: translateY(0) scale(1.05, 0.93); }
+  67% { transform: translateY(0) scale(1.08, 0.9); }
+  80% { transform: translateY(-26px) scale(0.94, 1.09); }
+  93% { transform: translateY(0) scale(1.06, 0.92); }
+}
+@keyframes actShake {
+  0%, 100% { transform: rotate(0); }
+  20% { transform: rotate(-5deg); }
+  40% { transform: rotate(4deg); }
+  60% { transform: rotate(-3deg); }
+}
+@keyframes actSleep {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(-1deg) translateY(1.5px); }
+}
+@keyframes actBow {
+  0%, 100% { transform: rotate(0); }
+  12% { transform: rotate(7deg); }
+  24% { transform: rotate(0); }
+  36% { transform: rotate(7deg); }
+  48% { transform: rotate(0); }
+}
+@keyframes actWave {
+  0%, 100% { transform: rotate(0); }
+  50% { transform: rotate(-24deg); }
+}
+
+/* ── 缩壳(答错):0.95s 惊讶定格后身体下沉进壳、换哭脸 ── */
+.lower {
+  animation: none;
+}
+.aSad .lower {
+  animation: sinkShell 0.55s ease-in-out 0.95s forwards;
+}
+@keyframes sinkShell {
+  to { transform: translateY(9.5px); }
+}
+.fSad {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.aSad .fSad {
+  opacity: 1;
+  transition: opacity 0.12s 0.95s;
+}
+.fOmg {
+  opacity: 1;
+}
+.aSad .fOmg {
+  opacity: 0;
+  transition: opacity 0.12s 0.95s;
+}
+
+/* ── 道具贴纸:小本本 / 卷纸 / 倒计时牌(从卡边弹出) ── */
+.prop {
+  position: absolute;
+  display: none;
+}
+.show .prop {
+  display: block;
+  animation: propPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s both;
+}
+@keyframes propPop {
+  from { transform: scale(0) rotate(-24deg); opacity: 0; }
+  to { transform: scale(1) rotate(-6deg); opacity: 1; }
+}
+.pBook {
+  width: 20px;
+  height: 24px;
+  background: #fffbe8;
+  border: 1.5px solid #e8a23c;
+  border-radius: 3px;
+  right: -10px;
+  bottom: -6px;
+}
+.pBook i {
+  display: block;
+  height: 1.6px;
+  background: #d9cfb0;
+  margin: 5px 3px 0;
+  border-radius: 1px;
+}
+.pPaper {
+  width: 24px;
+  height: 32px;
+  background: #fff;
+  border: 1.5px solid #e8a23c;
+  border-radius: 3px;
+  left: -14px;
+  bottom: -4px;
+}
+.pPaper i {
+  display: block;
+  height: 0;
+  border-top: 1.5px dashed #cfc7b0;
+  margin: 6px 3px 0;
+}
+.pSign {
+  padding: 5px 10px;
+  background: #fffdf6;
+  border: 2px solid #e8a23c;
+  border-radius: 8px;
+  right: -30px;
+  top: -30px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #3d3830;
+  white-space: nowrap;
+  transform: rotate(3deg);
+}
+.show .pSign {
+  animation-name: propPopSign;
+}
+@keyframes propPopSign {
+  from { transform: scale(0) rotate(-30deg); opacity: 0; }
+  to { transform: scale(1) rotate(3deg); opacity: 1; }
+}
+
+/* ── 特效层:星星 / 纸屑 / 贴纸 / 彩带(参数全在 span 内联样式) ── */
+.fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.fx span {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  opacity: 0;
+  transform: translate(0, 0) scale(0.4);
+}
+.show.fxon .fx span {
+  animation: fxPop 1.9s ease-out forwards;
+}
+@keyframes fxPop {
+  0% { opacity: 0; transform: translate(0, 6px) scale(0.3) rotate(0); }
+  18% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx, 0), var(--dy, -52px)) scale(1) rotate(var(--dr, 120deg)); }
+}
+
+/* ── Zzz(打盹) ── */
+.zzz {
+  position: absolute;
+  right: 2px;
+  top: -6px;
+  font-weight: 800;
+  color: #8fa3c4;
+  font-size: 15px;
+  opacity: 0;
+}
+.show.aSleep .zzz {
+  animation: zzz 2.6s ease-out infinite;
+}
+@keyframes zzz {
+  0% { opacity: 0; transform: translate(0, 4px); }
+  25% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(10px, -14px); }
+}
+.z2 {
+  top: -20px;
+  right: -8px;
+  font-size: 12px;
+}
+.z3 {
+  top: -32px;
+  right: -16px;
+  font-size: 10px;
+}
+
+/* ── 静态帧:全静止,道具/哭脸定格直出 ── */
+.hold,
+.hold * {
+  animation: none !important;
+  transition: none !important;
+}
+.hold .fSad {
+  opacity: 1 !important;
+}
+.hold .fOmg {
+  opacity: 0 !important;
+}
+.hold .prop {
+  display: block !important;
+}

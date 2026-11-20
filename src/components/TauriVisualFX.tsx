@@ -28,6 +28,25 @@ export function TauriVisualFX() {
     else document.documentElement.removeAttribute('data-tauri-blurred')
   }, [isTauri, blurred])
 
+  // 最大化态写入 html 属性:透明窗口的 CSS 圆角在最大化时会于四角裁出透明
+  // 缺口(桌面透出),圆角由 CSS 按 data-win-max 归零
+  useEffect(() => {
+    if (!isTauri) return
+    let alive = true
+    const apply = async () => {
+      const maxed = await tauri.isMaximized()
+      if (!alive) return
+      if (maxed) document.documentElement.setAttribute('data-win-max', '')
+      else document.documentElement.removeAttribute('data-win-max')
+    }
+    apply()
+    const cleanup = tauri.onResized(apply)
+    return () => {
+      alive = false
+      cleanup()
+    }
+  }, [isTauri])
+
   if (!isTauri) return null
   return <div className="tauri-blur-overlay" aria-hidden="true" />
 }

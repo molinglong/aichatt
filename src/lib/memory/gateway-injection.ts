@@ -1,5 +1,6 @@
-import type { Memory } from "@/generated/prisma/client"
+import type { Memory, ScratchNote } from "@/generated/prisma/client"
 import { buildMemorySystemPrompt } from "./prompt"
+import { buildScratchMemoryPrompt } from "./scratch"
 
 /**
  * ACode 网关记忆注入(读注入)——/api/v1/messages 请求侧的 messages 尾部改写。
@@ -74,6 +75,22 @@ export function buildGatewayMemoryBlock(
   return [
     `<${MEMORY_CONTEXT_TAG}>`,
     buildMemorySystemPrompt(memories),
+    `</${MEMORY_CONTEXT_TAG}>`,
+  ].join("\n")
+}
+
+/**
+ * 短期记忆(进行中状态)注入块;无条目返回 null。
+ * 与长期记忆块同 tag 包裹、同通道追加(逐请求注入,工具续轮也要)——
+ * 措辞是中性的(不提 write_scratch_memory),因为网关侧没有本站工具。
+ */
+export function buildGatewayScratchBlock(
+  notes: Pick<ScratchNote, "topic" | "content">[]
+): string | null {
+  if (!notes.length) return null
+  return [
+    `<${MEMORY_CONTEXT_TAG}>`,
+    buildScratchMemoryPrompt(notes),
     `</${MEMORY_CONTEXT_TAG}>`,
   ].join("\n")
 }

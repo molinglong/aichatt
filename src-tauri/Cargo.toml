@@ -17,8 +17,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# unstable: multiwebview(课程分栏浏览器,Window::add_child/Webview::set_bounds)。
+# 官方标注未来 minor 可能 breaking —— 锁版本不升级则稳定,升级 tauri 时需回归验证分栏
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# 浏览器深链:aichatt://ask 拉起客户端带图提问(扩展截图→服务器中转→客户端预填)
+tauri-plugin-deep-link = "2"
 # 本地文件能力:系统目录选择对话框(用户授权工作区根)
 tauri-plugin-dialog = "2"
 # 系统通知:AI 回复完成后弹系统级通知(仅窗口失焦时触发)
@@ -34,6 +38,18 @@ image = "0.25"
 # 安卓 target 上该 crate 直接编译失败，故按 target 门控，调用处见 lib.rs::move_to_trash
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 trash = "5"
+
+# 性能采样(perf.rs):GetSystemTimes / GlobalMemoryStatusEx / PDH GPU 计数器。
+# 版本对齐依赖树里已有的 windows 0.61.3,复用同一份编译产物不新增 crate
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Performance",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+] }
 
 # 应用内自更新仅安卓实现:HTTP 下载 + semver 比对 + JNI 唤起系统安装器
 [target.'cfg(target_os = "android")'.dependencies]

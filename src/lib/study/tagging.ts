@@ -10,6 +10,7 @@ import {
   getEffectiveModel,
   createProviderInstanceForEffectiveModel,
 } from '@/lib/ai/registry'
+import { getPublicPoolKey } from '@/lib/quota'
 import {
   buildCustomModelDefinition,
   resolveApiKey,
@@ -78,6 +79,10 @@ async function buildModel(userId: string, modelId: string): Promise<LanguageMode
   let apiKey: string | undefined
   if (apiKeyRecord) {
     apiKey = decrypt(apiKeyRecord.encryptedKey)
+  } else if (modelDef.publicPool) {
+    // 公共池门面模型走服务端出钱 Key,与 chat 管线同口径——
+    // 用户默认模型是池模型时,打标/重标不该 503(A11 回归中实测)
+    apiKey = (await getPublicPoolKey(modelDef.provider)) ?? undefined
   } else if (modelDef.provider === 'qianwen') {
     // 沿用 chat/route.ts 的回退逻辑:Qwen 可走环境变量 key
     apiKey = process.env.API_KEY_DASHSCOPE
