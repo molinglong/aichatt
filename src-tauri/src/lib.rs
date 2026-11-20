@@ -1425,11 +1425,9 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            // 托盘模式(2026-11-20):再次启动 exe 与点托盘「显示」同语义 ——
+            // 拉回主窗口,并把关闭时收起的陪学小鸡一起放出来
+            tray::show_main(app);
         }))
         .invoke_handler(tauri::generate_handler![
             get_window_state,

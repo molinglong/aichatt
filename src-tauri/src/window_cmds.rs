@@ -56,6 +56,8 @@ pub fn minimize_window(webview: tauri::Webview) -> Result<(), String> {
 #[tauri::command]
 pub fn close_window(webview: tauri::Webview) -> Result<(), String> {
     fl_guard()?;
+    // 与 Alt+F4(CloseRequested)同口径:陪学小鸡一并收起,托盘「显示」时再放出
+    tray::note_pet_visibility(webview.app_handle());
     webview.window().hide().map_err(|e| e.to_string())
 }
 
